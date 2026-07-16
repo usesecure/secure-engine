@@ -50,15 +50,18 @@ fn run() -> Result<(), String> {
     let report: ScanReport =
         serde_json::from_value(document).map_err(|_| "scan report shape is invalid".to_owned())?;
     println!(
-        "validated {} files, {} facts, {} parser diagnostics, {} capabilities, {} exclusions, and {} findings from {}",
+        "validated {} files, {} facts, {} graph nodes, {} graph edges, {} parser diagnostics, {} capabilities, {} exclusions, {} suppression diagnostics, and {} findings from {}",
         report
             .inventory
             .files_scanned
             .max(report.scan.files_scanned),
         report.facts.len(),
+        report.graph.nodes.len(),
+        report.graph.edges.len(),
         report.parser_diagnostics.len(),
         report.capabilities.len(),
         report.exclusions.len(),
+        report.suppression_diagnostics.len(),
         report.findings.len(),
         report.repository.name
     );

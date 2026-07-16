@@ -1,6 +1,6 @@
 [package]
 name = "secure-engine"
-description = "Shared deterministic inventory, parsing, normalized facts, and secure-json-v1 model"
+description = "Shared deterministic inventory, parsing, evidence graph, rules, and secure-json-v1 model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -5,10 +5,10 @@ use std::thread::{self, JoinHandle};
 
 use secure_engine::{
     CacheControl, CancellationToken, ProgressEvent, ScanConfiguration, ScanError, ScanReport,
-    ScanRequest,
+    ScanRequest, Suppression,
 };
 
-/// Native UI representation of every Phase 2 inventory, parsing, and cache control.
+/// Native UI representation of shared inventory, parsing, graph, rule, and cache controls.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct InventoryControls {
@@ -50,6 +50,16 @@ pub struct InventoryControls {
     pub max_facts_per_file: usize,
     /// Maximum normalized facts retained across the report.
     pub max_total_facts: usize,
+    /// Maximum evidence-graph nodes.
+    pub max_graph_nodes: usize,
+    /// Maximum evidence-graph edges.
+    pub max_graph_edges: usize,
+    /// Maximum bounded local call traversal depth.
+    pub max_interprocedural_depth: usize,
+    /// Maximum findings retained.
+    pub max_findings: usize,
+    /// Exact project suppressions.
+    pub suppressions: Vec<Suppression>,
 }
 
 impl Default for InventoryControls {
@@ -82,6 +92,11 @@ impl InventoryControls {
                 max_parser_diagnostics: self.max_parser_diagnostics,
                 max_facts_per_file: self.max_facts_per_file,
                 max_total_facts: self.max_total_facts,
+                max_graph_nodes: self.max_graph_nodes,
+                max_graph_edges: self.max_graph_edges,
+                max_interprocedural_depth: self.max_interprocedural_depth,
+                max_findings: self.max_findings,
+                suppressions: self.suppressions.clone(),
             },
             cache: CacheControl {
                 directory: self.cache_directory.clone(),
@@ -111,6 +126,11 @@ impl InventoryControls {
             max_parser_diagnostics: configuration.max_parser_diagnostics,
             max_facts_per_file: configuration.max_facts_per_file,
             max_total_facts: configuration.max_total_facts,
+            max_graph_nodes: configuration.max_graph_nodes,
+            max_graph_edges: configuration.max_graph_edges,
+            max_interprocedural_depth: configuration.max_interprocedural_depth,
+            max_findings: configuration.max_findings,
+            suppressions: configuration.suppressions,
         }
     }
 }
@@ -196,6 +216,11 @@ mod tests {
             max_parser_diagnostics: 6,
             max_facts_per_file: 5,
             max_total_facts: 20,
+            max_graph_nodes: 30,
+            max_graph_edges: 40,
+            max_interprocedural_depth: 3,
+            max_findings: 4,
+            suppressions: Vec::new(),
         };
         let request = controls.request("repository");
         assert!(request.configuration.include_hidden);
@@ -209,6 +234,7 @@ mod tests {
         assert_eq!(request.cache.directory, Some(PathBuf::from("cache")));
         assert!(request.cache.clear_before_scan);
         assert_eq!(request.configuration.max_total_facts, 20);
+        assert_eq!(request.configuration.max_graph_nodes, 30);
     }
 
     #[test]
@@ -255,6 +281,29 @@ mod tests {
         assert_eq!(desktop.facts, core.facts);
         assert_eq!(desktop.parser_diagnostics, core.parser_diagnostics);
         assert_eq!(desktop.parser_coverage, core.parser_coverage);
+        Ok(())
+    }
+
+    #[test]
+    fn desktop_and_core_preserve_identical_phase_three_graph_and_findings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase3-rules");
+        let controls = InventoryControls {
+            parse_cache_enabled: false,
+            ..InventoryControls::default()
+        };
+        let request = controls.request(repository);
+        let desktop = inventory_repository(&request, &CancellationToken::new(), |_| {})?;
+        let core = secure_engine::scan_repository(&request, &CancellationToken::new(), |_| {})?;
+        assert_eq!(desktop.report_fingerprint, core.report_fingerprint);
+        assert_eq!(desktop.graph, core.graph);
+        assert_eq!(desktop.findings, core.findings);
+        assert_eq!(
+            desktop.suppression_diagnostics,
+            core.suppression_diagnostics
+        );
         Ok(())
     }
 }

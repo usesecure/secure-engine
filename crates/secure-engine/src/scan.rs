@@ -15,6 +15,7 @@ use crate::classify::{
     FileOrigin, classify_file, detect_language, entry_point_kind, framework_matches, is_binary,
     is_build_automation, manifest_info,
 };
+use crate::graph::{ProgramUnit, analyze};
 use crate::parser::{ParserMode, parse_source};
 use crate::workspace::{
     PathFilters, ReadOutcome, canonical_repository, discover_files, read_file_no_follow,
@@ -36,6 +37,10 @@ const MAX_CONFIGURED_CACHE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const MAX_CONFIGURED_PARSER_DIAGNOSTICS: usize = 100_000;
 const MAX_CONFIGURED_FACTS_PER_FILE: usize = 100_000;
 const MAX_CONFIGURED_TOTAL_FACTS: usize = 10_000_000;
+const MAX_CONFIGURED_GRAPH_NODES: usize = 10_000_000;
+const MAX_CONFIGURED_GRAPH_EDGES: usize = 20_000_000;
+const MAX_CONFIGURED_INTERPROCEDURAL_DEPTH: usize = 32;
+const MAX_CONFIGURED_FINDINGS: usize = 1_000_000;
 const GIT_METADATA_LIMIT: u64 = 4 * 1024 * 1024;
 
 /// Cooperative cancellation shared safely across threads.
@@ -162,6 +167,8 @@ where
     let mut parsing_duration = Duration::ZERO;
     let mut facts_truncated = false;
     let mut diagnostics_truncated = false;
+    let mut programs = Vec::<ProgramUnit>::new();
+    let mut program_records = 0_usize;
 
     for (index, discovered) in discovery.files.iter().enumerate() {
         check_cancelled(cancellation)?;
@@ -340,6 +347,17 @@ where
                 diagnostics_truncated = true;
             }
             parser_diagnostics.extend(output.diagnostics.into_iter().take(retained_diagnostics));
+            let mut program = output.program;
+            let remaining_records = request
+                .configuration
+                .max_graph_nodes
+                .saturating_sub(program_records);
+            if program.records.len() > remaining_records {
+                program.records.truncate(remaining_records);
+                program.truncated = true;
+            }
+            program_records = program_records.saturating_add(program.records.len());
+            programs.push(program);
         }
 
         if let Some(manifest) = manifest {
@@ -448,6 +466,10 @@ where
         });
     }
 
+    progress(ProgressEvent::Analyzing { facts: facts.len() });
+    let analysis_result = analyze(&facts, &programs, &request.configuration, cancellation)?;
+    limitations.extend(analysis_result.limitations);
+
     let languages = language_totals
         .into_iter()
         .map(|(name, (file_count, bytes))| LanguageSummary {
@@ -528,6 +550,9 @@ where
         facts,
         parser_diagnostics,
         parser_coverage,
+        graph: analysis_result.graph,
+        analysis: analysis_result.summary,
+        suppression_diagnostics: analysis_result.suppression_diagnostics,
         files,
         languages,
         manifests,
@@ -535,7 +560,7 @@ where
         entry_points,
         capabilities,
         trust_boundaries,
-        findings: Vec::<Finding>::new(),
+        findings: analysis_result.findings,
         limitations,
         skipped_files,
         exclusions: discovery.exclusions,
@@ -613,6 +638,62 @@ fn validate_configuration(configuration: &ScanConfiguration) -> Result<(), ScanE
             "max_total_facts must be between 1 and {MAX_CONFIGURED_TOTAL_FACTS}"
         )));
     }
+    if configuration.max_graph_nodes == 0
+        || configuration.max_graph_nodes > MAX_CONFIGURED_GRAPH_NODES
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_graph_nodes must be between 1 and {MAX_CONFIGURED_GRAPH_NODES}"
+        )));
+    }
+    if configuration.max_graph_edges == 0
+        || configuration.max_graph_edges > MAX_CONFIGURED_GRAPH_EDGES
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_graph_edges must be between 1 and {MAX_CONFIGURED_GRAPH_EDGES}"
+        )));
+    }
+    if configuration.max_interprocedural_depth == 0
+        || configuration.max_interprocedural_depth > MAX_CONFIGURED_INTERPROCEDURAL_DEPTH
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_interprocedural_depth must be between 1 and {MAX_CONFIGURED_INTERPROCEDURAL_DEPTH}"
+        )));
+    }
+    if configuration.max_findings == 0 || configuration.max_findings > MAX_CONFIGURED_FINDINGS {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_findings must be between 1 and {MAX_CONFIGURED_FINDINGS}"
+        )));
+    }
+    validate_suppressions(configuration)?;
+    Ok(())
+}
+
+fn validate_suppressions(configuration: &ScanConfiguration) -> Result<(), ScanError> {
+    if configuration.suppressions.len() > 10_000 {
+        return Err(ScanError::InvalidConfiguration(
+            "suppressions cannot exceed 10000 entries".into(),
+        ));
+    }
+    if configuration.suppressions.iter().any(|suppression| {
+        suppression.rule_id.is_empty()
+            || suppression.rule_id.len() > 32
+            || suppression.path.is_empty()
+            || suppression.path.len() > 1024
+            || suppression.path.starts_with('/')
+            || suppression.path.contains('\\')
+            || suppression
+                .path
+                .split('/')
+                .any(|component| component == "..")
+            || suppression.path.chars().any(char::is_control)
+            || suppression.reason.is_empty()
+            || suppression.reason.len() > 1024
+            || suppression.reason.chars().any(char::is_control)
+    }) {
+        return Err(ScanError::InvalidConfiguration(
+            "suppression values must be bounded and repository-relative".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -622,9 +703,9 @@ fn inventory_limitations(
 ) -> Vec<Limitation> {
     let mut limitations = vec![
         Limitation {
-            code: "syntax-evidence-only".into(),
+            code: "deterministic-rules-limited".into(),
             message:
-                "Phase 2 emits normalized syntax evidence and does not run vulnerability rules"
+                "Phase 3 runs only the documented high-confidence JavaScript and TypeScript rules"
                     .into(),
         },
         Limitation {
@@ -987,6 +1068,17 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
     }
 
     #[derive(Serialize)]
+    struct StableAnalysis {
+        nodes: usize,
+        edges: usize,
+        candidate_paths: usize,
+        rules_evaluated: usize,
+        findings: usize,
+        findings_suppressed: usize,
+        truncated: bool,
+    }
+
+    #[derive(Serialize)]
     struct StableReport<'a> {
         schema_version: &'a str,
         engine_version: &'a str,
@@ -1000,6 +1092,9 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         facts: &'a [NormalizedFact],
         parser_diagnostics: &'a [ParserDiagnostic],
         parser_coverage: &'a [ParserCoverage],
+        graph: &'a crate::EvidenceGraph,
+        analysis: StableAnalysis,
+        suppression_diagnostics: &'a [crate::SuppressionDiagnostic],
         files: &'a [FileRecord],
         languages: &'a [LanguageSummary],
         manifests: &'a [ManifestEvidence],
@@ -1033,6 +1128,17 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         facts: &report.facts,
         parser_diagnostics: &report.parser_diagnostics,
         parser_coverage: &report.parser_coverage,
+        graph: &report.graph,
+        analysis: StableAnalysis {
+            nodes: report.analysis.nodes,
+            edges: report.analysis.edges,
+            candidate_paths: report.analysis.candidate_paths,
+            rules_evaluated: report.analysis.rules_evaluated,
+            findings: report.analysis.findings,
+            findings_suppressed: report.analysis.findings_suppressed,
+            truncated: report.analysis.truncated,
+        },
+        suppression_diagnostics: &report.suppression_diagnostics,
         files: &report.files,
         languages: &report.languages,
         manifests: &report.manifests,

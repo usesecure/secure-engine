@@ -7,9 +7,9 @@ The public integration boundary is the `secure` process and [`schemas/secure-jso
 - `schema_version` is exactly `secure-json-v1`; incompatible identifiers are rejected.
 - Unknown object fields are tolerated in v1 so producers can add optional evidence.
 - All paths and spans are repository-relative, slash-normalized, and never contain source text.
-- `scan.started_at`, `scan.finished_at`, `scan.duration_ms`, `parsing.duration_ms`, and the four `parsing.cache_*` counters are documented volatile fields. `report_fingerprint` excludes them. Facts, diagnostics, coverage, and other evidence remain stable for the same files and configuration.
+- `scan.started_at`, `scan.finished_at`, `scan.duration_ms`, `parsing.duration_ms`, `analysis.duration_ms`, and the four `parsing.cache_*` counters are documented volatile fields. `report_fingerprint` excludes them. Facts, graph topology, paths, diagnostics, coverage, findings, and suppression results remain stable for the same files and configuration.
 - `repository.content_fingerprint` hashes relative paths and file bytes. It identifies content without exporting the absolute repository path.
-- Findings remain normalized but empty in Phase 2 because vulnerability rules are intentionally deferred.
+- Findings include only deterministic Phase 3 rules with reproducible graph paths; a sensitive sink alone is not a finding.
 - Errors are bounded and path-sanitized. Skipped files contain a stable reason, not host paths or file contents.
 
 ## Phase 1 additive inventory fields
@@ -35,6 +35,18 @@ Phase 2 keeps every Phase 0 and Phase 1 field compatible and adds optional prope
 - report: `parser_coverage` distinguishes JavaScript, JSX, TypeScript, and TSX modes.
 
 Facts are syntax evidence only. They carry no severity or confidence and do not imply a vulnerability. Cache location and clear-cache controls are runtime-only and are never serialized. Cache state affects only the documented volatile counters; cold and warm reports have the same facts and `report_fingerprint`.
+
+## Phase 3 additive graph and finding fields
+
+Phase 3 preserves the Phase 0–2 required-property list and adds optional properties:
+
+- configuration: graph node/edge, traversal-depth, finding, and exact suppression bounds;
+- report: `graph.nodes` and `graph.edges` use only Secure Engine-owned domain objects with stable IDs, locations, provenance, and fingerprints;
+- report: `analysis` records graph/rule counters, suppression counts, truncation, and volatile duration;
+- report: `suppression_diagnostics` makes applied, invalid, broad, and stale suppression state auditable;
+- finding: `source`, `transformations`, `guards`, `sink`, and ordered `evidence_path` extend the original normalized finding fields.
+
+Every path step references a graph node and the edge from its predecessor. Deduplication uses the rule invariant, effective path, and sink fingerprint. Suppressions are exact `(rule_id, path, start_byte)` scopes with a required reason; wildcard and parent-traversal scopes are rejected.
 
 ## Exit codes
 

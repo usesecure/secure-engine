@@ -1,0 +1,151 @@
+{
+  "schema_version": "secure-json-v1",
+  "engine_version": "0.1.0",
+  "document_type": "scan-report",
+  "repository": {
+    "name": "phase3-fixture",
+    "vcs": null,
+    "revision": null,
+    "repository_kind": "directory",
+    "content_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "identity_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "configuration": {
+    "include_hidden": false,
+    "max_files": 100000,
+    "max_file_bytes": 4194304,
+    "respect_ignore_files": true,
+    "include_patterns": [],
+    "exclude_patterns": [],
+    "include_generated": false,
+    "include_vendor": false,
+    "include_nested_repositories": false,
+    "max_total_bytes": 536870912,
+    "max_depth": null,
+    "max_errors": 100,
+    "parse_cache_enabled": true,
+    "max_cache_bytes": 268435456,
+    "max_parser_diagnostics": 1000,
+    "max_facts_per_file": 10000,
+    "max_total_facts": 100000,
+    "max_graph_nodes": 250000,
+    "max_graph_edges": 500000,
+    "max_interprocedural_depth": 4,
+    "max_findings": 10000,
+    "suppressions": []
+  },
+  "scan": {
+    "started_at": "2026-07-16T00:00:00Z",
+    "finished_at": "2026-07-16T00:00:00Z",
+    "duration_ms": 1,
+    "complete": true,
+    "files_discovered": 1,
+    "files_scanned": 1
+  },
+  "inventory": {
+    "entries_seen": 1,
+    "candidate_files": 1,
+    "files_selected": 1,
+    "files_scanned": 1,
+    "text_files": 1,
+    "binary_files": 0,
+    "generated_files": 0,
+    "vendor_files": 0,
+    "bytes_scanned": 32,
+    "symlinks_skipped": 0,
+    "nested_repositories_skipped": 0,
+    "hit_file_limit": false,
+    "hit_total_byte_limit": false
+  },
+  "parsing": {
+    "files_eligible": 1,
+    "files_parsed": 1,
+    "files_with_diagnostics": 0,
+    "facts_extracted": 0,
+    "duration_ms": 1,
+    "cache_enabled": true,
+    "cache_hits": 0,
+    "cache_misses": 1,
+    "cache_writes": 1,
+    "cache_entries_ignored": 0
+  },
+  "facts": [],
+  "parser_diagnostics": [],
+  "parser_coverage": [{
+    "parser_mode": "typescript",
+    "files_eligible": 1,
+    "files_parsed": 1,
+    "files_with_diagnostics": 0,
+    "facts_extracted": 0
+  }],
+  "graph": {
+    "nodes": [
+      {
+        "node_id": "gn_111111111111111111111111",
+        "kind": "source",
+        "name": "request-parameter",
+        "location": {"path": "app.ts", "span": {"start_byte": 0, "end_byte": 9, "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 10}},
+        "provenance": {"parser": "secure-tree-sitter-adapter-v1", "parser_version": "0.26.11", "grammar": "tree-sitter-typescript@0.23.2:typescript", "extractor_version": "secure-evidence-graph-v1"},
+        "fingerprint": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      {
+        "node_id": "gn_222222222222222222222222",
+        "kind": "sink",
+        "name": "process-execution",
+        "location": {"path": "app.ts", "span": {"start_byte": 20, "end_byte": 32, "start_line": 2, "start_column": 1, "end_line": 2, "end_column": 13}},
+        "provenance": {"parser": "secure-tree-sitter-adapter-v1", "parser_version": "0.26.11", "grammar": "tree-sitter-typescript@0.23.2:typescript", "extractor_version": "secure-evidence-graph-v1"},
+        "fingerprint": "2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ],
+    "edges": [{
+      "edge_id": "ge_333333333333333333333333",
+      "kind": "source-to-sink-propagation",
+      "from_node": "gn_111111111111111111111111",
+      "to_node": "gn_222222222222222222222222",
+      "location": {"path": "app.ts", "span": {"start_byte": 20, "end_byte": 32, "start_line": 2, "start_column": 1, "end_line": 2, "end_column": 13}},
+      "provenance": {"parser": "secure-tree-sitter-adapter-v1", "parser_version": "0.26.11", "grammar": "tree-sitter-typescript@0.23.2:typescript", "extractor_version": "secure-evidence-graph-v1"},
+      "fingerprint": "3333333333333333333333333333333333333333333333333333333333333333"
+    }]
+  },
+  "analysis": {"nodes": 2, "edges": 1, "candidate_paths": 1, "rules_evaluated": 7, "findings": 1, "findings_suppressed": 0, "duration_ms": 1, "truncated": false},
+  "suppression_diagnostics": [],
+  "files": [{"path": "app.ts", "kind": "source", "size_bytes": 32, "content_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "language": "TypeScript", "origin": "project", "is_binary": false}],
+  "languages": [{"name": "TypeScript", "file_count": 1, "bytes": 32}],
+  "manifests": [],
+  "frameworks": [],
+  "entry_points": [],
+  "capabilities": [],
+  "trust_boundaries": [],
+  "findings": [{
+    "rule_id": "SE1001",
+    "finding_id": "fd_444444444444444444444444",
+    "title": "Untrusted input reaches command execution",
+    "category": "command-injection",
+    "severity": "high",
+    "confidence": "high",
+    "evidence": [
+      {"path": "app.ts", "span": {"start_byte": 0, "end_byte": 9, "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 10}},
+      {"path": "app.ts", "span": {"start_byte": 20, "end_byte": 32, "start_line": 2, "start_column": 1, "end_line": 2, "end_column": 13}}
+    ],
+    "source": {"path": "app.ts", "span": {"start_byte": 0, "end_byte": 9, "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 10}},
+    "transformations": [],
+    "guards": [],
+    "sink": {"path": "app.ts", "span": {"start_byte": 20, "end_byte": 32, "start_line": 2, "start_column": 1, "end_line": 2, "end_column": 13}},
+    "evidence_path": [
+      {"node_id": "gn_111111111111111111111111", "edge_id_from_previous": null, "kind": "source", "location": {"path": "app.ts", "span": {"start_byte": 0, "end_byte": 9, "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 10}}, "provenance": {"parser": "secure-tree-sitter-adapter-v1", "parser_version": "0.26.11", "grammar": "tree-sitter-typescript@0.23.2:typescript", "extractor_version": "secure-evidence-graph-v1"}, "fingerprint": "5555555555555555555555555555555555555555555555555555555555555555"},
+      {"node_id": "gn_222222222222222222222222", "edge_id_from_previous": "ge_333333333333333333333333", "kind": "sink", "location": {"path": "app.ts", "span": {"start_byte": 20, "end_byte": 32, "start_line": 2, "start_column": 1, "end_line": 2, "end_column": 13}}, "provenance": {"parser": "secure-tree-sitter-adapter-v1", "parser_version": "0.26.11", "grammar": "tree-sitter-typescript@0.23.2:typescript", "extractor_version": "secure-evidence-graph-v1"}, "fingerprint": "6666666666666666666666666666666666666666666666666666666666666666"}
+    ],
+    "invariant": "Command execution arguments must not be controlled by untrusted input",
+    "prerequisites": ["Attacker controls the request value"],
+    "impact": "Arbitrary command execution",
+    "remediation": "Use a fixed executable and allowlisted arguments",
+    "verification_state": "verified-deterministic-path",
+    "limitations": ["Bounded static analysis"],
+    "fingerprint": "4444444444444444444444444444444444444444444444444444444444444444"
+  }],
+  "limitations": [{"code": "bounded-interprocedural-analysis", "message": "Traversal is bounded"}],
+  "skipped_files": [],
+  "exclusions": [],
+  "errors": [],
+  "report_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

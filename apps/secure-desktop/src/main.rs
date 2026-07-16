@@ -166,6 +166,9 @@ impl SecureApp {
                 self.progress = f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0;
                 self.status = format!("Parsing {completed}/{total}: {path} ({parser_mode})");
             }
+            ProgressEvent::Analyzing { facts } => {
+                self.status = format!("Building evidence graph from {facts} facts…");
+            }
             ProgressEvent::Finalizing => self.status = "Finalizing deterministic report…".into(),
             ProgressEvent::Complete { files_scanned } => {
                 self.progress = 1.0;
@@ -232,9 +235,9 @@ impl eframe::App for SecureApp {
         });
 
         egui::CentralPanel::default().show(root_ui, |ui| {
-            ui.heading("Deterministic repository inventory");
+            ui.heading("Deterministic security evidence");
             ui.label(
-                "Phase 2 inventories and parses local syntax evidence; it does not claim vulnerabilities.",
+                "Phase 3 connects local syntax evidence into bounded graph paths and high-confidence rules.",
             );
             let controls_enabled = !self.scanning();
             ui.collapsing("Inventory controls", |ui| {
@@ -301,6 +304,30 @@ impl eframe::App for SecureApp {
                             ui.add(
                                 egui::DragValue::new(&mut self.controls.max_total_facts)
                                     .range(1..=10_000_000),
+                            );
+                            ui.end_row();
+                            ui.label("Graph nodes");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_graph_nodes)
+                                    .range(1..=10_000_000),
+                            );
+                            ui.label("Graph edges");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_graph_edges)
+                                    .range(1..=20_000_000),
+                            );
+                            ui.end_row();
+                            ui.label("Call traversal depth");
+                            ui.add(
+                                egui::DragValue::new(
+                                    &mut self.controls.max_interprocedural_depth,
+                                )
+                                .range(1..=32),
+                            );
+                            ui.label("Max findings");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_findings)
+                                    .range(1..=1_000_000),
                             );
                             ui.end_row();
                             ui.label("Max depth (0 = unlimited)");
@@ -391,6 +418,19 @@ impl eframe::App for SecureApp {
                     summary_row(ui, "Findings", &report.findings.len().to_string());
                     summary_row(
                         ui,
+                        "Graph nodes / edges",
+                        &format!("{} / {}", report.analysis.nodes, report.analysis.edges),
+                    );
+                    summary_row(
+                        ui,
+                        "Candidate / suppressed paths",
+                        &format!(
+                            "{} / {}",
+                            report.analysis.candidate_paths, report.analysis.findings_suppressed
+                        ),
+                    );
+                    summary_row(
+                        ui,
                         "Parsed files",
                         &format!(
                             "{} / {}",
@@ -444,6 +484,35 @@ impl eframe::App for SecureApp {
                 ui.collapsing("Analysis limitations", |ui| {
                     for limitation in &report.limitations {
                         ui.label(format!("{} — {}", limitation.code, limitation.message));
+                    }
+                });
+                ui.collapsing("Findings and evidence paths", |ui| {
+                    for finding in &report.findings {
+                        ui.strong(format!(
+                            "{} — {} [{} / {}]",
+                            finding.rule_id,
+                            finding.title,
+                            finding.severity,
+                            finding.confidence
+                        ));
+                        ui.label(format!("Finding ID: {}", finding.finding_id));
+                        for (index, step) in finding.evidence_path.iter().enumerate() {
+                            ui.label(format!(
+                                "{}. {} — {}:{}:{}",
+                                index.saturating_add(1),
+                                step.kind,
+                                step.location.path,
+                                step.location.span.start_line,
+                                step.location.span.start_column
+                            ));
+                        }
+                        ui.separator();
+                    }
+                    for diagnostic in &report.suppression_diagnostics {
+                        ui.label(format!(
+                            "Suppression {} — {}",
+                            diagnostic.code, diagnostic.message
+                        ));
                     }
                 });
                 ui.collapsing("Normalized syntax facts", |ui| {

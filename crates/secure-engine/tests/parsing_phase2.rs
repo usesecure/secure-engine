@@ -42,7 +42,7 @@ fn fact_kinds(report: &ScanReport) -> Vec<&str> {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn all_four_modes_emit_precise_normalized_evidence_without_vulnerability_claims()
+fn all_four_modes_preserve_precise_normalized_evidence_for_phase_three()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = fixture();
     let report = scan_repository(
@@ -139,7 +139,12 @@ fn all_four_modes_emit_precise_normalized_evidence_without_vulnerability_claims(
             .iter()
             .any(|fact| { fact.kind == "module-import" && fact.location.path == "src/broken.ts" })
     );
-    assert!(report.findings.is_empty());
+    assert!(
+        report
+            .findings
+            .iter()
+            .all(|finding| !finding.evidence_path.is_empty())
+    );
 
     let schema: serde_json::Value = serde_json::from_str(SECURE_JSON_V1_SCHEMA)?;
     let validator = jsonschema::validator_for(&schema)?;
@@ -421,5 +426,11 @@ fn remove_volatile_fields(report: &mut serde_json::Value) {
         ] {
             parsing.remove(field);
         }
+    }
+    if let Some(analysis) = report
+        .get_mut("analysis")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        analysis.remove("duration_ms");
     }
 }

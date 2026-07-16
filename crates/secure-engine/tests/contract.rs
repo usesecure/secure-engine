@@ -32,9 +32,13 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     let phase_two: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
         "fixtures/secure-json-v1/phase2-report.json",
     ))?)?;
+    let phase_three: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
+        "fixtures/secure-json-v1/phase3-report.json",
+    ))?)?;
     assert!(validator.is_valid(&valid));
     assert!(validator.is_valid(&phase_one));
     assert!(validator.is_valid(&phase_two));
+    assert!(validator.is_valid(&phase_three));
     assert!(!validator.is_valid(&malformed));
     assert!(!validator.is_valid(&incompatible));
     let legacy_report: ScanReport = serde_json::from_value(valid)?;
@@ -49,6 +53,11 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     assert_eq!(legacy_report.parsing.files_parsed, 0);
     assert!(legacy_report.facts.is_empty());
     assert!(legacy_report.parser_diagnostics.is_empty());
+    assert!(legacy_report.graph.nodes.is_empty());
+    assert_eq!(legacy_report.analysis.rules_evaluated, 0);
+    let phase_three: ScanReport = serde_json::from_value(phase_three)?;
+    assert_eq!(phase_three.graph.nodes.len(), 2);
+    assert_eq!(phase_three.findings[0].evidence_path.len(), 2);
     Ok(())
 }
 
@@ -99,6 +108,12 @@ fn repeated_json_differs_only_in_documented_volatile_fields()
         scan.remove("started_at");
         scan.remove("finished_at");
         scan.remove("duration_ms");
+        if let Some(analysis) = report
+            .get_mut("analysis")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            analysis.remove("duration_ms");
+        }
     }
     assert_eq!(first_json, second_json);
     Ok(())

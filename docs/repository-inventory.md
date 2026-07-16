@@ -24,4 +24,4 @@ Nested directories containing a `.git` directory or gitfile are treated as repos
 
 The report exports paths, classification, sizes, and BLAKE3 fingerprints, never source contents or host-absolute roots. Excluded inputs are summarized only by reason and count, so ignored filenames are not disclosed. Skipped included files may be named with a repository-relative path so users can audit resource and symlink decisions.
 
-Phase 1 inventory does not itself claim semantic language support or vulnerability detection. Phase 2 parses only supported JavaScript/TypeScript inputs after this boundary; binary classification and framework identification remain bounded inventory heuristics.
+Inventory does not itself claim vulnerability detection. Phase 2 parsing and Phase 3 graph/rule analysis run only on supported JavaScript/TypeScript inputs after this boundary; binary classification and framework identification remain bounded inventory heuristics.

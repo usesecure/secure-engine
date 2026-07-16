@@ -3,6 +3,7 @@ use std::ops::ControlFlow;
 use serde::{Deserialize, Serialize};
 use tree_sitter::{Node, ParseOptions, Parser};
 
+use crate::graph::{ProgramUnit, empty_program, extract_program, validate_program};
 use crate::{
     CancellationToken, FactRelationship, NormalizedFact, ParserDiagnostic, ParserProvenance,
     ScanConfiguration, ScanError, SourceLocation, SourceSpan,
@@ -68,6 +69,7 @@ pub(crate) struct ParseOutput {
     pub(crate) parsed: bool,
     pub(crate) facts: Vec<NormalizedFact>,
     pub(crate) diagnostics: Vec<ParserDiagnostic>,
+    pub(crate) program: ProgramUnit,
 }
 
 pub(crate) fn provenance(mode: ParserMode) -> ParserProvenance {
@@ -109,6 +111,7 @@ pub(crate) fn parse_source(
                 false,
                 &parser_provenance,
             )],
+            program: empty_program(path, &parser_provenance),
         });
     }
 
@@ -139,6 +142,7 @@ pub(crate) fn parse_source(
                 false,
                 &parser_provenance,
             )],
+            program: empty_program(path, &parser_provenance),
         });
     };
 
@@ -240,6 +244,15 @@ pub(crate) fn parse_source(
         );
     }
     check_cancelled(cancellation)?;
+    let program = extract_program(
+        path,
+        content,
+        root,
+        &parser_provenance,
+        global_use_server,
+        configuration.max_graph_nodes,
+        cancellation,
+    )?;
     facts.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
     facts.dedup_by(|left, right| left.fact_id == right.fact_id);
     diagnostics.sort_by(|left, right| left.diagnostic_id.cmp(&right.diagnostic_id));
@@ -249,6 +262,7 @@ pub(crate) fn parse_source(
         parsed: true,
         facts,
         diagnostics,
+        program,
     })
 }
 
@@ -304,7 +318,13 @@ pub(crate) fn validate_cached_output(
             .diagnostic_id
                 == item.diagnostic_id
     });
-    facts_are_valid && diagnostics_are_valid
+    facts_are_valid
+        && diagnostics_are_valid
+        && validate_program(
+            &output.program,
+            expected_path,
+            configuration.max_graph_nodes,
+        )
 }
 
 fn diagnostic_recoverable(code: &str) -> Option<bool> {

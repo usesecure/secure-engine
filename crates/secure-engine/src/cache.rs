@@ -7,6 +7,7 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+use crate::graph::GRAPH_EXTRACTOR_VERSION;
 use crate::parser::{
     EXTRACTOR_VERSION, PARSER_ADAPTER_VERSION, ParseOutput, ParserMode, TREE_SITTER_VERSION,
     provenance, validate_cached_output,
@@ -108,6 +109,7 @@ impl ParseCache {
             PARSER_ADAPTER_VERSION.as_bytes(),
             TREE_SITTER_VERSION.as_bytes(),
             EXTRACTOR_VERSION.as_bytes(),
+            GRAPH_EXTRACTOR_VERSION.as_bytes(),
             parser_provenance.grammar.as_bytes(),
             &configuration,
         ] {

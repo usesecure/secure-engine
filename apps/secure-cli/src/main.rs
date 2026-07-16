@@ -9,7 +9,8 @@ use std::process::ExitCode;
 use clap::{Args, Parser, Subcommand};
 use secure_engine::{
     CacheControl, CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ProgressEvent,
-    SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError, ScanRequest, scan_repository,
+    SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError, ScanReport, ScanRequest, Suppression,
+    explain_finding, rules, scan_repository,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -40,6 +41,13 @@ enum Command {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    /// Inspect deterministic built-in rules.
+    Rules {
+        #[command(subcommand)]
+        command: RulesCommand,
+    },
+    /// Explain one finding from a completed secure-json-v1 report.
+    Explain(ExplainArgs),
 }
 
 #[derive(Debug, Args)]
@@ -47,7 +55,7 @@ enum Command {
 struct ScanArgs {
     /// Local repository directory.
     repository: PathBuf,
-    /// Machine format. Phase 2 preserves secure-json-v1 additively.
+    /// Machine format. Phase 3 preserves secure-json-v1 additively.
     #[arg(long, default_value = SCHEMA_VERSION)]
     format: String,
     /// Atomically write the report here instead of stdout.
@@ -110,11 +118,26 @@ struct ScanArgs {
     /// Maximum normalized facts retained across the report.
     #[arg(long, default_value_t = 100_000)]
     max_total_facts: usize,
+    /// Maximum evidence-graph nodes retained.
+    #[arg(long, default_value_t = 250_000)]
+    max_graph_nodes: usize,
+    /// Maximum evidence-graph edges retained.
+    #[arg(long, default_value_t = 500_000)]
+    max_graph_edges: usize,
+    /// Maximum bounded local inter-procedural traversal depth.
+    #[arg(long, default_value_t = 4)]
+    max_interprocedural_depth: usize,
+    /// Maximum findings retained after deduplication.
+    #[arg(long, default_value_t = 10_000)]
+    max_findings: usize,
+    /// Exact suppression: `RULE_ID:RELATIVE_PATH:START_BYTE:REASON`. Repeatable.
+    #[arg(long = "suppress", value_name = "RULE:PATH:BYTE:REASON")]
+    suppressions: Vec<String>,
 }
 
 #[derive(Debug, Args)]
 struct FormatArgs {
-    /// Machine format. Phase 2 preserves secure-json-v1 additively.
+    /// Machine format. Phase 3 preserves secure-json-v1 additively.
     #[arg(long, default_value = SCHEMA_VERSION)]
     format: String,
 }
@@ -126,6 +149,21 @@ enum SchemaCommand {
         /// Schema identifier.
         schema: String,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum RulesCommand {
+    /// Print the stable deterministic rule catalog as JSON.
+    List,
+}
+
+#[derive(Debug, Args)]
+struct ExplainArgs {
+    /// Stable finding identifier.
+    finding_id: String,
+    /// Completed secure-json-v1 scan report to inspect.
+    #[arg(long, value_name = "REPORT")]
+    report: PathBuf,
 }
 
 fn main() -> ExitCode {
@@ -145,6 +183,10 @@ fn run(cli: Cli) -> Result<u8, (u8, String)> {
         Command::Schema {
             command: SchemaCommand::Print { schema },
         } => print_schema(&schema),
+        Command::Rules {
+            command: RulesCommand::List,
+        } => list_rules(),
+        Command::Explain(arguments) => explain(&arguments),
     }
 }
 
@@ -158,6 +200,10 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
         || arguments.max_parser_diagnostics == 0
         || arguments.max_facts_per_file == 0
         || arguments.max_total_facts == 0
+        || arguments.max_graph_nodes == 0
+        || arguments.max_graph_edges == 0
+        || arguments.max_interprocedural_depth == 0
+        || arguments.max_findings == 0
     {
         return Err((
             EXIT_INVALID_INPUT,
@@ -192,6 +238,15 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     request.configuration.max_parser_diagnostics = arguments.max_parser_diagnostics;
     request.configuration.max_facts_per_file = arguments.max_facts_per_file;
     request.configuration.max_total_facts = arguments.max_total_facts;
+    request.configuration.max_graph_nodes = arguments.max_graph_nodes;
+    request.configuration.max_graph_edges = arguments.max_graph_edges;
+    request.configuration.max_interprocedural_depth = arguments.max_interprocedural_depth;
+    request.configuration.max_findings = arguments.max_findings;
+    request.configuration.suppressions = arguments
+        .suppressions
+        .iter()
+        .map(|value| parse_suppression(value))
+        .collect::<Result<Vec<_>, _>>()?;
     request.cache = CacheControl {
         directory: arguments.cache_dir,
         clear_before_scan: arguments.clear_cache,
@@ -242,7 +297,7 @@ fn run_doctor(format: &str) -> Result<u8, (u8, String)> {
             DoctorCheck {
                 name: "advanced-rules".into(),
                 status: "warn".into(),
-                detail: "Phase 2 provides normalized JavaScript and TypeScript syntax evidence; vulnerability rules are not enabled".into(),
+                detail: "Phase 3 provides a bounded evidence graph and seven deterministic JavaScript and TypeScript rules".into(),
             },
         ],
     };
@@ -254,6 +309,71 @@ fn run_doctor(format: &str) -> Result<u8, (u8, String)> {
     })?;
     write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
     Ok(0)
+}
+
+fn list_rules() -> Result<u8, (u8, String)> {
+    let bytes = serde_json::to_vec_pretty(&rules()).map_err(|_| {
+        (
+            EXIT_INTERNAL_FAILURE,
+            "rule catalog could not be serialized".into(),
+        )
+    })?;
+    write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
+    Ok(0)
+}
+
+fn explain(arguments: &ExplainArgs) -> Result<u8, (u8, String)> {
+    let metadata = fs::metadata(&arguments.report)
+        .map_err(|_| (EXIT_INVALID_INPUT, "report could not be read".into()))?;
+    if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "report must be a regular file no larger than 64 MiB".into(),
+        ));
+    }
+    let bytes = fs::read(&arguments.report)
+        .map_err(|_| (EXIT_INVALID_INPUT, "report could not be read".into()))?;
+    let report = serde_json::from_slice::<ScanReport>(&bytes).map_err(|_| {
+        (
+            EXIT_INVALID_INPUT,
+            "report is not a compatible scan report".into(),
+        )
+    })?;
+    require_schema(&report.schema_version)?;
+    let finding = explain_finding(&report, &arguments.finding_id).ok_or_else(|| {
+        (
+            EXIT_INVALID_INPUT,
+            "finding ID was not present in the report".into(),
+        )
+    })?;
+    let output = serde_json::to_vec_pretty(finding).map_err(|_| {
+        (
+            EXIT_INTERNAL_FAILURE,
+            "finding explanation could not be serialized".into(),
+        )
+    })?;
+    write_stdout(&output).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
+    Ok(0)
+}
+
+fn parse_suppression(value: &str) -> Result<Suppression, (u8, String)> {
+    let mut fields = value.splitn(4, ':');
+    let rule_id = fields.next().unwrap_or_default();
+    let path = fields.next().unwrap_or_default();
+    let start_byte = fields.next().and_then(|field| field.parse::<u64>().ok());
+    let reason = fields.next().unwrap_or_default();
+    if rule_id.is_empty() || path.is_empty() || start_byte.is_none() || reason.is_empty() {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "suppression must be RULE_ID:RELATIVE_PATH:START_BYTE:REASON".into(),
+        ));
+    }
+    Ok(Suppression {
+        rule_id: rule_id.into(),
+        path: path.into(),
+        start_byte: start_byte.unwrap_or_default(),
+        reason: reason.into(),
+    })
 }
 
 fn print_schema(schema: &str) -> Result<u8, (u8, String)> {
@@ -299,6 +419,9 @@ fn print_progress(event: &ProgressEvent) {
             if *completed == 0 || completed.saturating_add(1) == *total || completed % 100 == 0 {
                 eprintln!("secure: parsing {completed}/{total} ({parser_mode})");
             }
+        }
+        ProgressEvent::Analyzing { facts } => {
+            eprintln!("secure: building evidence graph from {facts} facts");
         }
         ProgressEvent::Finalizing => eprintln!("secure: finalizing deterministic report"),
         ProgressEvent::Complete { files_scanned } => {

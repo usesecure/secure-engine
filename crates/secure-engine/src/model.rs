@@ -14,7 +14,7 @@ pub struct ScanRequest {
 }
 
 impl ScanRequest {
-    /// Creates a request with safe Phase 2 inventory, parsing, and cache defaults.
+    /// Creates a request with safe bounded inventory, parsing, graph, rule, and cache defaults.
     #[must_use]
     pub fn new(repository: impl Into<PathBuf>) -> Self {
         Self {
@@ -73,6 +73,16 @@ pub struct ScanConfiguration {
     pub max_facts_per_file: usize,
     /// Maximum normalized facts retained across the report.
     pub max_total_facts: usize,
+    /// Maximum graph nodes retained across the repository.
+    pub max_graph_nodes: usize,
+    /// Maximum graph edges retained across the repository.
+    pub max_graph_edges: usize,
+    /// Maximum bounded local inter-procedural traversal depth.
+    pub max_interprocedural_depth: usize,
+    /// Maximum policy findings retained after deterministic deduplication.
+    pub max_findings: usize,
+    /// Exact, auditable suppressions applied after deterministic rule evaluation.
+    pub suppressions: Vec<Suppression>,
 }
 
 impl Default for ScanConfiguration {
@@ -95,6 +105,11 @@ impl Default for ScanConfiguration {
             max_parser_diagnostics: 1_000,
             max_facts_per_file: 10_000,
             max_total_facts: 100_000,
+            max_graph_nodes: 250_000,
+            max_graph_edges: 500_000,
+            max_interprocedural_depth: 4,
+            max_findings: 10_000,
+            suppressions: Vec::new(),
         }
     }
 }
@@ -129,6 +144,15 @@ pub struct ScanReport {
     /// Per-parser-mode coverage for supported inputs.
     #[serde(default)]
     pub parser_coverage: Vec<ParserCoverage>,
+    /// Deterministic Phase 3 evidence graph owned by Secure Engine.
+    #[serde(default)]
+    pub graph: EvidenceGraph,
+    /// Aggregate graph-construction and rule-execution measurements.
+    #[serde(default)]
+    pub analysis: AnalysisSummary,
+    /// Auditable invalid, stale, or applied suppression results.
+    #[serde(default)]
+    pub suppression_diagnostics: Vec<SuppressionDiagnostic>,
     /// Regular files that were successfully inventoried.
     pub files: Vec<FileRecord>,
     /// Aggregated detected languages.
@@ -143,7 +167,7 @@ pub struct ScanReport {
     pub capabilities: Vec<CapabilityEvidence>,
     /// Trust-boundary evidence suitable for later agent review.
     pub trust_boundaries: Vec<TrustBoundaryEvidence>,
-    /// Normalized deterministic findings. Empty during Phase 2 syntax analysis.
+    /// Normalized deterministic findings backed by Phase 3 evidence paths.
     pub findings: Vec<Finding>,
     /// Known limitations of this analysis.
     pub limitations: Vec<Limitation>,
@@ -326,6 +350,135 @@ pub struct ParserCoverage {
     pub facts_extracted: usize,
 }
 
+/// An exact project-level policy suppression.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct Suppression {
+    /// Stable rule identifier being suppressed.
+    pub rule_id: String,
+    /// Repository-relative sink path.
+    pub path: String,
+    /// Exact zero-based sink start byte.
+    pub start_byte: u64,
+    /// Human-auditable justification.
+    pub reason: String,
+}
+
+/// Deterministic Secure Engine-owned evidence graph.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EvidenceGraph {
+    /// Stable nodes sorted by node identifier.
+    pub nodes: Vec<EvidenceNode>,
+    /// Stable edges sorted by edge identifier.
+    pub edges: Vec<EvidenceEdge>,
+}
+
+/// A stable graph node with precise repository-local evidence.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct EvidenceNode {
+    /// Stable node identifier.
+    pub node_id: String,
+    /// File, module, function, handler, source, transformation, guard, sanitizer, or sink.
+    pub kind: String,
+    /// Optional normalized structural name.
+    pub name: Option<String>,
+    /// Exact repository-relative evidence.
+    pub location: SourceLocation,
+    /// Parser and graph-extractor provenance.
+    pub provenance: ParserProvenance,
+    /// Stable content-independent node fingerprint.
+    pub fingerprint: String,
+}
+
+/// A stable directed graph relationship.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct EvidenceEdge {
+    /// Stable edge identifier.
+    pub edge_id: String,
+    /// Containment, imports, calls, argument-flow, returns, assignment, control-flow,
+    /// guard-dominance, sanitization, or source-to-sink.
+    pub kind: String,
+    /// Source node identifier.
+    pub from_node: String,
+    /// Target node identifier.
+    pub to_node: String,
+    /// Exact evidence anchoring the relationship.
+    pub location: SourceLocation,
+    /// Graph extractor provenance.
+    pub provenance: ParserProvenance,
+    /// Stable edge fingerprint.
+    pub fingerprint: String,
+}
+
+/// One ordered element of a reproducible source-to-sink path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EvidencePathStep {
+    /// Stable node identifier.
+    pub node_id: String,
+    /// Edge used from the preceding step, absent for the source.
+    pub edge_id_from_previous: Option<String>,
+    /// Node role in this path.
+    pub kind: String,
+    /// Exact repository-relative evidence.
+    pub location: SourceLocation,
+    /// Parser and graph-extractor provenance.
+    pub provenance: ParserProvenance,
+    /// Stable step fingerprint.
+    pub fingerprint: String,
+}
+
+/// Public metadata for one deterministic built-in rule.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct RuleMetadata {
+    /// Stable rule identifier.
+    pub rule_id: String,
+    /// Short rule title.
+    pub title: String,
+    /// Security category.
+    pub category: String,
+    /// Default impact severity.
+    pub severity: String,
+    /// Default evidence confidence.
+    pub confidence: String,
+    /// Security invariant enforced by the rule.
+    pub invariant: String,
+}
+
+/// Aggregate deterministic analysis results. Duration is volatile.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AnalysisSummary {
+    /// Graph nodes retained.
+    pub nodes: usize,
+    /// Graph edges retained.
+    pub edges: usize,
+    /// Candidate evidence paths evaluated.
+    pub candidate_paths: usize,
+    /// Built-in rules evaluated.
+    pub rules_evaluated: usize,
+    /// Findings emitted after deduplication and suppressions.
+    pub findings: usize,
+    /// Findings removed by valid exact suppressions.
+    pub findings_suppressed: usize,
+    /// Wall-clock graph and rule execution time in milliseconds; volatile.
+    pub duration_ms: u64,
+    /// Whether a configured graph or finding bound was reached.
+    pub truncated: bool,
+}
+
+/// Auditable suppression validation or application result.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SuppressionDiagnostic {
+    /// Stable diagnostic identifier.
+    pub suppression_id: String,
+    /// `applied`, `invalid-rule`, `invalid-scope`, `invalid-reason`, or `stale`.
+    pub code: String,
+    /// Stable rule identifier supplied by the project.
+    pub rule_id: String,
+    /// Repository-relative scope when valid.
+    pub path: Option<String>,
+    /// Sanitized deterministic explanation.
+    pub message: String,
+}
+
 /// Stable repository-relative location.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SourceLocation {
@@ -464,6 +617,21 @@ pub struct Finding {
     pub confidence: String,
     /// Primary source evidence.
     pub evidence: Vec<SourceLocation>,
+    /// Exact untrusted source starting the demonstrated path.
+    #[serde(default)]
+    pub source: Option<SourceLocation>,
+    /// Ordered transformation evidence between source and sink.
+    #[serde(default)]
+    pub transformations: Vec<SourceLocation>,
+    /// Guards encountered on the demonstrated path.
+    #[serde(default)]
+    pub guards: Vec<SourceLocation>,
+    /// Exact sensitive sink reached by the demonstrated path.
+    #[serde(default)]
+    pub sink: Option<SourceLocation>,
+    /// Ordered reproducible graph path from source or handler to sink.
+    #[serde(default)]
+    pub evidence_path: Vec<EvidencePathStep>,
     /// Security invariant claimed to be violated.
     pub invariant: String,
     /// Preconditions needed for exploitation.
@@ -549,6 +717,11 @@ pub enum ProgressEvent {
         path: String,
         /// `javascript`, `jsx`, `typescript`, or `tsx`.
         parser_mode: String,
+    },
+    /// Phase 3 graph construction and deterministic rule execution has begun.
+    Analyzing {
+        /// Normalized facts available as graph inputs.
+        facts: usize,
     },
     /// Report normalization and fingerprints are being finalized.
     Finalizing,

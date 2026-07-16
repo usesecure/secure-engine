@@ -75,7 +75,26 @@
         "max_cache_bytes": { "type": "integer", "minimum": 1, "maximum": 17179869184 },
         "max_parser_diagnostics": { "type": "integer", "minimum": 1, "maximum": 100000 },
         "max_facts_per_file": { "type": "integer", "minimum": 1, "maximum": 100000 },
-        "max_total_facts": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+        "max_total_facts": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "max_graph_nodes": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "max_graph_edges": { "type": "integer", "minimum": 1, "maximum": 20000000 },
+        "max_interprocedural_depth": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "max_findings": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "suppressions": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": { "$ref": "#/$defs/suppression" }
+        }
+      }
+    },
+    "suppression": {
+      "type": "object",
+      "required": ["rule_id", "path", "start_byte", "reason"],
+      "properties": {
+        "rule_id": { "type": "string", "pattern": "^SE[0-9]{4}$" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "start_byte": { "type": "integer", "minimum": 0 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1024 }
       }
     },
     "repository": {
@@ -283,6 +302,11 @@
         "severity": { "enum": ["info", "low", "medium", "high", "critical"] },
         "confidence": { "enum": ["low", "medium", "high"] },
         "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/location" } },
+        "source": { "oneOf": [{ "$ref": "#/$defs/location" }, { "type": "null" }] },
+        "transformations": { "type": "array", "items": { "$ref": "#/$defs/location" } },
+        "guards": { "type": "array", "items": { "$ref": "#/$defs/location" } },
+        "sink": { "oneOf": [{ "$ref": "#/$defs/location" }, { "type": "null" }] },
+        "evidence_path": { "type": "array", "items": { "$ref": "#/$defs/evidencePathStep" } },
         "invariant": { "type": "string", "minLength": 1 },
         "prerequisites": { "type": "array", "items": { "type": "string" } },
         "impact": { "type": "string", "minLength": 1 },
@@ -290,6 +314,76 @@
         "verification_state": { "type": "string", "minLength": 1 },
         "limitations": { "type": "array", "items": { "type": "string" } },
         "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "evidenceNode": {
+      "type": "object",
+      "required": ["node_id", "kind", "name", "location", "provenance", "fingerprint"],
+      "properties": {
+        "node_id": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
+        "kind": { "type": "string", "minLength": 1 },
+        "name": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 512 }, { "type": "null" }] },
+        "location": { "$ref": "#/$defs/location" },
+        "provenance": { "$ref": "#/$defs/parserProvenance" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "evidenceEdge": {
+      "type": "object",
+      "required": ["edge_id", "kind", "from_node", "to_node", "location", "provenance", "fingerprint"],
+      "properties": {
+        "edge_id": { "type": "string", "pattern": "^ge_[0-9a-f]{24}$" },
+        "kind": { "type": "string", "minLength": 1 },
+        "from_node": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
+        "to_node": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
+        "location": { "$ref": "#/$defs/location" },
+        "provenance": { "$ref": "#/$defs/parserProvenance" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "evidenceGraph": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": { "type": "array", "maxItems": 10000000, "items": { "$ref": "#/$defs/evidenceNode" } },
+        "edges": { "type": "array", "maxItems": 20000000, "items": { "$ref": "#/$defs/evidenceEdge" } }
+      }
+    },
+    "evidencePathStep": {
+      "type": "object",
+      "required": ["node_id", "edge_id_from_previous", "kind", "location", "provenance", "fingerprint"],
+      "properties": {
+        "node_id": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
+        "edge_id_from_previous": { "oneOf": [{ "type": "string", "pattern": "^ge_[0-9a-f]{24}$" }, { "type": "null" }] },
+        "kind": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "provenance": { "$ref": "#/$defs/parserProvenance" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "required": ["nodes", "edges", "candidate_paths", "rules_evaluated", "findings", "findings_suppressed", "duration_ms", "truncated"],
+      "properties": {
+        "nodes": { "type": "integer", "minimum": 0 },
+        "edges": { "type": "integer", "minimum": 0 },
+        "candidate_paths": { "type": "integer", "minimum": 0 },
+        "rules_evaluated": { "type": "integer", "minimum": 0 },
+        "findings": { "type": "integer", "minimum": 0 },
+        "findings_suppressed": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "suppressionDiagnostic": {
+      "type": "object",
+      "required": ["suppression_id", "code", "rule_id", "path", "message"],
+      "properties": {
+        "suppression_id": { "type": "string", "pattern": "^sd_[0-9a-f]{24}$" },
+        "code": { "enum": ["applied", "invalid-rule", "invalid-scope", "invalid-reason", "stale"] },
+        "rule_id": { "type": "string", "minLength": 1 },
+        "path": { "oneOf": [{ "$ref": "#/$defs/relativePath" }, { "type": "null" }] },
+        "message": { "type": "string", "minLength": 1 }
       }
     },
     "limitation": {
@@ -340,6 +434,9 @@
         "facts": { "type": "array", "items": { "$ref": "#/$defs/normalizedFact" } },
         "parser_diagnostics": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/parserDiagnostic" } },
         "parser_coverage": { "type": "array", "items": { "$ref": "#/$defs/parserCoverage" } },
+        "graph": { "$ref": "#/$defs/evidenceGraph" },
+        "analysis": { "$ref": "#/$defs/analysis" },
+        "suppression_diagnostics": { "type": "array", "items": { "$ref": "#/$defs/suppressionDiagnostic" } },
         "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
         "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
         "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } },

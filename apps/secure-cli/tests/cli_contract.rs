@@ -166,9 +166,70 @@ fn malformed_phase_one_controls_use_invalid_input_exit_code()
         "--max-parser-diagnostics",
         "--max-facts-per-file",
         "--max-total-facts",
+        "--max-graph-nodes",
+        "--max-graph-edges",
+        "--max-interprocedural-depth",
+        "--max-findings",
+        "--suppress",
     ] {
         assert!(help_text.contains(flag), "missing {flag}");
     }
+    Ok(())
+}
+
+#[test]
+fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std::error::Error>> {
+    let output = secure().args(["rules", "list"]).output()?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let catalog: Vec<secure_engine::RuleMetadata> = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(catalog.len(), 7);
+    assert_eq!(
+        catalog.first().map(|rule| rule.rule_id.as_str()),
+        Some("SE1001")
+    );
+    assert_eq!(
+        catalog.last().map(|rule| rule.rule_id.as_str()),
+        Some("SE1007")
+    );
+    Ok(())
+}
+
+#[test]
+fn policy_exit_and_finding_explanation_use_the_shared_report()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let report_path = temporary.path().join("phase3.json");
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/phase3-rules");
+    let scan = secure()
+        .args(["scan", fixture, "--no-cache", "--output"])
+        .arg(&report_path)
+        .output()?;
+    assert_eq!(scan.status.code(), Some(1));
+    assert!(scan.stdout.is_empty());
+    let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    let finding_id = report["findings"][0]["finding_id"]
+        .as_str()
+        .ok_or("missing finding ID")?;
+    let explained = secure()
+        .args(["explain", finding_id, "--report"])
+        .arg(&report_path)
+        .output()?;
+    assert!(explained.status.success());
+    let finding: serde_json::Value = serde_json::from_slice(&explained.stdout)?;
+    assert_eq!(finding["finding_id"], finding_id);
+    assert!(
+        finding["evidence_path"]
+            .as_array()
+            .is_some_and(|path| path.len() >= 2)
+    );
+
+    let missing = secure()
+        .args(["explain", "fd_000000000000000000000000", "--report"])
+        .arg(&report_path)
+        .output()?;
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(missing.stdout.is_empty());
     Ok(())
 }
 
@@ -183,11 +244,7 @@ fn phase_two_cli_reports_cold_and_warm_cache_results_without_path_leakage()
         .arg(&cache)
         .args(["--clear-cache", "--format", "secure-json-v1"])
         .output()?;
-    assert!(
-        cold.status.success(),
-        "{}",
-        String::from_utf8_lossy(&cold.stderr)
-    );
+    assert_eq!(cold.status.code(), Some(1));
     let cold_report: serde_json::Value = serde_json::from_slice(&cold.stdout)?;
     assert_eq!(cold_report["parsing"]["cache_hits"], 0);
     assert_eq!(cold_report["parsing"]["cache_misses"], 9);
@@ -202,7 +259,7 @@ fn phase_two_cli_reports_cold_and_warm_cache_results_without_path_leakage()
         .args(["scan", fixture, "--cache-dir"])
         .arg(&cache)
         .output()?;
-    assert!(warm.status.success());
+    assert_eq!(warm.status.code(), Some(1));
     let warm_report: serde_json::Value = serde_json::from_slice(&warm.stdout)?;
     assert_eq!(warm_report["parsing"]["cache_hits"], 9);
     assert_eq!(warm_report["parsing"]["cache_misses"], 0);
