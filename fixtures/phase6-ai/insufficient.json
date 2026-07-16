@@ -1,0 +1,10 @@
+{
+  "status": "insufficient-evidence",
+  "evidence_assessment": "missing",
+  "prerequisites": [],
+  "confidence_explanation": "The bounded payload does not contain enough evidence.",
+  "remediation_proposal": "Collect deterministic evidence before changing source.",
+  "verification_suggestions": ["Inspect the unresolved call boundary locally"],
+  "limitations": ["No additional files or tools were available"],
+  "uncertainty": "No conclusion can be supported from this payload."
+}

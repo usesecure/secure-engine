@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 
 use secure_engine::{
-    CacheControl, CancellationToken, ExportError, ExportFormat, Finding, ProgressEvent,
-    ScanConfiguration, ScanError, ScanReport, ScanRequest, SourceLocation, SourcePreview,
-    SourcePreviewError, Suppression,
+    AiAssessment, AiCache, AiError, AiPreview, AiProjectConfiguration, AiProvider, CacheControl,
+    CancellationToken, ExportError, ExportFormat, Finding, ProgressEvent, ScanConfiguration,
+    ScanError, ScanReport, ScanRequest, SourceLocation, SourcePreview, SourcePreviewError,
+    Suppression,
 };
 
 /// Native UI representation of shared inventory, parsing, graph, rule, and cache controls.
@@ -169,6 +170,33 @@ where
 {
     thread::spawn(move || {
         let result = inventory_repository(&request, &cancellation, progress);
+        complete(result);
+    })
+}
+
+/// Starts one explicitly consented AI assessment outside the render thread.
+pub fn spawn_ai_validation_worker<C>(
+    report: ScanReport,
+    preview: AiPreview,
+    configuration: AiProjectConfiguration,
+    provider: Box<dyn AiProvider>,
+    cache: Option<AiCache>,
+    cancellation: CancellationToken,
+    complete: C,
+) -> JoinHandle<()>
+where
+    C: FnOnce(Result<AiAssessment, AiError>) + Send + 'static,
+{
+    thread::spawn(move || {
+        let result = secure_engine::validate_finding_with_ai(
+            &report,
+            &preview,
+            &preview.consent_fingerprint,
+            &configuration,
+            provider.as_ref(),
+            cache.as_ref(),
+            &cancellation,
+        );
         complete(result);
     })
 }
@@ -598,6 +626,67 @@ mod tests {
         result?;
         assert!(output.is_file());
         export_handle.join().map_err(|_| "export worker panicked")?;
+        Ok(())
+    }
+
+    #[test]
+    fn ai_validation_worker_is_explicit_bounded_and_off_the_render_thread()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase3-rules");
+        let report = inventory_repository(
+            &ScanRequest::new(repository),
+            &CancellationToken::new(),
+            |_| {},
+        )?;
+        let finding_id = report
+            .findings
+            .first()
+            .map(|finding| finding.finding_id.clone())
+            .ok_or("missing finding")?;
+        let configuration = secure_engine::AiProjectConfiguration {
+            format: secure_engine::AI_CONFIG_FORMAT.into(),
+            enabled: true,
+            provider: "mock".into(),
+            model: "fixture-model".into(),
+            endpoint: None,
+            api_key_env: None,
+            recorded_response: None,
+            pricing: None,
+            limits: secure_engine::AiLimits::default(),
+        };
+        let preview = secure_engine::preview_finding(&report, &finding_id, &configuration)?;
+        let response = serde_json::json!({
+            "status": "insufficient-evidence",
+            "evidence_assessment": "missing",
+            "prerequisites": [],
+            "confidence_explanation": "The bounded payload is incomplete.",
+            "remediation_proposal": "Collect deterministic evidence first.",
+            "verification_suggestions": ["Inspect locally"],
+            "limitations": ["No tools were available"],
+            "uncertainty": "No conclusion can be supported."
+        });
+        let caller = thread::current().id();
+        let (sender, receiver) = mpsc::channel();
+        let handle = spawn_ai_validation_worker(
+            report,
+            preview,
+            configuration,
+            secure_engine::mock_provider(response),
+            None,
+            CancellationToken::new(),
+            move |result| {
+                let _ignored = sender.send((thread::current().id(), result));
+            },
+        );
+        let (worker, result) = receiver.recv()?;
+        assert_ne!(caller, worker);
+        assert_eq!(
+            result?.assessment.status,
+            secure_engine::AiAssessmentStatus::InsufficientEvidence
+        );
+        handle.join().map_err(|_| "AI worker panicked")?;
         Ok(())
     }
 }

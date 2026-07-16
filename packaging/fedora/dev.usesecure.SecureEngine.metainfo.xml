@@ -10,7 +10,7 @@
   </developer>
   <url type="homepage">https://github.com/usesecure/secure-engine</url>
   <description>
-    <p>Secure Engine scans local JavaScript and TypeScript repositories, presents reproducible evidence paths, and exports private JSON and SARIF reports.</p>
+    <p>Secure Engine scans local JavaScript, TypeScript, Rust, Python, and Go repositories, presents reproducible evidence paths, and exports private JSON and SARIF reports. Optional AI-assisted review is disabled by default and requires explicit payload consent.</p>
   </description>
   <launchable type="desktop-id">dev.usesecure.SecureEngine.desktop</launchable>
   <provides>

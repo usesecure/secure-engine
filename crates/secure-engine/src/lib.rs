@@ -1,5 +1,6 @@
 //! Deterministic local-first inventory, syntax facts, evidence graph, and rules shared by every interface.
 
+mod ai;
 mod baseline;
 mod cache;
 mod classify;
@@ -15,6 +16,7 @@ mod source;
 mod storage;
 mod workspace;
 
+pub use ai::*;
 pub use baseline::*;
 pub use export::*;
 pub use graph::rules;
@@ -38,3 +40,7 @@ pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Canonical, committed JSON Schema for the public process contract.
 pub const SECURE_JSON_V1_SCHEMA: &str = include_str!("../../../schemas/secure-json-v1.schema.json");
+
+/// Canonical strict schema for provider assessment bodies.
+pub const SECURE_AI_ASSESSMENT_V1_SCHEMA: &str =
+    include_str!("../../../schemas/secure-ai-assessment-v1.schema.json");

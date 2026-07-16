@@ -10,7 +10,8 @@ BuildArch:      x86_64
 %description
 Secure Engine provides a local-first security analysis CLI and native desktop
 application with deterministic evidence paths, baselines, history, JSON, and
-SARIF output.
+SARIF output. Optional AI-assisted validation is disabled by default and
+requires an exact payload preview and explicit consent.
 
 %global _build_id_links none
 %global debug_package %{nil}
@@ -30,6 +31,7 @@ install -Dpm0644 dev.usesecure.SecureEngine.svg %{buildroot}%{_datadir}/icons/hi
 
 %check
 %{buildroot}%{_bindir}/secure rules list >/dev/null
+%{buildroot}%{_bindir}/secure ai providers >/dev/null
 desktop-file-validate %{buildroot}%{_datadir}/applications/dev.usesecure.SecureEngine.desktop
 appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureEngine.metainfo.xml
 
@@ -43,6 +45,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 %{_datadir}/icons/hicolor/scalable/apps/dev.usesecure.SecureEngine.svg
 
 %changelog
+* Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.0-1
+- Phase 6 optional consented AI-assisted finding validation
+
 * Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.0-1
 - Phase 5 Rust, Python, Go, and mixed-monorepo analysis
 

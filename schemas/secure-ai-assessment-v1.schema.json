@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://usesecure.dev/schemas/secure-ai-assessment-v1.schema.json",
+  "title": "Secure Engine AI Assessment v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "evidence_assessment",
+    "prerequisites",
+    "confidence_explanation",
+    "remediation_proposal",
+    "verification_suggestions",
+    "limitations",
+    "uncertainty"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["supported", "questioned", "insufficient-evidence", "contradicted"]
+    },
+    "evidence_assessment": {
+      "type": "string",
+      "enum": ["supported", "questioned", "missing"]
+    },
+    "prerequisites": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "maxLength": 1000}
+    },
+    "confidence_explanation": {"type": "string", "maxLength": 4000},
+    "remediation_proposal": {"type": "string", "maxLength": 4000},
+    "verification_suggestions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "maxLength": 1000}
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"type": "string", "maxLength": 1000}
+    },
+    "uncertainty": {"type": "string", "maxLength": 4000}
+  }
+}

@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phases 0–4 are complete. Phase 5 expands the deterministic core to Rust, Python, and Go with pinned isolated parsers, shared normalized facts, the existing seven evidence-backed rules, mixed-monorepo support, and unchanged CLI/desktop/report boundaries. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
+Phases 0–5 are complete. Phase 6 adds optional AI-assisted validation as a separate, disabled-by-default layer over selected deterministic findings. Exact payload preview, per-operation consent, redaction, bounded provider calls, strict assessment schemas, provenance, private caching, and local deletion are enforced without changing Phase 5 findings or report fingerprints. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
 
 Build Secure Engine as a local-first Rust security analyzer with one reusable core, a CLI, and a small native desktop interface. The first implementation must establish a reliable foundation and a stable integration contract with `usesecure/secure-skill`; it must not attempt broad vulnerability detection yet.
 
@@ -82,7 +82,7 @@ Do not make Secure Engine install, import, or edit Secure Skill. Do not make Sec
 
 - No claim of detecting every vulnerability.
 - No cloud service or account system.
-- No source-code upload or AI provider integration.
+- No source-code upload; Phase 6 sends only the explicitly previewed, redacted structured finding payload when enabled and consented.
 - No automatic fixes.
 - No large rule library or shallow multi-language support.
 - No direct dependency between the two repositories.

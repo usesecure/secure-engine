@@ -1,0 +1,10 @@
+{
+  "status": "contradicted",
+  "evidence_assessment": "questioned",
+  "prerequisites": ["The supplied sanitization is bypassable"],
+  "confidence_explanation": "The supplied evidence shows a guard that contradicts the claimed path.",
+  "remediation_proposal": "Verify the deterministic rule before proposing a source change.",
+  "verification_suggestions": ["Add a safe-case regression fixture"],
+  "limitations": ["Assessment is limited to supplied evidence"],
+  "uncertainty": "Alternative paths were not supplied."
+}

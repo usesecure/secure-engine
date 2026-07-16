@@ -482,3 +482,120 @@ fn history_cli_lists_reopens_and_deletes_private_completed_scans()
     assert_eq!(missing.status.code(), Some(2));
     Ok(())
 }
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn ai_cli_previews_requires_exact_consent_and_uses_only_recorded_data()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let report_path = temporary.path().join("report.json");
+    let config_path = temporary.path().join("secure-ai.json");
+    let assessment_path = temporary.path().join("assessment.json");
+    let cache_path = temporary.path().join("ai-cache");
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/phase3-rules");
+    let response = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/phase6-ai/supported.json"
+    );
+    assert_eq!(
+        secure()
+            .args(["scan", fixture, "--no-cache", "--quiet", "--output"])
+            .arg(&report_path)
+            .status()?
+            .code(),
+        Some(1)
+    );
+    let report_before = fs::read(&report_path)?;
+    let report: serde_json::Value = serde_json::from_slice(&report_before)?;
+    let finding_id = report["findings"][0]["finding_id"]
+        .as_str()
+        .ok_or("missing finding ID")?;
+    fs::write(
+        &config_path,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "format": "secure-ai-config-v1",
+            "enabled": true,
+            "provider": "recorded",
+            "model": "fixture-model",
+            "endpoint": null,
+            "api_key_env": null,
+            "recorded_response": response,
+            "limits": {
+                "max_findings": 10,
+                "max_payload_bytes": 32768,
+                "max_output_tokens": 1200,
+                "timeout_seconds": 30,
+                "max_evidence_locations": 24,
+                "max_string_chars": 4000,
+                "max_cost_microunits": null
+            }
+        }))?,
+    )?;
+
+    let providers = secure().args(["ai", "providers"]).output()?;
+    assert!(providers.status.success());
+    let descriptors: serde_json::Value = serde_json::from_slice(&providers.stdout)?;
+    assert!(
+        descriptors
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["id"] == "openai-responses"))
+    );
+
+    let previewed = secure()
+        .args(["ai", "preview", finding_id, "--report"])
+        .arg(&report_path)
+        .args(["--provider", "recorded", "--config"])
+        .arg(&config_path)
+        .output()?;
+    assert!(
+        previewed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&previewed.stderr)
+    );
+    let previews: serde_json::Value = serde_json::from_slice(&previewed.stdout)?;
+    let consent = previews[0]["consent_fingerprint"]
+        .as_str()
+        .ok_or("missing consent fingerprint")?;
+    assert_eq!(previews[0]["network_request"], false);
+    assert!(String::from_utf8_lossy(&previewed.stderr).contains("exact consent"));
+
+    let refused = secure()
+        .args(["ai", "validate", finding_id, "--report"])
+        .arg(&report_path)
+        .args(["--provider", "recorded", "--config"])
+        .arg(&config_path)
+        .output()?;
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(refused.stdout.is_empty());
+
+    let validated = secure()
+        .args(["ai", "validate", finding_id, "--report"])
+        .arg(&report_path)
+        .args(["--provider", "recorded", "--config"])
+        .arg(&config_path)
+        .args(["--consent", consent, "--cache-dir"])
+        .arg(&cache_path)
+        .arg("--output")
+        .arg(&assessment_path)
+        .output()?;
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    assert!(validated.stdout.is_empty());
+    let document: serde_json::Value = serde_json::from_slice(&fs::read(&assessment_path)?)?;
+    assert_eq!(document["format"], "secure-ai-validation-v1");
+    assert_eq!(
+        document["assessments"][0]["assessment"]["status"],
+        "supported"
+    );
+    assert_eq!(fs::read(&report_path)?, report_before);
+
+    let cleared = secure()
+        .args(["ai", "cache", "clear", "--cache-dir"])
+        .arg(&cache_path)
+        .output()?;
+    assert!(cleared.status.success());
+    Ok(())
+}

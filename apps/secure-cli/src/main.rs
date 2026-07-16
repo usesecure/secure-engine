@@ -2,16 +2,19 @@
 
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use secure_engine::{
-    Baseline, CacheControl, CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION,
-    ExportFormat, HistoryStore, ProgressEvent, SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError,
-    ScanReport, ScanRequest, Suppression, compare_baseline, create_baseline,
-    default_history_directory, explain_finding, rules, scan_repository, serialize_export,
-    validate_baseline, write_export, write_json_artifact,
+    AiCache, AiError, AiProjectConfiguration, AiValidationDocument, Baseline, CacheControl,
+    CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ExportFormat, HistoryStore,
+    ProgressEvent, SCHEMA_VERSION, SECURE_AI_ASSESSMENT_V1_SCHEMA, SECURE_JSON_V1_SCHEMA,
+    ScanError, ScanReport, ScanRequest, Suppression, compare_baseline, configured_provider,
+    create_baseline, default_ai_cache_directory, default_history_directory, explain_finding,
+    preview_finding, provider_descriptors, read_ai_configuration, rules, scan_repository,
+    serialize_export, validate_baseline, validate_finding_with_ai, validation_document,
+    write_export, write_json_artifact,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -59,6 +62,93 @@ enum Command {
         #[command(subcommand)]
         command: HistoryCommand,
     },
+    /// Preview and run optional AI-assisted finding validation.
+    Ai {
+        #[command(subcommand)]
+        command: AiCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AiCommand {
+    /// List built-in provider capabilities without contacting a provider.
+    Providers,
+    /// Emit the exact redacted request scope and consent fingerprint.
+    Preview(AiPreviewArgs),
+    /// Validate one finding or a bounded selected set after exact consent.
+    Validate(AiValidateArgs),
+    /// Manage the private local AI response cache.
+    Cache {
+        #[command(subcommand)]
+        command: AiCacheCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum AiCacheCommand {
+    /// Delete all locally cached AI assessments.
+    Clear(AiCacheOptions),
+}
+
+#[derive(Debug, Args)]
+struct AiCacheOptions {
+    /// Override the private local AI cache directory.
+    #[arg(long, value_name = "DIRECTORY")]
+    cache_dir: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct AiPreviewArgs {
+    /// Stable finding identifier; omit only with --all.
+    finding_id: Option<String>,
+    /// Preview every finding, still bounded by --max-findings and project limits.
+    #[arg(long, conflicts_with = "finding_id")]
+    all: bool,
+    /// Completed secure-json-v1 report.
+    #[arg(long, value_name = "REPORT")]
+    report: PathBuf,
+    /// Provider identifier, which must match project configuration.
+    #[arg(long)]
+    provider: String,
+    /// Explicit project AI configuration.
+    #[arg(long, value_name = "CONFIG")]
+    config: PathBuf,
+    /// Maximum findings included when --all is used.
+    #[arg(long, default_value_t = 10)]
+    max_findings: usize,
+}
+
+#[derive(Debug, Args)]
+struct AiValidateArgs {
+    /// Stable finding identifier; omit only with --all.
+    finding_id: Option<String>,
+    /// Validate a bounded set of all findings.
+    #[arg(long, conflicts_with = "finding_id")]
+    all: bool,
+    /// Completed secure-json-v1 report.
+    #[arg(long, value_name = "REPORT")]
+    report: PathBuf,
+    /// Provider identifier, which must match project configuration.
+    #[arg(long)]
+    provider: String,
+    /// Explicit project AI configuration.
+    #[arg(long, value_name = "CONFIG")]
+    config: PathBuf,
+    /// Exact consent fingerprint from preview; repeat once per selected finding.
+    #[arg(long = "consent", required = true)]
+    consents: Vec<String>,
+    /// Maximum findings included when --all is used.
+    #[arg(long, default_value_t = 10)]
+    max_findings: usize,
+    /// Override the private local AI cache directory.
+    #[arg(long, value_name = "DIRECTORY")]
+    cache_dir: Option<PathBuf>,
+    /// Atomically write the versioned AI validation document here.
+    #[arg(long)]
+    output: Option<PathBuf>,
+    /// Bypass a matching cache entry and contact the configured provider.
+    #[arg(long)]
+    no_cache: bool,
 }
 
 #[derive(Debug, Args)]
@@ -270,6 +360,7 @@ fn run(cli: Cli) -> Result<u8, (u8, String)> {
         Command::Explain(arguments) => explain(&arguments),
         Command::Baseline { command } => run_baseline(command),
         Command::History { command } => run_history(command),
+        Command::Ai { command } => run_ai(command),
     }
 }
 
@@ -535,6 +626,212 @@ fn run_history(command: HistoryCommand) -> Result<u8, (u8, String)> {
     Ok(0)
 }
 
+fn run_ai(command: AiCommand) -> Result<u8, (u8, String)> {
+    match command {
+        AiCommand::Providers => {
+            write_json_stdout(&provider_descriptors())?;
+            Ok(0)
+        }
+        AiCommand::Preview(arguments) => run_ai_preview(&arguments),
+        AiCommand::Validate(arguments) => run_ai_validate(arguments),
+        AiCommand::Cache {
+            command: AiCacheCommand::Clear(options),
+        } => {
+            let cancellation = CancellationToken::new();
+            install_cancellation(&cancellation)?;
+            let cache = AiCache::open(options.cache_dir.unwrap_or_else(default_ai_cache_directory))
+                .map_err(ai_error)?;
+            let removed = cache.clear(&cancellation).map_err(ai_error)?;
+            write_json_stdout(&serde_json::json!({"removed": removed}))?;
+            eprintln!("secure: deleted {removed} local AI cache entries");
+            Ok(0)
+        }
+    }
+}
+
+fn run_ai_preview(arguments: &AiPreviewArgs) -> Result<u8, (u8, String)> {
+    let report = read_report(&arguments.report)?;
+    let configuration = ai_configuration(&arguments.config, &arguments.provider)?;
+    let finding_ids = selected_ai_findings(
+        &report,
+        arguments.finding_id.as_deref(),
+        arguments.all,
+        arguments.max_findings,
+        &configuration,
+    )?;
+    let previews = finding_ids
+        .iter()
+        .map(|finding_id| preview_finding(&report, finding_id, &configuration).map_err(ai_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    write_json_stdout(&previews)?;
+    eprintln!(
+        "secure: previewed {} redacted AI request(s); validation requires every exact consent fingerprint",
+        previews.len()
+    );
+    Ok(0)
+}
+
+fn run_ai_validate(arguments: AiValidateArgs) -> Result<u8, (u8, String)> {
+    let report = read_report(&arguments.report)?;
+    let configuration = ai_configuration(&arguments.config, &arguments.provider)?;
+    let finding_ids = selected_ai_findings(
+        &report,
+        arguments.finding_id.as_deref(),
+        arguments.all,
+        arguments.max_findings,
+        &configuration,
+    )?;
+    let previews = finding_ids
+        .iter()
+        .map(|finding_id| preview_finding(&report, finding_id, &configuration).map_err(ai_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    if previews.len() != arguments.consents.len()
+        || previews
+            .iter()
+            .any(|preview| !arguments.consents.contains(&preview.consent_fingerprint))
+    {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "validation refused: supply each exact consent fingerprint from the current preview"
+                .into(),
+        ));
+    }
+    let recorded = read_recorded_response(&configuration)?;
+    let provider = configured_provider(&configuration, recorded).map_err(ai_error)?;
+    let cancellation = CancellationToken::new();
+    install_cancellation(&cancellation)?;
+    let cache = if arguments.no_cache {
+        None
+    } else {
+        Some(
+            AiCache::open(
+                arguments
+                    .cache_dir
+                    .unwrap_or_else(default_ai_cache_directory),
+            )
+            .map_err(ai_error)?,
+        )
+    };
+    let mut assessments = Vec::with_capacity(previews.len());
+    for preview in &previews {
+        eprintln!(
+            "secure: validating {} with provider {} and model {}",
+            preview.finding_id, preview.provider, preview.model
+        );
+        let assessment = validate_finding_with_ai(
+            &report,
+            preview,
+            &preview.consent_fingerprint,
+            &configuration,
+            provider.as_ref(),
+            cache.as_ref(),
+            &cancellation,
+        )
+        .map_err(ai_error)?;
+        assessments.push(assessment);
+    }
+    let document = validation_document(&report, assessments).map_err(ai_error)?;
+    write_ai_document(&document, arguments.output.as_ref(), &cancellation)?;
+    eprintln!(
+        "secure: completed {} separate AI assessment(s); deterministic findings were unchanged",
+        document.assessments.len()
+    );
+    Ok(0)
+}
+
+fn ai_configuration(path: &Path, provider: &str) -> Result<AiProjectConfiguration, (u8, String)> {
+    let configuration = read_ai_configuration(path).map_err(ai_error)?;
+    if configuration.provider != provider {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "provider argument does not match explicit project configuration".into(),
+        ));
+    }
+    Ok(configuration)
+}
+
+fn selected_ai_findings(
+    report: &ScanReport,
+    finding_id: Option<&str>,
+    all: bool,
+    requested_limit: usize,
+    configuration: &AiProjectConfiguration,
+) -> Result<Vec<String>, (u8, String)> {
+    if requested_limit == 0 || requested_limit > configuration.limits.max_findings {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "max-findings must be positive and within the configured project limit".into(),
+        ));
+    }
+    if all {
+        let findings = report
+            .findings
+            .iter()
+            .take(requested_limit)
+            .map(|finding| finding.finding_id.clone())
+            .collect::<Vec<_>>();
+        if findings.is_empty() {
+            return Err((
+                EXIT_INVALID_INPUT,
+                "report has no findings to validate".into(),
+            ));
+        }
+        Ok(findings)
+    } else {
+        finding_id.map(|id| vec![id.to_owned()]).ok_or_else(|| {
+            (
+                EXIT_INVALID_INPUT,
+                "provide one finding ID or select --all".into(),
+            )
+        })
+    }
+}
+
+fn read_recorded_response(
+    configuration: &AiProjectConfiguration,
+) -> Result<Option<serde_json::Value>, (u8, String)> {
+    let Some(path) = configuration.recorded_response.as_ref() else {
+        return Ok(None);
+    };
+    if configuration.provider == "openai-responses" {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "remote providers cannot use a recorded response file".into(),
+        ));
+    }
+    let bytes = read_bounded_json(path, "recorded response")?;
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|_| (EXIT_INVALID_INPUT, "recorded response is malformed".into()))
+}
+
+fn write_ai_document(
+    document: &AiValidationDocument,
+    output: Option<&PathBuf>,
+    cancellation: &CancellationToken,
+) -> Result<(), (u8, String)> {
+    if let Some(output) = output {
+        write_json_artifact(document, output, cancellation)
+            .map_err(|error| export_error(&error, "AI validation document"))
+    } else {
+        write_json_stdout(document)
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn ai_error(error: AiError) -> (u8, String) {
+    match error {
+        AiError::Cancelled => (EXIT_CANCELLED, error.to_string()),
+        AiError::Timeout | AiError::Provider(_) | AiError::MalformedResponse => {
+            (EXIT_INTERNAL_FAILURE, error.to_string())
+        }
+        AiError::Storage => (EXIT_INTERNAL_FAILURE, error.to_string()),
+        AiError::Disabled | AiError::Invalid(_) | AiError::ConsentRequired => {
+            (EXIT_INVALID_INPUT, error.to_string())
+        }
+    }
+}
+
 fn history_store(options: HistoryOptions) -> Result<HistoryStore, (u8, String)> {
     let directory = options
         .history_dir
@@ -606,9 +903,20 @@ fn parse_suppression(value: &str) -> Result<Suppression, (u8, String)> {
 }
 
 fn print_schema(schema: &str) -> Result<u8, (u8, String)> {
-    require_schema(schema)?;
-    write_stdout(SECURE_JSON_V1_SCHEMA.as_bytes())
-        .map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
+    let document = match schema {
+        SCHEMA_VERSION => SECURE_JSON_V1_SCHEMA,
+        secure_engine::AI_SCHEMA_VERSION => SECURE_AI_ASSESSMENT_V1_SCHEMA,
+        _ => {
+            return Err((
+                EXIT_UNSUPPORTED_SCHEMA,
+                format!(
+                    "unsupported schema '{schema}'; expected {SCHEMA_VERSION} or {}",
+                    secure_engine::AI_SCHEMA_VERSION
+                ),
+            ));
+        }
+    };
+    write_stdout(document.as_bytes()).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
     Ok(0)
 }
 

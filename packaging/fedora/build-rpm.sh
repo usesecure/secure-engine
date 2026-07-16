@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/phase5-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/phase6-rpm}"
 topdir="$target/rpmbuild"
 stage_parent="$target/stage"
 stage="$stage_parent/secure-engine-0.1.0"
@@ -21,5 +21,8 @@ install -m0644 "$root/README.md" "$stage/README.md"
 install -m0644 "$root/packaging/fedora/secure-engine.spec" "$topdir/SPECS/secure-engine.spec"
 tar --sort=name --mtime='UTC 2026-07-16' --owner=0 --group=0 --numeric-owner -C "$stage_parent" -czf "$topdir/SOURCES/secure-engine-0.1.0.tar.gz" secure-engine-0.1.0
 
-rpmbuild --define "_topdir $topdir" -bb "$topdir/SPECS/secure-engine.spec"
+rpmbuild \
+  --define "_topdir $topdir" \
+  --define "use_source_date_epoch_as_buildtime 1" \
+  -bb "$topdir/SPECS/secure-engine.spec"
 find "$topdir/RPMS" -type f -name '*.rpm' -print

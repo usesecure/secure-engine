@@ -2,7 +2,7 @@
 
 ## Native workflow
 
-Launch `secure-desktop`, choose a repository with **Browse**, then use **Start**, **Cancel**, **Rescan**, or **Clear**. Recent projects remain local and are not placed in reports. The left navigation exposes Overview, Findings, Architecture, Dependencies, Scan History, and Settings; `Ctrl+1` through `Ctrl+6` selects a page, `Ctrl+R` rescans, and `Escape` cancels.
+Launch `secure-desktop`, choose a repository with **Browse**, then use **Start**, **Cancel**, **Rescan**, or **Clear**. Recent projects remain local and are not placed in reports. The left navigation exposes Overview, Findings, Architecture, Dependencies, Scan History, optional AI Validation, and Settings; `Ctrl+1` through `Ctrl+7` selects a page, `Ctrl+R` rescans, and `Escape` cancels.
 
 Overview shows typed scan measurements and JSON/SARIF/baseline actions. Findings supports search plus severity, confidence, rule, file, category, and suppression-state filters with stable sorting. Selecting a finding shows the invariant, impact, prerequisites, remediation, verification state, limitations, exact path, bounded source preview, and exact suppression creation. A reason of at least eight characters and the selected rule/path/start byte are required before rescan.
 

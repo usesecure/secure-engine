@@ -50,6 +50,12 @@ Phase 3 preserves the Phase 0–2 required-property list and adds optional prope
 
 Every path step references a graph node and the edge from its predecessor. Deduplication uses the rule invariant, effective path, and sink fingerprint. Suppressions are exact `(rule_id, path, start_byte)` scopes with a required reason; wildcard and parent-traversal scopes are rejected.
 
+## Phase 6 separate AI assessment contract
+
+Phase 6 deliberately adds no field to the normal scan report. `secure-ai-validation-v1` is a separate document linked by `report_fingerprint`, `finding_id`, and `finding_fingerprint`. AI timestamps, provider/model, usage, cache, and consent provenance cannot affect `report_fingerprint`. Deterministic baselines ignore AI state. History omits the `ai_assessments` property when empty and may attach explicitly consented assessments later. Normal SARIF remains byte-stable; only the explicit enriched SARIF API adds `secureAiAssessment` result properties.
+
+Assessment bodies conform to [`schemas/secure-ai-assessment-v1.schema.json`](../schemas/secure-ai-assessment-v1.schema.json). They express bounded review status and uncertainty, never a replacement severity or confidence.
+
 ## Exit codes
 
 | Code | Meaning |

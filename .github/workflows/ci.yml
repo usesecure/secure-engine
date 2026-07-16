@@ -23,6 +23,8 @@ jobs:
       - name: Strict Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Tests
+        env:
+          SECURE_AI_LIVE_CALLS: "disabled"
         run: cargo test --workspace --all-features
 
   dependencies:

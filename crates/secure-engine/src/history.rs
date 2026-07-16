@@ -8,7 +8,10 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::storage::{create_private_directory, write_atomic};
 use crate::workspace::{ReadOutcome, read_file_no_follow};
-use crate::{CancellationToken, SCHEMA_VERSION, ScanReport};
+use crate::{
+    AiAssessment, AiValidationDocument, CancellationToken, SCHEMA_VERSION, ScanReport,
+    validate_ai_assessment,
+};
 
 /// Version identifier for local scan-history records.
 pub const HISTORY_FORMAT: &str = "secure-history-v1";
@@ -78,6 +81,9 @@ pub struct HistoryEntry {
     pub summary: HistorySummary,
     /// Complete immutable scan report.
     pub report: ScanReport,
+    /// Optional separate AI assessments attached after explicit consent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ai_assessments: Vec<AiAssessment>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -88,6 +94,8 @@ struct StoredHistoryEntry {
     display_name: String,
     repository_path: Option<PathBuf>,
     report: ScanReport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ai_assessments: Vec<AiAssessment>,
 }
 
 /// Bounded local history store using private directories and atomic files.
@@ -162,6 +170,7 @@ impl HistoryStore {
             display_name,
             repository_path,
             report: report.clone(),
+            ai_assessments: Vec::new(),
         };
         let bytes = serde_json::to_vec(&stored).map_err(|_| HistoryError::Storage)?;
         let target = self.directory.join(format!("{scan_id}.json"));
@@ -226,7 +235,69 @@ impl HistoryStore {
         Ok(HistoryEntry {
             summary: summary(&stored),
             report: stored.report,
+            ai_assessments: stored.ai_assessments,
         })
+    }
+
+    /// Atomically attaches explicit AI assessments without mutating the deterministic report.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing, corrupt, mismatched, cancelled, or unwritable history data.
+    pub fn attach_ai_validation(
+        &self,
+        scan_id: &str,
+        document: &AiValidationDocument,
+        cancellation: &CancellationToken,
+    ) -> Result<(), HistoryError> {
+        validate_scan_id(scan_id)?;
+        let path = self.directory.join(format!("{scan_id}.json"));
+        let mut stored = read_stored(&path, cancellation)?;
+        if document.report_schema != stored.report.schema_version
+            || document.report_fingerprint != stored.report.report_fingerprint
+        {
+            return Err(HistoryError::Invalid(
+                "AI validation belongs to a different report".into(),
+            ));
+        }
+        for assessment in &document.assessments {
+            validate_history_assessment(&stored.report, assessment)?;
+            stored.ai_assessments.retain(|existing| {
+                existing.finding_id != assessment.finding_id
+                    || existing.provider != assessment.provider
+                    || existing.model != assessment.model
+            });
+            stored.ai_assessments.push(assessment.clone());
+        }
+        stored.ai_assessments.sort_by(|left, right| {
+            (&left.finding_id, &left.provider, &left.model).cmp(&(
+                &right.finding_id,
+                &right.provider,
+                &right.model,
+            ))
+        });
+        let bytes = serde_json::to_vec(&stored).map_err(|_| HistoryError::Storage)?;
+        write_atomic(&path, &bytes, cancellation).map_err(|error| history_io_error(&error))
+    }
+
+    /// Atomically removes every attached AI assessment while retaining the scan report.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for missing, corrupt, cancelled, or unwritable history data.
+    pub fn delete_ai_validations(
+        &self,
+        scan_id: &str,
+        cancellation: &CancellationToken,
+    ) -> Result<usize, HistoryError> {
+        validate_scan_id(scan_id)?;
+        let path = self.directory.join(format!("{scan_id}.json"));
+        let mut stored = read_stored(&path, cancellation)?;
+        let removed = stored.ai_assessments.len();
+        stored.ai_assessments.clear();
+        let bytes = serde_json::to_vec(&stored).map_err(|_| HistoryError::Storage)?;
+        write_atomic(&path, &bytes, cancellation).map_err(|error| history_io_error(&error))?;
+        Ok(removed)
     }
 
     /// Returns the private local repository path for source preview.
@@ -337,9 +408,36 @@ fn validate_stored(stored: &StoredHistoryEntry, path: &Path) -> Result<(), Histo
             .repository_path
             .as_ref()
             .is_some_and(|repository| !repository.is_absolute())
+        || stored
+            .ai_assessments
+            .iter()
+            .any(|assessment| validate_history_assessment(&stored.report, assessment).is_err())
     {
         return Err(HistoryError::Invalid(
             "history record failed validation".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_history_assessment(
+    report: &ScanReport,
+    assessment: &AiAssessment,
+) -> Result<(), HistoryError> {
+    validate_ai_assessment(assessment)
+        .map_err(|_| HistoryError::Invalid("AI assessment provenance is invalid".into()))?;
+    let Some(finding) = report
+        .findings
+        .iter()
+        .find(|finding| finding.finding_id == assessment.finding_id)
+    else {
+        return Err(HistoryError::Invalid(
+            "AI assessment references an absent finding".into(),
+        ));
+    };
+    if finding.fingerprint != assessment.finding_fingerprint {
+        return Err(HistoryError::Invalid(
+            "AI assessment finding fingerprint does not match".into(),
         ));
     }
     Ok(())

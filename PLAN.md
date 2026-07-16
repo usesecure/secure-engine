@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–4 are integrated. Phase 5 adds pinned, isolated Rust, Python, and Go Tree-sitter adapters in that order while preserving the JavaScript/TypeScript contract. All seven existing rule families, report projections, CLI/desktop behavior, history, baselines, SARIF, and Fedora packaging continue to use the one shared core. Java/Kotlin, C#, hosted services, AI validation, automatic fixes, telemetry, and additional package formats remain future work.
+Phases 0–5 are integrated. Phase 6 adds a provider-neutral, disabled-by-default validation boundary over selected deterministic findings. It has recorded/mock evaluation adapters plus an optional OpenAI Responses adapter, exact preview and consent, strict structured output, redaction, budgets, timeout/cancellation contracts, private replay-safe caching, provenance, CLI/desktop workflows, and separate JSON/SARIF/history attachment. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -332,9 +332,9 @@ Exit condition: support claims match measured language and framework coverage.
 
 ### Phase 6 - Optional AI validation
 
-- Implement the provider-neutral boundary and consent UI.
-- Send only selected, redacted structured evidence.
-- Compare deterministic-only and AI-assisted precision on the same evaluation set.
+- [Complete] Implement the provider-neutral boundary and consent UI.
+- [Complete] Send only selected, redacted structured evidence.
+- [Complete] Evaluate contracts with committed mock/recorded fixtures without making provider-quality claims.
 
 Exit condition: AI can improve triage without being required for scanning or silently exporting source.
 

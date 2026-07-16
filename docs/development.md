@@ -18,9 +18,9 @@ packaging/fedora/build-rpm.sh
 packaging/fedora/verify-rpm.sh
 ```
 
-`cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The scanner works offline after Cargo has fetched dependencies. It does not contact Secure Skill, a cloud service, or an AI provider.
+`cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The deterministic scanner works offline after Cargo has fetched dependencies. Tests, CI, packaging, and automatic verification use only mock or recorded AI responses and never contact an AI provider. A live adapter is reachable only through an explicit enabled project configuration, exact preview consent, and an `secure ai validate` operation.
 
-Phase 5 Rust/Python/Go parsing, mixed-repository isolation, SARIF, baseline, history, source-containment, atomic-export, UI-boundary, RPM-content, and extracted-artifact checks are part of the workspace and Fedora gates. Packaging writes only below `target/phase5-rpm`; installation, upgrade, and removal are documented in `docs/fedora-packaging.md` and are not automated.
+Phase 6 AI boundary, redaction, schema, consent, replay, cancellation, CLI/desktop, and Phase 5 compatibility checks are part of the workspace and Fedora gates. Packaging writes only below `target/phase6-rpm`; installation, upgrade, and removal are documented in `docs/fedora-packaging.md` and are not automated.
 
 To exercise the native shell, run `cargo run -p secure-desktop -- <repository>`. The scan runs outside the render thread. Closing the window or pressing Cancel signals the shared cancellation token.
 

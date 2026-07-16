@@ -8,13 +8,14 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui;
 use secure_desktop::{
     FindingFilter, FindingSort, InventoryControls, SuppressionFilter, filter_findings,
-    spawn_inventory_worker, spawn_source_preview_worker,
+    spawn_ai_validation_worker, spawn_inventory_worker, spawn_source_preview_worker,
 };
 use secure_engine::{
-    Baseline, BaselineComparison, CancellationToken, ExportFormat, HistoryEntry, HistoryListing,
-    HistoryStore, HistorySummary, ProgressEvent, ScanError, ScanReport, SourcePreview, Suppression,
-    compare_baseline, create_baseline, default_history_directory, write_export,
-    write_json_artifact,
+    AiAssessment, AiCache, AiPreview, AiProjectConfiguration, Baseline, BaselineComparison,
+    CancellationToken, ExportFormat, HistoryEntry, HistoryListing, HistoryStore, HistorySummary,
+    ProgressEvent, ScanError, ScanReport, SourcePreview, Suppression, compare_baseline,
+    configured_provider, create_baseline, default_ai_cache_directory, default_history_directory,
+    preview_finding, read_ai_configuration, write_export, write_json_artifact,
 };
 
 fn main() -> eframe::Result {
@@ -45,6 +46,7 @@ enum Page {
     Architecture,
     Dependencies,
     History,
+    AiValidation,
     Settings,
 }
 
@@ -60,8 +62,10 @@ enum AppMessage {
     HistoryDeleted(Result<String, String>),
     BaselineCreated(Box<Result<(Baseline, PathBuf), String>>),
     BaselineCompared(Box<Result<BaselineComparison, String>>),
+    AiFinished(Box<Result<AiAssessment, String>>),
 }
 
+#[allow(clippy::struct_excessive_bools)]
 struct SecureApp {
     context: egui::Context,
     sender: Sender<AppMessage>,
@@ -95,6 +99,14 @@ struct SecureApp {
     comparison: Option<BaselineComparison>,
     text_scale: f32,
     operation_busy: bool,
+    ai_enabled: bool,
+    ai_config_path: String,
+    ai_configuration: Option<AiProjectConfiguration>,
+    ai_preview: Option<AiPreview>,
+    ai_assessment: Option<AiAssessment>,
+    ai_consent: bool,
+    ai_busy: bool,
+    ai_cancellation: Option<CancellationToken>,
 }
 
 impl SecureApp {
@@ -133,6 +145,14 @@ impl SecureApp {
             comparison: None,
             text_scale: 1.0,
             operation_busy: false,
+            ai_enabled: false,
+            ai_config_path: String::new(),
+            ai_configuration: None,
+            ai_preview: None,
+            ai_assessment: None,
+            ai_consent: false,
+            ai_busy: false,
+            ai_cancellation: None,
         };
         app.refresh_history();
         app
@@ -431,6 +451,144 @@ impl SecureApp {
         });
     }
 
+    fn load_ai_configuration(&mut self) {
+        if !self.ai_enabled || self.ai_config_path.trim().is_empty() || self.ai_busy {
+            return;
+        }
+        match read_ai_configuration(Path::new(self.ai_config_path.trim())) {
+            Ok(configuration) => {
+                self.status = format!(
+                    "Loaded AI provider {} and model {}; no request has been sent.",
+                    configuration.provider, configuration.model
+                );
+                self.ai_configuration = Some(configuration);
+                self.ai_preview = None;
+                self.ai_assessment = None;
+                self.ai_consent = false;
+            }
+            Err(error) => {
+                self.ai_configuration = None;
+                self.status = error.to_string();
+            }
+        }
+    }
+
+    fn prepare_ai_preview(&mut self) {
+        if !self.ai_enabled || self.ai_busy {
+            return;
+        }
+        let Some(report) = self.report.as_ref() else {
+            self.status = "Complete or reopen a deterministic scan first.".into();
+            return;
+        };
+        let Some(finding_id) = self.selected_finding.as_deref() else {
+            self.status = "Select one deterministic finding first.".into();
+            return;
+        };
+        let Some(configuration) = self.ai_configuration.as_ref() else {
+            self.status = "Load an explicit enabled project AI configuration first.".into();
+            return;
+        };
+        match preview_finding(report, finding_id, configuration) {
+            Ok(preview) => {
+                self.status =
+                    "Exact redacted payload prepared locally; review it before consent.".into();
+                self.ai_preview = Some(preview);
+                self.ai_assessment = None;
+                self.ai_consent = false;
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    fn start_ai_validation(&mut self) {
+        if !self.ai_enabled || !self.ai_consent || self.ai_busy {
+            return;
+        }
+        let (Some(report), Some(preview), Some(configuration)) = (
+            self.report.clone(),
+            self.ai_preview.clone(),
+            self.ai_configuration.clone(),
+        ) else {
+            self.status =
+                "A current report, exact preview, and project configuration are required.".into();
+            return;
+        };
+        let recorded = match configuration
+            .recorded_response
+            .as_deref()
+            .map(read_recorded_ai_response)
+            .transpose()
+        {
+            Ok(recorded) => recorded,
+            Err(error) => {
+                self.status = error;
+                return;
+            }
+        };
+        let provider = match configured_provider(&configuration, recorded) {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let cache = match AiCache::open(default_ai_cache_directory()) {
+            Ok(cache) => Some(cache),
+            Err(error) => {
+                self.status = error.to_string();
+                return;
+            }
+        };
+        let cancellation = CancellationToken::new();
+        self.ai_cancellation = Some(cancellation.clone());
+        self.ai_busy = true;
+        self.ai_assessment = None;
+        self.status = format!(
+            "Validating {} with {} / {}…",
+            preview.finding_id, preview.provider, preview.model
+        );
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        let _worker = spawn_ai_validation_worker(
+            report,
+            preview,
+            configuration,
+            provider,
+            cache,
+            cancellation,
+            move |result| {
+                let _ignored = sender.send(AppMessage::AiFinished(Box::new(
+                    result.map_err(|error| error.to_string()),
+                )));
+                context.request_repaint();
+            },
+        );
+    }
+
+    fn cancel_ai_validation(&mut self) {
+        if let Some(cancellation) = &self.ai_cancellation {
+            cancellation.cancel();
+            self.status = "Cancelling AI validation…".into();
+        }
+    }
+
+    fn delete_local_ai_data(&mut self) {
+        self.ai_preview = None;
+        self.ai_assessment = None;
+        self.ai_consent = false;
+        match AiCache::open(default_ai_cache_directory())
+            .and_then(|cache| cache.clear(&CancellationToken::new()))
+        {
+            Ok(removed) => {
+                self.status =
+                    format!("Deleted {removed} local AI cache entries and cleared this session.");
+            }
+            Err(error) => self.status = error.to_string(),
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn apply_message(&mut self, message: AppMessage) {
         match message {
             AppMessage::Progress(event) => self.apply_progress(event),
@@ -522,6 +680,18 @@ impl SecureApp {
                             comparison.resolved.len()
                         );
                         self.comparison = Some(comparison);
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            AppMessage::AiFinished(result) => {
+                self.ai_busy = false;
+                self.ai_cancellation = None;
+                self.ai_consent = false;
+                match *result {
+                    Ok(assessment) => {
+                        self.status = "Separate AI assessment completed; deterministic evidence is unchanged.".into();
+                        self.ai_assessment = Some(assessment);
                     }
                     Err(error) => self.status = error,
                 }
@@ -625,7 +795,8 @@ impl SecureApp {
             (egui::Key::Num3, Page::Architecture),
             (egui::Key::Num4, Page::Dependencies),
             (egui::Key::Num5, Page::History),
-            (egui::Key::Num6, Page::Settings),
+            (egui::Key::Num6, Page::AiValidation),
+            (egui::Key::Num7, Page::Settings),
         ] {
             if context.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, key)) {
                 self.page = page;
@@ -716,7 +887,8 @@ impl SecureApp {
                     (Page::Architecture, "Architecture", "Ctrl+3"),
                     (Page::Dependencies, "Dependencies", "Ctrl+4"),
                     (Page::History, "Scan History", "Ctrl+5"),
-                    (Page::Settings, "Settings", "Ctrl+6"),
+                    (Page::AiValidation, "AI Validation", "Ctrl+6"),
+                    (Page::Settings, "Settings", "Ctrl+7"),
                 ] {
                     if ui
                         .selectable_label(self.page == page, format!("{label}  {shortcut}"))
@@ -739,6 +911,7 @@ impl SecureApp {
                 Page::Architecture => self.architecture(ui),
                 Page::Dependencies => self.dependencies(ui),
                 Page::History => self.history(ui),
+                Page::AiValidation => self.ai_validation(ui),
                 Page::Settings => self.settings(ui),
             });
         });
@@ -1229,6 +1402,228 @@ impl SecureApp {
     }
 
     #[allow(clippy::too_many_lines)]
+    fn ai_validation(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Optional AI-assisted validation");
+        ui.strong("Disabled by default · assessments never replace deterministic findings");
+        ui.checkbox(
+            &mut self.ai_enabled,
+            "Enable AI validation controls for this session",
+        );
+        if !self.ai_enabled {
+            self.ai_consent = false;
+            ui.weak("No provider is configured or contacted while this switch is off.");
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Project AI configuration");
+            ui.add(egui::TextEdit::singleline(&mut self.ai_config_path).desired_width(460.0));
+            if ui
+                .add_enabled(!self.ai_busy, egui::Button::new("Load configuration"))
+                .clicked()
+            {
+                self.load_ai_configuration();
+            }
+        });
+        if let Some(configuration) = &self.ai_configuration {
+            egui::Grid::new("ai-configuration")
+                .striped(true)
+                .show(ui, |ui| {
+                    summary_row(ui, "Provider", &configuration.provider);
+                    summary_row(ui, "Model", &configuration.model);
+                    summary_row(
+                        ui,
+                        "Request scope",
+                        configuration.endpoint.as_deref().unwrap_or("offline"),
+                    );
+                    summary_row(
+                        ui,
+                        "Maximum output tokens",
+                        &configuration.limits.max_output_tokens.to_string(),
+                    );
+                    summary_row(
+                        ui,
+                        "Maximum cost",
+                        &configuration.limits.max_cost_microunits.map_or_else(
+                            || "not configured".into(),
+                            |value| format!("{value} microunits"),
+                        ),
+                    );
+                    summary_row(
+                        ui,
+                        "Timeout",
+                        &format!("{} seconds", configuration.limits.timeout_seconds),
+                    );
+                });
+        }
+        let mut budget_changed = false;
+        if let Some(configuration) = self.ai_configuration.as_mut() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Per-operation output token limit");
+                budget_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut configuration.limits.max_output_tokens)
+                            .range(1..=32_000),
+                    )
+                    .changed();
+                ui.label("Timeout seconds");
+                budget_changed |= ui
+                    .add(
+                        egui::DragValue::new(&mut configuration.limits.timeout_seconds)
+                            .range(1..=600),
+                    )
+                    .changed();
+                if let Some(maximum_cost) = configuration.limits.max_cost_microunits.as_mut() {
+                    ui.label("Maximum cost microunits");
+                    budget_changed |= ui
+                        .add(egui::DragValue::new(maximum_cost).range(1..=u64::MAX))
+                        .changed();
+                } else {
+                    ui.weak("No cost budget/pricing configured by the project");
+                }
+            });
+        }
+        if budget_changed {
+            self.ai_preview = None;
+            self.ai_assessment = None;
+            self.ai_consent = false;
+            self.status = "AI budget changed; prepare and consent to a new exact preview.".into();
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!(
+                "Selected deterministic finding: {}",
+                self.selected_finding.as_deref().unwrap_or("none")
+            ));
+            if ui
+                .add_enabled(
+                    !self.ai_busy
+                        && self.report.is_some()
+                        && self.selected_finding.is_some()
+                        && self.ai_configuration.is_some(),
+                    egui::Button::new("Prepare exact payload preview"),
+                )
+                .clicked()
+            {
+                self.prepare_ai_preview();
+            }
+        });
+        if let Some(preview) = self.ai_preview.clone() {
+            ui.separator();
+            ui.heading("Exact redacted request preview");
+            ui.label(format!(
+                "{} / {} · {} approximate input tokens · {} redaction(s)",
+                preview.provider,
+                preview.model,
+                preview.approximate_input_tokens,
+                preview.redactions
+            ));
+            ui.label(format!("Endpoint scope: {}", preview.endpoint_scope));
+            ui.label(format!(
+                "Conservative cost bound: {}",
+                preview.conservative_cost_bound_microunits.map_or_else(
+                    || "not configured".into(),
+                    |value| { format!("{value} microunits") }
+                )
+            ));
+            ui.label(format!(
+                "Payload fingerprint: {}",
+                preview.payload_fingerprint
+            ));
+            let mut payload = serde_json::to_string_pretty(&preview.payload)
+                .unwrap_or_else(|_| "Payload preview unavailable".into());
+            ui.add(
+                egui::TextEdit::multiline(&mut payload)
+                    .code_editor()
+                    .interactive(false)
+                    .desired_rows(16),
+            );
+            ui.checkbox(
+                &mut self.ai_consent,
+                format!(
+                    "I consent to exactly this request ({})",
+                    preview.consent_fingerprint
+                ),
+            );
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        self.ai_consent && !self.ai_busy,
+                        egui::Button::new("Validate selected finding"),
+                    )
+                    .clicked()
+                {
+                    self.start_ai_validation();
+                }
+                if ui
+                    .add_enabled(self.ai_busy, egui::Button::new("Cancel"))
+                    .clicked()
+                {
+                    self.cancel_ai_validation();
+                }
+                if self.ai_busy {
+                    ui.spinner();
+                    ui.label("Bounded provider request in progress");
+                }
+            });
+        }
+        if let Some(assessment) = &self.ai_assessment {
+            ui.separator();
+            ui.heading("AI assessment (separate, uncertain evidence)");
+            ui.label(format!(
+                "Status: {:?} · evidence: {:?}",
+                assessment.assessment.status, assessment.assessment.evidence_assessment
+            ));
+            detail(
+                ui,
+                "Confidence explanation",
+                &assessment.assessment.confidence_explanation,
+            );
+            detail(
+                ui,
+                "Proposed remediation",
+                &assessment.assessment.remediation_proposal,
+            );
+            detail(
+                ui,
+                "Verification suggestions",
+                &assessment.assessment.verification_suggestions.join("; "),
+            );
+            detail(
+                ui,
+                "Limitations",
+                &assessment.assessment.limitations.join("; "),
+            );
+            detail(ui, "Uncertainty", &assessment.assessment.uncertainty);
+            ui.weak(format!(
+                "Provenance: {} / {} · prompt {} · schema {} · cache {}",
+                assessment.provider,
+                assessment.model,
+                assessment.prompt_version,
+                assessment.schema_version,
+                if assessment.cache_hit { "hit" } else { "miss" }
+            ));
+            if let Some(report) = &self.report
+                && let Some(finding) = report
+                    .findings
+                    .iter()
+                    .find(|finding| finding.finding_id == assessment.finding_id)
+            {
+                ui.strong("Deterministic evidence remains authoritative");
+                detail(ui, "Severity", &finding.severity);
+                detail(ui, "Confidence", &finding.confidence);
+                detail(ui, "Invariant", &finding.invariant);
+                detail(ui, "Fingerprint", &finding.fingerprint);
+            }
+        }
+        ui.separator();
+        if ui
+            .add_enabled(!self.ai_busy, egui::Button::new("Delete local AI data"))
+            .clicked()
+        {
+            self.delete_local_ai_data();
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
     fn settings(&mut self, ui: &mut egui::Ui) {
         ui.heading("Settings");
         ui.horizontal(|ui| {
@@ -1435,6 +1830,16 @@ fn read_baseline_file(path: &Path) -> Result<Baseline, String> {
         .map_err(|_| "Baseline is malformed".to_owned())?;
     secure_engine::validate_baseline(&baseline).map_err(|error| error.to_string())?;
     Ok(baseline)
+}
+
+fn read_recorded_ai_response(path: &Path) -> Result<serde_json::Value, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| "Recorded AI response could not be read".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 1024 * 1024 {
+        return Err("Recorded AI response must be a regular file no larger than 1 MiB".into());
+    }
+    let bytes = fs::read(path).map_err(|_| "Recorded AI response could not be read".to_owned())?;
+    serde_json::from_slice(&bytes).map_err(|_| "Recorded AI response is malformed".into())
 }
 
 fn fraction(completed: usize, total: usize) -> f32 {

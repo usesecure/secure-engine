@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/phase5-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/phase6-rpm}"
 rpm_path="${1:-}"
 if test -z "$rpm_path"; then
   rpm_path="$(find "$target/rpmbuild/RPMS" -type f -name 'secure-engine-*.rpm' -print -quit)"
@@ -30,6 +30,7 @@ rm -rf -- "$extract"
 mkdir -p -- "$extract"
 (cd "$extract" && rpm2cpio "$rpm_path" | cpio -idm --quiet)
 "$extract/usr/bin/secure" rules list >/dev/null
+"$extract/usr/bin/secure" ai providers >/dev/null
 desktop-file-validate "$extract/usr/share/applications/dev.usesecure.SecureEngine.desktop"
 appstreamcli validate --no-net "$extract/usr/share/metainfo/dev.usesecure.SecureEngine.metainfo.xml"
 

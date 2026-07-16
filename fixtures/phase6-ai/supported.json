@@ -1,0 +1,10 @@
+{
+  "status": "supported",
+  "evidence_assessment": "supported",
+  "prerequisites": ["Attacker controls the demonstrated input"],
+  "confidence_explanation": "The supplied deterministic path supports the stated invariant violation.",
+  "remediation_proposal": "Apply the deterministic finding's remediation and preserve the existing evidence.",
+  "verification_suggestions": ["Add a regression test at the demonstrated sink"],
+  "limitations": ["Only the supplied evidence was reviewed"],
+  "uncertainty": "Runtime deployment controls were not supplied."
+}
