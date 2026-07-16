@@ -14,6 +14,7 @@ mod sarif;
 mod scan;
 mod source;
 mod storage;
+mod taxonomy;
 mod workspace;
 
 pub use ai::*;
@@ -25,6 +26,7 @@ pub use model::*;
 pub use sarif::*;
 pub use scan::{CancellationToken, ScanError, scan_repository};
 pub use source::*;
+pub use taxonomy::*;
 
 /// Finds one deterministic finding in a completed shared-engine report.
 #[must_use]

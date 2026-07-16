@@ -34,7 +34,7 @@ fn vulnerable_flows_cover_every_rule_and_safe_controls_remain_clean()
             "SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006", "SE1007"
         ])
     );
-    assert_eq!(report.findings.len(), 12);
+    assert_eq!(report.findings.len(), 13);
     assert_eq!(
         report
             .findings
@@ -56,7 +56,7 @@ fn vulnerable_flows_cover_every_rule_and_safe_controls_remain_clean()
             .iter()
             .filter(|finding| finding.rule_id == "SE1007")
             .count(),
-        6
+        7
     );
     assert_eq!(report.parser_diagnostics.len(), 1);
     assert!(report.findings.iter().any(|finding| {

@@ -236,6 +236,9 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     assert!(output.stderr.is_empty());
     let catalog: Vec<secure_engine::RuleMetadata> = serde_json::from_slice(&output.stdout)?;
     assert_eq!(catalog.len(), 7);
+    assert!(catalog.iter().all(|rule| {
+        rule.taxonomy.is_some() && rule.primary_cwe.is_some() && rule.taxonomy_provenance.is_some()
+    }));
     assert_eq!(
         catalog.first().map(|rule| rule.rule_id.as_str()),
         Some("SE1001")
@@ -270,6 +273,12 @@ fn policy_exit_and_finding_explanation_use_the_shared_report()
     assert!(explained.status.success());
     let finding: serde_json::Value = serde_json::from_slice(&explained.stdout)?;
     assert_eq!(finding["finding_id"], finding_id);
+    assert_eq!(finding["taxonomy"]["taxonomy_version"], "1.0.0");
+    assert!(
+        finding["primary_cwe"]["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("CWE-"))
+    );
     assert!(
         finding["evidence_path"]
             .as_array()
@@ -412,7 +421,7 @@ fn baseline_cli_creates_compares_and_rejects_malformed_input()
         .output()?;
     assert_eq!(changed.status.code(), Some(1));
     let comparison: serde_json::Value = serde_json::from_slice(&changed.stdout)?;
-    assert_eq!(comparison["resolved"].as_array().map(Vec::len), Some(12));
+    assert_eq!(comparison["resolved"].as_array().map(Vec::len), Some(13));
 
     fs::write(&baseline_path, "{}")?;
     let malformed = secure()

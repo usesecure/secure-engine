@@ -56,6 +56,12 @@ Phase 6 deliberately adds no field to the normal scan report. `secure-ai-validat
 
 Assessment bodies conform to [`schemas/secure-ai-assessment-v1.schema.json`](../schemas/secure-ai-assessment-v1.schema.json). They express bounded review status and uncertainty, never a replacement severity or confidence.
 
+## Phase 6.5 additive taxonomy contract
+
+New reports include `taxonomy_catalog` with the frozen taxonomy name, version, public artifact hashes, source commit, and canonical content hash. Rule metadata and findings add `taxonomy`, `primary_cwe`, and `taxonomy_provenance`. `taxonomy` is deliberately exact and contains only `taxonomy_version`, `category_id`, and `invariant_id`; unknown fields are rejected by its nested schema. SARIF carries the equivalent catalog at run level and mapping at rule and result level.
+
+All additions are optional when deserializing earlier `secure-json-v1` reports, baselines, and history entries. New Engine-produced reports populate them for every built-in rule and finding. They are included in the report fingerprint but excluded from existing finding fingerprints, so old finding identities remain stable. See [taxonomy-and-precision.md](./taxonomy-and-precision.md).
+
 ## Exit codes
 
 | Code | Meaning |

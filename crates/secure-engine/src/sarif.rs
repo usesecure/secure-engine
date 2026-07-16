@@ -44,7 +44,8 @@ pub fn sarif_report(report: &ScanReport) -> Value {
                 "secureSchemaVersion": report.schema_version,
                 "secureReportFingerprint": report.report_fingerprint,
                 "repositoryName": report.repository.name,
-                "analysisComplete": report.scan.complete
+                "analysisComplete": report.scan.complete,
+                "secureTaxonomyCatalog": report.taxonomy_catalog
             }
         }]
     })
@@ -62,7 +63,10 @@ fn sarif_rule(rule: &RuleMetadata) -> Value {
             "category": rule.category,
             "severity": rule.severity,
             "confidence": rule.confidence,
-            "security-severity": security_score(&rule.severity)
+            "security-severity": security_score(&rule.severity),
+            "taxonomy": rule.taxonomy,
+            "primaryCwe": rule.primary_cwe,
+            "taxonomyProvenance": rule.taxonomy_provenance
         }
     })
 }
@@ -102,6 +106,9 @@ fn sarif_result(finding: &Finding, rule_index: Option<usize>) -> Value {
             "severity": finding.severity,
             "confidence": finding.confidence,
             "invariant": finding.invariant,
+            "taxonomy": finding.taxonomy,
+            "primaryCwe": finding.primary_cwe,
+            "taxonomyProvenance": finding.taxonomy_provenance,
             "prerequisites": finding.prerequisites,
             "impact": finding.impact,
             "remediation": finding.remediation,

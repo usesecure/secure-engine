@@ -932,6 +932,7 @@ impl SecureApp {
             });
             return;
         };
+        let taxonomy_summary = taxonomy_catalog_summary(&report.taxonomy_catalog);
         egui::Grid::new("overview-summary")
             .striped(true)
             .show(ui, |ui| {
@@ -949,6 +950,7 @@ impl SecureApp {
                     &report.analysis.rules_evaluated.to_string(),
                 );
                 summary_row(ui, "Findings", &report.findings.len().to_string());
+                summary_row(ui, "Neutral taxonomy", &taxonomy_summary);
                 summary_row(
                     ui,
                     "Cache hits / misses",
@@ -1141,6 +1143,32 @@ impl SecureApp {
             ui.separator();
             ui.heading(format!("{} — {}", finding.rule_id, finding.title));
             detail(ui, "Invariant", &finding.invariant);
+            if let Some(taxonomy) = &finding.taxonomy {
+                detail(
+                    ui,
+                    "Neutral taxonomy",
+                    &format!(
+                        "{} · {} · {}",
+                        taxonomy.taxonomy_version, taxonomy.category_id, taxonomy.invariant_id
+                    ),
+                );
+            }
+            if let Some(cwe) = &finding.primary_cwe {
+                detail(ui, "Primary CWE", &format!("{} · {}", cwe.id, cwe.url));
+            }
+            if let Some(provenance) = &finding.taxonomy_provenance {
+                detail(
+                    ui,
+                    "Taxonomy provenance",
+                    &format!(
+                        "{} · commit {} · content {} · {}",
+                        provenance.taxonomy_name,
+                        provenance.source_commit,
+                        provenance.content_hash,
+                        provenance.mapping_basis
+                    ),
+                );
+            }
             detail(ui, "Impact", &finding.impact);
             detail(ui, "Prerequisites", &finding.prerequisites.join("; "));
             detail(ui, "Remediation", &finding.remediation);
@@ -1365,6 +1393,9 @@ impl SecureApp {
                     } else {
                         "repository moved or missing"
                     });
+                    if !scan.taxonomy_versions.is_empty() {
+                        ui.label(format!("taxonomy {}", scan.taxonomy_versions.join(", ")));
+                    }
                     if ui
                         .add_enabled(!self.operation_busy, egui::Button::new("Reopen"))
                         .clicked()
@@ -1860,6 +1891,14 @@ fn summary_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.strong(label);
     ui.label(value);
     ui.end_row();
+}
+
+fn taxonomy_catalog_summary(catalog: &[secure_engine::TaxonomyDescriptor]) -> String {
+    catalog
+        .iter()
+        .map(|taxonomy| format!("{} {}", taxonomy.taxonomy_name, taxonomy.taxonomy_version))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn detail(ui: &mut egui::Ui, label: &str, value: &str) {

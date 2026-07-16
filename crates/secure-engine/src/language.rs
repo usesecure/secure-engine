@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use tree_sitter::Node;
 
-use crate::graph::{GRAPH_EXTRACTOR_VERSION, ProgramUnit, record};
+use crate::graph::{GRAPH_EXTRACTOR_VERSION, ProgramUnit, record, record_with_dominance};
 use crate::parser::{ParserMode, location_for_node, make_fact, relationship};
 use crate::{CancellationToken, NormalizedFact, ParserProvenance, ScanError, SourceLocation};
 
@@ -166,59 +166,9 @@ pub(crate) fn extract_program(
     let mut records = Vec::new();
     let mut truncated = false;
     for function in &functions {
-        if records.len() >= maximum {
+        if append_function_records(function, &provenance, maximum, &mut records) {
             truncated = true;
             break;
-        }
-        records.push(record(
-            if function.handler {
-                "handler"
-            } else {
-                "function"
-            },
-            Some(&function.name),
-            Some(&function.qualified),
-            Vec::new(),
-            None,
-            None,
-            function.location.clone(),
-            &provenance,
-        ));
-        for (parameter, location) in &function.parameters {
-            if records.len() >= maximum {
-                truncated = true;
-                break;
-            }
-            records.push(record(
-                if function.handler {
-                    "source"
-                } else {
-                    "argument"
-                },
-                Some(if function.handler {
-                    "request-parameter"
-                } else {
-                    parameter
-                }),
-                Some(&function.qualified),
-                Vec::new(),
-                Some(parameter),
-                None,
-                location.clone(),
-                &provenance,
-            ));
-        }
-        if function.guarded && records.len() < maximum {
-            records.push(record(
-                "guard",
-                Some("framework-authorization"),
-                Some(&function.qualified),
-                Vec::new(),
-                None,
-                None,
-                function.location.clone(),
-                &provenance,
-            ));
         }
     }
 
@@ -257,6 +207,71 @@ pub(crate) fn extract_program(
         records,
         truncated,
     })
+}
+
+fn append_function_records(
+    function: &FunctionInfo,
+    provenance: &ParserProvenance,
+    maximum: usize,
+    records: &mut Vec<crate::graph::ProgramRecord>,
+) -> bool {
+    if records.len() >= maximum {
+        return true;
+    }
+    records.push(record(
+        if function.handler {
+            "handler"
+        } else {
+            "function"
+        },
+        Some(&function.name),
+        Some(&function.qualified),
+        Vec::new(),
+        None,
+        None,
+        function.location.clone(),
+        provenance,
+    ));
+    for (parameter, location) in &function.parameters {
+        if records.len() >= maximum {
+            return true;
+        }
+        records.push(record(
+            if function.handler {
+                "source"
+            } else {
+                "argument"
+            },
+            Some(if function.handler {
+                "request-parameter"
+            } else {
+                parameter
+            }),
+            Some(&function.qualified),
+            Vec::new(),
+            Some(parameter),
+            None,
+            location.clone(),
+            provenance,
+        ));
+    }
+    if function.guarded && records.len() < maximum {
+        records.push(record_with_dominance(
+            "guard",
+            Some("framework-authorization"),
+            Some(&function.qualified),
+            Vec::new(),
+            None,
+            None,
+            function.location.clone(),
+            provenance,
+            Some((
+                function.location.span.start_byte,
+                function.location.span.end_byte,
+            )),
+        ));
+    }
+    false
 }
 
 fn collect_functions(

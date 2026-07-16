@@ -68,6 +68,9 @@ pub struct HistorySummary {
     pub report_fingerprint: String,
     /// Number of findings.
     pub findings: usize,
+    /// Frozen neutral taxonomy versions present in the stored report.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taxonomy_versions: Vec<String>,
     /// Whether the originally scanned directory still exists.
     pub repository_available: bool,
     /// Completion state; only complete records are published.
@@ -412,6 +415,16 @@ fn validate_stored(stored: &StoredHistoryEntry, path: &Path) -> Result<(), Histo
             .ai_assessments
             .iter()
             .any(|assessment| validate_history_assessment(&stored.report, assessment).is_err())
+        || !crate::taxonomy::catalog_is_valid(&stored.report.taxonomy_catalog)
+        || stored.report.findings.iter().any(|finding| {
+            !crate::taxonomy::metadata_matches_catalog(
+                &stored.report.taxonomy_catalog,
+                &finding.rule_id,
+                finding.taxonomy.as_ref(),
+                finding.primary_cwe.as_ref(),
+                finding.taxonomy_provenance.as_ref(),
+            )
+        })
     {
         return Err(HistoryError::Invalid(
             "history record failed validation".into(),
@@ -451,6 +464,12 @@ fn summary(stored: &StoredHistoryEntry) -> HistorySummary {
         repository_name: stored.report.repository.name.clone(),
         report_fingerprint: stored.report.report_fingerprint.clone(),
         findings: stored.report.findings.len(),
+        taxonomy_versions: stored
+            .report
+            .taxonomy_catalog
+            .iter()
+            .map(|taxonomy| taxonomy.taxonomy_version.clone())
+            .collect(),
         repository_available: stored
             .repository_path
             .as_ref()

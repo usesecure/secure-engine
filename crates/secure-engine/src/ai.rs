@@ -17,7 +17,10 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use crate::storage::{create_private_directory, write_atomic};
-use crate::{CancellationToken, Finding, ScanReport, SourceLocation};
+use crate::{
+    CancellationToken, CweReference, Finding, RuleTaxonomyProvenance, ScanReport, SourceLocation,
+    TaxonomyCoordinates,
+};
 
 pub const AI_CONFIG_FORMAT: &str = "secure-ai-config-v1";
 pub const AI_PREVIEW_FORMAT: &str = "secure-ai-preview-v1";
@@ -102,6 +105,12 @@ pub struct AiPayload {
     pub deterministic_severity: String,
     pub deterministic_confidence: String,
     pub invariant: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy: Option<TaxonomyCoordinates>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_cwe: Option<CweReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy_provenance: Option<RuleTaxonomyProvenance>,
     pub prerequisites: Vec<String>,
     pub impact: String,
     pub remediation: String,
@@ -942,6 +951,9 @@ fn build_payload(finding: &Finding, limits: &AiLimits) -> Result<(AiPayload, usi
             deterministic_severity: finding.severity.clone(),
             deterministic_confidence: finding.confidence.clone(),
             invariant: clean(&finding.invariant),
+            taxonomy: finding.taxonomy.clone(),
+            primary_cwe: finding.primary_cwe.clone(),
+            taxonomy_provenance: finding.taxonomy_provenance.clone(),
             prerequisites: finding
                 .prerequisites
                 .iter()

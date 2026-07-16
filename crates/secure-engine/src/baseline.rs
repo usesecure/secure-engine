@@ -38,6 +38,9 @@ pub struct Baseline {
     pub repository: RepositoryIdentity,
     /// Stable source report fingerprint.
     pub report_fingerprint: String,
+    /// Frozen neutral taxonomy contracts carried by the source report.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taxonomy_catalog: Vec<crate::TaxonomyDescriptor>,
     /// Sorted deterministic finding records.
     pub findings: Vec<BaselineFinding>,
 }
@@ -53,6 +56,15 @@ pub struct BaselineFinding {
     pub related_key: String,
     /// Exact repository-relative sink.
     pub sink: SourceLocation,
+    /// Exact frozen neutral matching coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy: Option<crate::TaxonomyCoordinates>,
+    /// Primary public CWE association from the frozen contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_cwe: Option<crate::CweReference>,
+    /// Auditable rule-to-taxonomy mapping provenance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy_provenance: Option<crate::RuleTaxonomyProvenance>,
 }
 
 /// Deterministic classification of current findings relative to a baseline.
@@ -114,6 +126,7 @@ pub fn create_baseline(report: &ScanReport) -> Result<Baseline, BaselineError> {
         report_schema: report.schema_version.clone(),
         repository: report.repository.clone(),
         report_fingerprint: report.report_fingerprint.clone(),
+        taxonomy_catalog: report.taxonomy_catalog.clone(),
         findings,
     })
 }
@@ -221,12 +234,24 @@ pub fn validate_baseline(baseline: &Baseline) -> Result<(), BaselineError> {
             "invalid report or repository fingerprint".into(),
         ));
     }
+    if !crate::taxonomy::catalog_is_valid(&baseline.taxonomy_catalog) {
+        return Err(BaselineError::Invalid(
+            "taxonomy catalog is incompatible".into(),
+        ));
+    }
     if baseline.findings.windows(2).any(|pair| pair[0] >= pair[1])
         || baseline.findings.iter().any(|finding| {
             finding.rule_id.is_empty()
                 || !fingerprint_is_valid(&finding.fingerprint)
                 || !fingerprint_is_valid(&finding.related_key)
                 || !location_is_safe(&finding.sink)
+                || !crate::taxonomy::metadata_matches_catalog(
+                    &baseline.taxonomy_catalog,
+                    &finding.rule_id,
+                    finding.taxonomy.as_ref(),
+                    finding.primary_cwe.as_ref(),
+                    finding.taxonomy_provenance.as_ref(),
+                )
         })
     {
         return Err(BaselineError::Invalid(
@@ -240,6 +265,21 @@ fn validate_report(report: &ScanReport) -> Result<(), BaselineError> {
     if report.schema_version != SCHEMA_VERSION || !report.scan.complete {
         return Err(BaselineError::Invalid(
             "a complete secure-json-v1 report is required".into(),
+        ));
+    }
+    if !crate::taxonomy::catalog_is_valid(&report.taxonomy_catalog)
+        || report.findings.iter().any(|finding| {
+            !crate::taxonomy::metadata_matches_catalog(
+                &report.taxonomy_catalog,
+                &finding.rule_id,
+                finding.taxonomy.as_ref(),
+                finding.primary_cwe.as_ref(),
+                finding.taxonomy_provenance.as_ref(),
+            )
+        })
+    {
+        return Err(BaselineError::Invalid(
+            "report taxonomy metadata is incompatible".into(),
         ));
     }
     if !fingerprint_is_valid(&report.report_fingerprint) {
@@ -264,6 +304,9 @@ fn baseline_finding(finding: &Finding) -> Result<BaselineFinding, BaselineError>
         related_key: related_key(&finding.rule_id, &sink),
         fingerprint: finding.fingerprint.clone(),
         sink,
+        taxonomy: finding.taxonomy.clone(),
+        primary_cwe: finding.primary_cwe.clone(),
+        taxonomy_provenance: finding.taxonomy_provenance.clone(),
     })
 }
 

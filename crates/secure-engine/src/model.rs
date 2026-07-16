@@ -153,6 +153,9 @@ pub struct ScanReport {
     /// Auditable invalid, stale, or applied suppression results.
     #[serde(default)]
     pub suppression_diagnostics: Vec<SuppressionDiagnostic>,
+    /// Frozen neutral taxonomy contracts used by deterministic rule mappings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub taxonomy_catalog: Vec<TaxonomyDescriptor>,
     /// Regular files that were successfully inventoried.
     pub files: Vec<FileRecord>,
     /// Aggregated detected languages.
@@ -441,6 +444,72 @@ pub struct RuleMetadata {
     pub confidence: String,
     /// Security invariant enforced by the rule.
     pub invariant: String,
+    /// Exact frozen neutral matching coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy: Option<TaxonomyCoordinates>,
+    /// Primary public CWE association from the frozen contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_cwe: Option<CweReference>,
+    /// Auditable source of the rule-to-taxonomy mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy_provenance: Option<RuleTaxonomyProvenance>,
+}
+
+/// Descriptor for one frozen neutral taxonomy contract used by a report.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct TaxonomyDescriptor {
+    /// Stable schema identifier used as the taxonomy name.
+    pub taxonomy_name: String,
+    /// Frozen taxonomy semantic version.
+    pub taxonomy_version: String,
+    /// Public source release recorded by the contract.
+    pub source_version: String,
+    /// Signed upstream commit that froze the contract.
+    pub source_commit: String,
+    /// SHA-256 of the public taxonomy schema.
+    pub schema_sha256: String,
+    /// SHA-256 of the frozen taxonomy document.
+    pub taxonomy_sha256: String,
+    /// SHA-256 of the public methodology.
+    pub methodology_sha256: String,
+    /// Internal canonical taxonomy content hash.
+    pub content_hash: String,
+}
+
+/// Exact tool-neutral coordinates permitted by the frozen matching contract.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaxonomyCoordinates {
+    /// Frozen taxonomy semantic version.
+    pub taxonomy_version: String,
+    /// Stable neutral category identifier.
+    pub category_id: String,
+    /// Stable neutral invariant identifier paired with the category.
+    pub invariant_id: String,
+}
+
+/// Public CWE association recorded by the frozen neutral taxonomy.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CweReference {
+    /// Stable CWE identifier.
+    pub id: String,
+    /// Official MITRE definition URL.
+    pub url: String,
+}
+
+/// Provenance for one Secure Engine rule-to-taxonomy mapping.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleTaxonomyProvenance {
+    /// Stable taxonomy schema identifier.
+    pub taxonomy_name: String,
+    /// Signed upstream commit containing the frozen contract.
+    pub source_commit: String,
+    /// Canonical content hash from the frozen taxonomy document.
+    pub content_hash: String,
+    /// Stable explanation of how the native rule family was mapped.
+    pub mapping_basis: String,
 }
 
 /// Aggregate deterministic analysis results. Duration is volatile.
@@ -634,6 +703,15 @@ pub struct Finding {
     pub evidence_path: Vec<EvidencePathStep>,
     /// Security invariant claimed to be violated.
     pub invariant: String,
+    /// Exact frozen neutral matching coordinates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy: Option<TaxonomyCoordinates>,
+    /// Primary public CWE association from the frozen contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_cwe: Option<CweReference>,
+    /// Auditable source of the native rule-to-taxonomy mapping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taxonomy_provenance: Option<RuleTaxonomyProvenance>,
     /// Preconditions needed for exploitation.
     pub prerequisites: Vec<String>,
     /// Realistic impact statement.

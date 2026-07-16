@@ -42,6 +42,9 @@ fn baseline_is_deterministic_and_classifies_all_states() -> Result<(), Box<dyn s
     added.rule_id = "SE1999".into();
     added.finding_id = "fd_phase4_new".into();
     added.fingerprint = "b".repeat(64);
+    added.taxonomy = None;
+    added.primary_cwe = None;
+    added.taxonomy_provenance = None;
     current.findings.push(added);
     let comparison = compare_baseline(&baseline, &current)?;
     assert_eq!(comparison.new.len(), 1);
@@ -152,6 +155,12 @@ fn history_is_private_bounded_recoverable_and_explicitly_deletable()
     }
     let listing = store.list(&cancellation)?;
     assert_eq!(listing.scans.len(), 2);
+    assert!(
+        listing
+            .scans
+            .iter()
+            .all(|scan| scan.taxonomy_versions == ["1.0.0"])
+    );
     assert!(!listing.scans.iter().any(|scan| scan.scan_id == ids[0]));
     let entry = store.show(&ids[2], &cancellation)?;
     let public = serde_json::to_string(&entry)?;

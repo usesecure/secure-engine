@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phases 0–5 are complete. Phase 6 adds optional AI-assisted validation as a separate, disabled-by-default layer over selected deterministic findings. Exact payload preview, per-operation consent, redaction, bounded provider calls, strict assessment schemas, provenance, private caching, and local deletion are enforced without changing Phase 5 findings or report fingerprints. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
+Phases 0–6 are complete. Phase 6.5 releases Secure Engine 0.1.1 with exact frozen neutral taxonomy coordinates for all seven deterministic rule families and general precision improvements for TypeScript filesystem, authorization, process, outbound-request, redirect, and uniquely resolved helper flows. Existing report consumers remain compatible; AI validation remains separate and disabled by default. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
 
 Build Secure Engine as a local-first Rust security analyzer with one reusable core, a CLI, and a small native desktop interface. The first implementation must establish a reliable foundation and a stable integration contract with `usesecure/secure-skill`; it must not attempt broad vulnerability detection yet.
 

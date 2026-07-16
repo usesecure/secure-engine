@@ -2,9 +2,9 @@
 
 Local-first security analysis for entire codebases.
 
-Secure Engine is the local Rust analysis core of the Secure project family. Phase 6 keeps the Phase 5 deterministic JavaScript/TypeScript, Rust, Python, and Go analysis unchanged and adds optional, disabled-by-default AI-assisted validation over selected findings. The CLI and native desktop product retain safe source inspection, exact suppressions, local history, deterministic baselines, JSON/SARIF export, and Fedora RPM packaging.
+Secure Engine is the local Rust analysis core of the Secure project family. Release 0.1.1 (Phase 6.5) adds frozen, tool-neutral taxonomy metadata and calibrates deterministic TypeScript precision while preserving the Phase 6 optional, disabled-by-default AI boundary and the existing JavaScript/TypeScript, Rust, Python, and Go contracts. The CLI and native desktop product retain safe source inspection, exact suppressions, local history, deterministic baselines, JSON/SARIF export, and Fedora RPM packaging.
 
-Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Development and contract details are in [docs/development.md](./docs/development.md), [docs/parsing-normalized-facts.md](./docs/parsing-normalized-facts.md), [docs/evidence-graph-and-rules.md](./docs/evidence-graph-and-rules.md), [docs/secure-json-v1.md](./docs/secure-json-v1.md), and [docs/ai-validation.md](./docs/ai-validation.md). Fedora package operations and Phase 6 verification are documented in [docs/fedora-packaging.md](./docs/fedora-packaging.md) and [docs/verification-fedora-phase6.md](./docs/verification-fedora-phase6.md).
+Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Development and contract details are in [docs/development.md](./docs/development.md), [docs/parsing-normalized-facts.md](./docs/parsing-normalized-facts.md), [docs/evidence-graph-and-rules.md](./docs/evidence-graph-and-rules.md), [docs/secure-json-v1.md](./docs/secure-json-v1.md), [docs/taxonomy-and-precision.md](./docs/taxonomy-and-precision.md), and [docs/ai-validation.md](./docs/ai-validation.md). Fedora package operations and Phase 6.5 verification are documented in [docs/fedora-packaging.md](./docs/fedora-packaging.md) and [docs/verification-fedora-phase65.md](./docs/verification-fedora-phase65.md).
 
 ## Project family
 

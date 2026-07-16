@@ -273,6 +273,18 @@ pub fn filter_findings<'a>(
                         finding.title.as_str(),
                         finding.category.as_str(),
                         finding.invariant.as_str(),
+                        finding
+                            .taxonomy
+                            .as_ref()
+                            .map_or("", |taxonomy| taxonomy.category_id.as_str()),
+                        finding
+                            .taxonomy
+                            .as_ref()
+                            .map_or("", |taxonomy| taxonomy.invariant_id.as_str()),
+                        finding
+                            .primary_cwe
+                            .as_ref()
+                            .map_or("", |cwe| cwe.id.as_str()),
                         finding_file(finding),
                     ]
                     .iter()
@@ -562,9 +574,21 @@ mod tests {
         let filtered = filter_findings(&report, &filter, FindingSort::File);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].rule_id, "SE1006");
+        let taxonomy_search = FindingFilter {
+            search: expected
+                .primary_cwe
+                .as_ref()
+                .map_or(String::new(), |cwe| cwe.id.clone()),
+            ..FindingFilter::default()
+        };
+        assert!(
+            filter_findings(&report, &taxonomy_search, FindingSort::Rule)
+                .iter()
+                .any(|finding| finding.rule_id == "SE1006")
+        );
 
         let all = filter_findings(&report, &FindingFilter::default(), FindingSort::Severity);
-        assert_eq!(all.len(), 12);
+        assert_eq!(all.len(), 13);
         assert_eq!(
             all.first().map(|finding| finding.severity.as_str()),
             Some("critical")

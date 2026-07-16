@@ -1,5 +1,5 @@
 Name:           secure-engine
-Version:        0.1.0
+Version:        0.1.1
 Release:        1%{?dist}
 Summary:        Local deterministic security analysis CLI and native desktop
 License:        MIT
@@ -45,6 +45,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 %{_datadir}/icons/hicolor/scalable/apps/dev.usesecure.SecureEngine.svg
 
 %changelog
+* Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.1-1
+- Phase 6.5 neutral taxonomy and deterministic precision calibration
+
 * Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.0-1
 - Phase 6 optional consented AI-assisted finding validation
 

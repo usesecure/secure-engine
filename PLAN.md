@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–5 are integrated. Phase 6 adds a provider-neutral, disabled-by-default validation boundary over selected deterministic findings. It has recorded/mock evaluation adapters plus an optional OpenAI Responses adapter, exact preview and consent, strict structured output, redaction, budgets, timeout/cancellation contracts, private replay-safe caching, provenance, CLI/desktop workflows, and separate JSON/SARIF/history attachment. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, and additional package formats remain future work.
+Phases 0–6 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family and calibrates shared TypeScript evidence semantics using independent Engine-owned fixtures. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -337,6 +337,15 @@ Exit condition: support claims match measured language and framework coverage.
 - [Complete] Evaluate contracts with committed mock/recorded fixtures without making provider-quality claims.
 
 Exit condition: AI can improve triage without being required for scanning or silently exporting source.
+
+### Phase 6.5 - Precision and neutral taxonomy calibration
+
+- [Complete] Attach exact taxonomy version, category, invariant, primary CWE, and mapping provenance to all `SE1001`–`SE1007` rules and findings.
+- [Complete] Project the same metadata through JSON, SARIF, CLI, desktop, baselines, history, and optional AI previews without changing AI execution policy.
+- [Complete] Improve structural dominance and uniquely resolved helper propagation for filesystem, authorization, outbound-request, redirect, and process execution semantics.
+- [Complete] Preserve prior finding fingerprints and all supported-language behavior except where a newly reproduced evidence path is intentionally detected.
+
+Exit condition: safe dominant controls suppress only their matching rule family, unsafe near misses remain findings, unresolved behavior is explicit, and release 0.1.1 passes all compatibility and Fedora gates.
 
 ### Phase 7 - Distribution
 

@@ -140,6 +140,9 @@ fn preview_is_redacted_bounded_and_requires_exact_consent() {
     assert!(preview.payload.title.contains("[REDACTED]"));
     assert!(!preview.payload.title.contains("hunter2"));
     assert!(preview.redactions >= 2);
+    assert!(preview.payload.taxonomy.is_some());
+    assert!(preview.payload.primary_cwe.is_some());
+    assert!(preview.payload.taxonomy_provenance.is_some());
     let error = validate_finding_with_ai(
         &report,
         &preview,

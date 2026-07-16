@@ -22,6 +22,51 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "taxonomyCoordinates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_version", "category_id", "invariant_id"],
+      "properties": {
+        "taxonomy_version": { "const": "1.0.0" },
+        "category_id": { "type": "string", "pattern": "^secure-bench\\.category\\.[a-z0-9]+(?:-[a-z0-9]+)*$" },
+        "invariant_id": { "type": "string", "pattern": "^secure-bench\\.invariant\\.[a-z0-9]+(?:-[a-z0-9]+)*$" }
+      }
+    },
+    "cweReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "url"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^CWE-[1-9][0-9]*$" },
+        "url": { "type": "string", "pattern": "^https://cwe\\.mitre\\.org/data/definitions/[1-9][0-9]*\\.html$" }
+      }
+    },
+    "ruleTaxonomyProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_name", "source_commit", "content_hash", "mapping_basis"],
+      "properties": {
+        "taxonomy_name": { "const": "secure-bench-taxonomy-v1" },
+        "source_commit": { "const": "93c0821db065de436a339c15b070e158947ad76c" },
+        "content_hash": { "const": "22852bd7401020b315af11dfa2b60c0b46f78eb19f95079e6400d7b3bea3272c" },
+        "mapping_basis": { "const": "secure-engine-built-in-rule-family" }
+      }
+    },
+    "taxonomyDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_name", "taxonomy_version", "source_version", "source_commit", "schema_sha256", "taxonomy_sha256", "methodology_sha256", "content_hash"],
+      "properties": {
+        "taxonomy_name": { "const": "secure-bench-taxonomy-v1" },
+        "taxonomy_version": { "const": "1.0.0" },
+        "source_version": { "const": "CWE 4.20" },
+        "source_commit": { "const": "93c0821db065de436a339c15b070e158947ad76c" },
+        "schema_sha256": { "const": "cdecd643d338aa8ae42ec7398c6c4703cb97d60ad355340c98744fc94bcb7d6f" },
+        "taxonomy_sha256": { "const": "059fe22d7707cf8d17f2c1621fdae9819787a1958ba2ef0421eca4e4ec858452" },
+        "methodology_sha256": { "const": "eac27e5800be35c5ae77f7804e52ae90462cbda403a5484baa8fab62f02ab562" },
+        "content_hash": { "const": "22852bd7401020b315af11dfa2b60c0b46f78eb19f95079e6400d7b3bea3272c" }
+      }
+    },
     "span": {
       "type": "object",
       "required": ["start_byte", "end_byte", "start_line", "start_column", "end_line", "end_column"],
@@ -308,6 +353,9 @@
         "sink": { "oneOf": [{ "$ref": "#/$defs/location" }, { "type": "null" }] },
         "evidence_path": { "type": "array", "items": { "$ref": "#/$defs/evidencePathStep" } },
         "invariant": { "type": "string", "minLength": 1 },
+        "taxonomy": { "$ref": "#/$defs/taxonomyCoordinates" },
+        "primary_cwe": { "$ref": "#/$defs/cweReference" },
+        "taxonomy_provenance": { "$ref": "#/$defs/ruleTaxonomyProvenance" },
         "prerequisites": { "type": "array", "items": { "type": "string" } },
         "impact": { "type": "string", "minLength": 1 },
         "remediation": { "type": "string", "minLength": 1 },
@@ -437,6 +485,7 @@
         "graph": { "$ref": "#/$defs/evidenceGraph" },
         "analysis": { "$ref": "#/$defs/analysis" },
         "suppression_diagnostics": { "type": "array", "items": { "$ref": "#/$defs/suppressionDiagnostic" } },
+        "taxonomy_catalog": { "type": "array", "maxItems": 16, "items": { "$ref": "#/$defs/taxonomyDescriptor" } },
         "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
         "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
         "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } },
