@@ -384,6 +384,9 @@ pub struct EvidenceNode {
     pub kind: String,
     /// Optional normalized structural name.
     pub name: Option<String>,
+    /// Explicit security-semantic identity, when this node participates in analysis.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<EvidenceSemantic>,
     /// Exact repository-relative evidence.
     pub location: SourceLocation,
     /// Parser and graph-extractor provenance.
@@ -421,6 +424,9 @@ pub struct EvidencePathStep {
     pub edge_id_from_previous: Option<String>,
     /// Node role in this path.
     pub kind: String,
+    /// Explicit security-semantic identity preserved from the graph node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<EvidenceSemantic>,
     /// Exact repository-relative evidence.
     pub location: SourceLocation,
     /// Parser and graph-extractor provenance.
@@ -453,6 +459,58 @@ pub struct RuleMetadata {
     /// Auditable source of the rule-to-taxonomy mapping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taxonomy_provenance: Option<RuleTaxonomyProvenance>,
+}
+
+/// Stable role of one security-relevant evidence node.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceSemanticRole {
+    /// Data originating at an attacker-controlled or otherwise untrusted boundary.
+    UntrustedSource,
+    /// A value-preserving or value-changing operation in a data-flow path.
+    Transformation,
+    /// A control-flow predicate that may constrain a later operation.
+    Guard,
+    /// A value operation with a policy-specific sanitization contract.
+    Sanitizer,
+    /// Authentication or authorization evidence with an explicit scope.
+    AuthorizationCheck,
+    /// A security-sensitive operation at the end of an evidence path.
+    SensitiveSink,
+}
+
+/// Scope proven by an authentication or authorization check.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuthorizationKind {
+    /// Identity is established, but no operation-specific permission is proven.
+    Authentication,
+    /// A role or permission capability is checked.
+    Role,
+    /// The actor is checked against the target object's owner or membership.
+    Ownership,
+    /// The actor and target are constrained to the same tenant or organization.
+    Tenant,
+    /// A general operation-specific authorization policy is enforced.
+    General,
+}
+
+/// Explicit semantic identity attached to graph nodes and ordered evidence steps.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceSemantic {
+    /// Stable semantic role.
+    pub role: EvidenceSemanticRole,
+    /// Stable, tool-owned semantic identity independent of source spelling.
+    pub identity: String,
+    /// Policy invariant enforced by a guard or sanitizer, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+    /// Authentication/authorization scope, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorization: Option<AuthorizationKind>,
+    /// Whether semantics are proven or conservatively unresolved.
+    pub certainty: String,
 }
 
 /// Descriptor for one frozen neutral taxonomy contract used by a report.
@@ -724,6 +782,9 @@ pub struct Finding {
     pub limitations: Vec<String>,
     /// Stable deduplication fingerprint.
     pub fingerprint: String,
+    /// Location/name-independent fingerprint of the demonstrated semantic source/sink family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_fingerprint: Option<String>,
 }
 
 /// Declared analysis limitation.

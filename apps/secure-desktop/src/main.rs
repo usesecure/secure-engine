@@ -1174,6 +1174,9 @@ impl SecureApp {
             detail(ui, "Remediation", &finding.remediation);
             detail(ui, "Verification", &finding.verification_state);
             detail(ui, "Limitations", &finding.limitations.join("; "));
+            if let Some(fingerprint) = &finding.semantic_fingerprint {
+                detail(ui, "Semantic fingerprint", fingerprint);
+            }
             ui.strong("Ordered source-to-sink path");
             for (index, step) in finding.evidence_path.iter().enumerate() {
                 ui.label(format!(
@@ -1184,6 +1187,17 @@ impl SecureApp {
                     step.location.span.start_line,
                     step.location.span.start_column
                 ));
+                if let Some(semantic) = &step.semantic {
+                    ui.weak(format!(
+                        "   {} · {}{}",
+                        semantic.identity,
+                        semantic.certainty,
+                        semantic
+                            .policy
+                            .as_deref()
+                            .map_or_else(String::new, |policy| format!(" · {policy}"))
+                    ));
+                }
             }
             if let Some(sink) = finding.sink.clone() {
                 if ui
@@ -1643,6 +1657,9 @@ impl SecureApp {
                 detail(ui, "Confidence", &finding.confidence);
                 detail(ui, "Invariant", &finding.invariant);
                 detail(ui, "Fingerprint", &finding.fingerprint);
+                if let Some(fingerprint) = &finding.semantic_fingerprint {
+                    detail(ui, "Semantic fingerprint", fingerprint);
+                }
             }
         }
         ui.separator();

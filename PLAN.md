@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–6 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family and calibrates shared TypeScript evidence semantics using independent Engine-owned fixtures. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
+Phases 0–6.6 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics, value correspondence, realizable paths, and independent mutation/metamorphic precision coverage. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -346,6 +346,15 @@ Exit condition: AI can improve triage without being required for scanning or sil
 - [Complete] Preserve prior finding fingerprints and all supported-language behavior except where a newly reproduced evidence path is intentionally detected.
 
 Exit condition: safe dominant controls suppress only their matching rule family, unsafe near misses remain findings, unresolved behavior is explicit, and release 0.1.1 passes all compatibility and Fedora gates.
+
+### Phase 6.6 - Evidence semantics and precision hardening
+
+- [Complete] Add explicit source, transformation, guard, sanitizer, authorization, and sink semantics without changing legacy finding identities.
+- [Complete] Require realizable paths, matching values, terminating control flow, policy-specific guards, and operation authorization.
+- [Complete] Resolve deterministic helpers, imports, and aliases within conservative resource bounds and expose uncertainty.
+- [Complete] Exercise 102 independent scenarios, including six vulnerable and six safe cases per rule family plus multilingual and mutation/metamorphic coverage.
+
+Exit condition: release 0.1.2 preserves Phase 6 compatibility, passes every workspace and Fedora gate, and produces reproducible RPMs.
 
 ### Phase 7 - Distribution
 

@@ -285,10 +285,20 @@ pub fn filter_findings<'a>(
                             .primary_cwe
                             .as_ref()
                             .map_or("", |cwe| cwe.id.as_str()),
+                        finding.semantic_fingerprint.as_deref().unwrap_or(""),
                         finding_file(finding),
                     ]
                     .iter()
-                    .any(|value| text_matches(value, &filter.search)))
+                    .any(|value| text_matches(value, &filter.search))
+                    || finding.evidence_path.iter().any(|step| {
+                        step.semantic.as_ref().is_some_and(|semantic| {
+                            text_matches(&semantic.identity, &filter.search)
+                                || semantic
+                                    .policy
+                                    .as_deref()
+                                    .is_some_and(|policy| text_matches(policy, &filter.search))
+                        })
+                    }))
         })
         .collect::<Vec<_>>();
     findings.sort_by(|left, right| {

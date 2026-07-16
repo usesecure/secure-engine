@@ -81,12 +81,16 @@ fn sarif_result(finding: &Finding, rule_index: Option<usize>) -> Value {
         .iter()
         .enumerate()
         .map(|(index, step)| {
-            json!({
+            let mut location = json!({
                 "location": sarif_location(&step.location, Some(&step.kind)),
                 "executionOrder": index.saturating_add(1),
                 "importance": if index == 0 || index.saturating_add(1) == finding.evidence_path.len() { "essential" } else { "important" },
                 "kinds": [step.kind]
-            })
+            });
+            if let Some(semantic) = &step.semantic {
+                location["properties"] = json!({"secureEvidenceSemantic": semantic});
+            }
+            location
         })
         .collect::<Vec<_>>();
     let mut result = json!({
@@ -121,6 +125,11 @@ fn sarif_result(finding: &Finding, rule_index: Option<usize>) -> Value {
             "message": {"text": "Secure Engine deterministic source-to-sink evidence path"},
             "threadFlows": [{"locations": thread_locations}]
         }]);
+    }
+    if let Some(semantic_fingerprint) = &finding.semantic_fingerprint {
+        result["partialFingerprints"]["secureSemanticFingerprint/v1"] = json!(semantic_fingerprint);
+        result["fingerprints"]["secureSemanticFingerprint/v1"] = json!(semantic_fingerprint);
+        result["properties"]["semanticFingerprint"] = json!(semantic_fingerprint);
     }
     if let Some(index) = rule_index {
         result["ruleIndex"] = json!(index);

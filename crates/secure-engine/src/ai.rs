@@ -99,6 +99,8 @@ pub struct AiProviderDescriptor {
 pub struct AiPayload {
     pub finding_id: String,
     pub finding_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_fingerprint: Option<String>,
     pub rule_id: String,
     pub title: String,
     pub category: String,
@@ -945,6 +947,7 @@ fn build_payload(finding: &Finding, limits: &AiLimits) -> Result<(AiPayload, usi
         AiPayload {
             finding_id: clean(&finding.finding_id),
             finding_fingerprint: finding.fingerprint.clone(),
+            semantic_fingerprint: finding.semantic_fingerprint.clone(),
             rule_id: clean(&finding.rule_id),
             title: clean(&finding.title),
             category: clean(&finding.category),

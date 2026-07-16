@@ -12,6 +12,7 @@ mod model;
 mod parser;
 mod sarif;
 mod scan;
+mod semantics;
 mod source;
 mod storage;
 mod taxonomy;

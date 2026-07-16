@@ -52,6 +52,9 @@ pub struct BaselineFinding {
     pub rule_id: String,
     /// Stable finding fingerprint.
     pub fingerprint: String,
+    /// Location/name-independent semantic family fingerprint, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_fingerprint: Option<String>,
     /// Stable related key derived from rule and sink.
     pub related_key: String,
     /// Exact repository-relative sink.
@@ -243,6 +246,10 @@ pub fn validate_baseline(baseline: &Baseline) -> Result<(), BaselineError> {
         || baseline.findings.iter().any(|finding| {
             finding.rule_id.is_empty()
                 || !fingerprint_is_valid(&finding.fingerprint)
+                || finding
+                    .semantic_fingerprint
+                    .as_deref()
+                    .is_some_and(|value| !fingerprint_is_valid(value))
                 || !fingerprint_is_valid(&finding.related_key)
                 || !location_is_safe(&finding.sink)
                 || !crate::taxonomy::metadata_matches_catalog(
@@ -303,6 +310,7 @@ fn baseline_finding(finding: &Finding) -> Result<BaselineFinding, BaselineError>
         rule_id: finding.rule_id.clone(),
         related_key: related_key(&finding.rule_id, &sink),
         fingerprint: finding.fingerprint.clone(),
+        semantic_fingerprint: finding.semantic_fingerprint.clone(),
         sink,
         taxonomy: finding.taxonomy.clone(),
         primary_cwe: finding.primary_cwe.clone(),

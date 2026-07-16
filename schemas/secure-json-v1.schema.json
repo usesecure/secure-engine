@@ -361,7 +361,20 @@
         "remediation": { "type": "string", "minLength": 1 },
         "verification_state": { "type": "string", "minLength": 1 },
         "limitations": { "type": "array", "items": { "type": "string" } },
-        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "semantic_fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "evidenceSemantic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "identity", "certainty"],
+      "properties": {
+        "role": { "enum": ["untrusted-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink"] },
+        "identity": { "type": "string", "pattern": "^(untrusted|transformation|guard|sanitizer|sink)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "policy": { "type": "string", "minLength": 1 },
+        "authorization": { "enum": ["authentication", "role", "ownership", "tenant", "general"] },
+        "certainty": { "enum": ["proven", "uncertain"] }
       }
     },
     "evidenceNode": {
@@ -371,6 +384,7 @@
         "node_id": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
         "kind": { "type": "string", "minLength": 1 },
         "name": { "oneOf": [{ "type": "string", "minLength": 1, "maxLength": 512 }, { "type": "null" }] },
+        "semantic": { "$ref": "#/$defs/evidenceSemantic" },
         "location": { "$ref": "#/$defs/location" },
         "provenance": { "$ref": "#/$defs/parserProvenance" },
         "fingerprint": { "$ref": "#/$defs/fingerprint" }
@@ -404,6 +418,7 @@
         "node_id": { "type": "string", "pattern": "^gn_[0-9a-f]{24}$" },
         "edge_id_from_previous": { "oneOf": [{ "type": "string", "pattern": "^ge_[0-9a-f]{24}$" }, { "type": "null" }] },
         "kind": { "type": "string", "minLength": 1 },
+        "semantic": { "$ref": "#/$defs/evidenceSemantic" },
         "location": { "$ref": "#/$defs/location" },
         "provenance": { "$ref": "#/$defs/parserProvenance" },
         "fingerprint": { "$ref": "#/$defs/fingerprint" }

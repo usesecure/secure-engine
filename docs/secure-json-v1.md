@@ -62,6 +62,12 @@ New reports include `taxonomy_catalog` with the frozen taxonomy name, version, p
 
 All additions are optional when deserializing earlier `secure-json-v1` reports, baselines, and history entries. New Engine-produced reports populate them for every built-in rule and finding. They are included in the report fingerprint but excluded from existing finding fingerprints, so old finding identities remain stable. See [taxonomy-and-precision.md](./taxonomy-and-precision.md).
 
+## Phase 6.6 additive evidence semantics
+
+Security-relevant graph nodes and evidence-path steps may add `semantic`, containing a stable role, Engine-owned identity, optional policy, optional authorization scope, and certainty. Findings may add `semantic_fingerprint`. Earlier reports omit these fields and continue to deserialize; the original `fingerprint` and `finding_id` algorithms are unchanged.
+
+SARIF adds `secureSemanticFingerprint/v1` to both fingerprint maps and `secureEvidenceSemantic` to thread-flow location properties. Baseline findings and optional AI preview payloads carry the semantic fingerprint additively. See [evidence-semantics.md](./evidence-semantics.md).
+
 ## Exit codes
 
 | Code | Meaning |

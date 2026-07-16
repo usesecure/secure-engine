@@ -7,7 +7,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.92"
 license = "MIT"
@@ -26,7 +26,7 @@ libc = "=0.2.186"
 rfd = "=0.17.2"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
-secure-engine = { version = "=0.1.1", path = "crates/secure-engine" }
+secure-engine = { version = "=0.1.2", path = "crates/secure-engine" }
 tempfile = "=3.27.0"
 time = { version = "=0.3.53", features = ["formatting", "parsing"] }
 ureq = { version = "=3.3.0", default-features = false, features = ["json", "rustls"] }
