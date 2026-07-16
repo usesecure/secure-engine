@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 
 use secure_engine::{
-    CancellationToken, ProgressEvent, ScanConfiguration, ScanError, ScanReport, ScanRequest,
+    CacheControl, CancellationToken, ProgressEvent, ScanConfiguration, ScanError, ScanReport,
+    ScanRequest,
 };
 
-/// Native UI representation of every Phase 1 inventory control.
+/// Native UI representation of every Phase 2 inventory, parsing, and cache control.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct InventoryControls {
@@ -35,6 +36,20 @@ pub struct InventoryControls {
     pub max_depth: Option<usize>,
     /// Maximum retained bounded errors.
     pub max_errors: usize,
+    /// Enable the local parse cache for supported languages.
+    pub parse_cache_enabled: bool,
+    /// Optional local cache base directory; never exported in reports.
+    pub cache_directory: Option<PathBuf>,
+    /// Retire this repository's cache before the next scan.
+    pub clear_cache_before_scan: bool,
+    /// Maximum repository-specific cache bytes.
+    pub max_cache_bytes: u64,
+    /// Maximum parser diagnostics retained in the report.
+    pub max_parser_diagnostics: usize,
+    /// Maximum normalized facts retained per parsed file.
+    pub max_facts_per_file: usize,
+    /// Maximum normalized facts retained across the report.
+    pub max_total_facts: usize,
 }
 
 impl Default for InventoryControls {
@@ -62,6 +77,15 @@ impl InventoryControls {
                 max_total_bytes: self.max_total_bytes,
                 max_depth: self.max_depth,
                 max_errors: self.max_errors,
+                parse_cache_enabled: self.parse_cache_enabled,
+                max_cache_bytes: self.max_cache_bytes,
+                max_parser_diagnostics: self.max_parser_diagnostics,
+                max_facts_per_file: self.max_facts_per_file,
+                max_total_facts: self.max_total_facts,
+            },
+            cache: CacheControl {
+                directory: self.cache_directory.clone(),
+                clear_before_scan: self.clear_cache_before_scan,
             },
         }
     }
@@ -80,6 +104,13 @@ impl InventoryControls {
             max_total_bytes: configuration.max_total_bytes,
             max_depth: configuration.max_depth,
             max_errors: configuration.max_errors,
+            parse_cache_enabled: configuration.parse_cache_enabled,
+            cache_directory: None,
+            clear_cache_before_scan: false,
+            max_cache_bytes: configuration.max_cache_bytes,
+            max_parser_diagnostics: configuration.max_parser_diagnostics,
+            max_facts_per_file: configuration.max_facts_per_file,
+            max_total_facts: configuration.max_total_facts,
         }
     }
 }
@@ -158,6 +189,13 @@ mod tests {
             max_total_bytes: 4096,
             max_depth: Some(8),
             max_errors: 7,
+            parse_cache_enabled: true,
+            cache_directory: Some(PathBuf::from("cache")),
+            clear_cache_before_scan: true,
+            max_cache_bytes: 8192,
+            max_parser_diagnostics: 6,
+            max_facts_per_file: 5,
+            max_total_facts: 20,
         };
         let request = controls.request("repository");
         assert!(request.configuration.include_hidden);
@@ -167,6 +205,10 @@ mod tests {
         assert_eq!(request.configuration.max_total_bytes, 4096);
         assert_eq!(request.configuration.max_depth, Some(8));
         assert_eq!(request.configuration.max_errors, 7);
+        assert!(request.configuration.parse_cache_enabled);
+        assert_eq!(request.cache.directory, Some(PathBuf::from("cache")));
+        assert!(request.cache.clear_before_scan);
+        assert_eq!(request.configuration.max_total_facts, 20);
     }
 
     #[test]
@@ -193,6 +235,26 @@ mod tests {
         let report = result_receiver.recv()??;
         assert!(report.scan.complete);
         handle.join().map_err(|_| "inventory worker panicked")?;
+        Ok(())
+    }
+
+    #[test]
+    fn desktop_and_core_preserve_identical_phase_two_facts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase2-js-ts");
+        let controls = InventoryControls {
+            parse_cache_enabled: false,
+            ..InventoryControls::default()
+        };
+        let request = controls.request(repository);
+        let desktop = inventory_repository(&request, &CancellationToken::new(), |_| {})?;
+        let core = secure_engine::scan_repository(&request, &CancellationToken::new(), |_| {})?;
+        assert_eq!(desktop.report_fingerprint, core.report_fingerprint);
+        assert_eq!(desktop.facts, core.facts);
+        assert_eq!(desktop.parser_diagnostics, core.parser_diagnostics);
+        assert_eq!(desktop.parser_coverage, core.parser_coverage);
         Ok(())
     }
 }

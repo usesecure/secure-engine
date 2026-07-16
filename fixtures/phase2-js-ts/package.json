@@ -1,0 +1,8 @@
+{
+  "name": "phase2-js-ts-fixture",
+  "private": true,
+  "dependencies": {
+    "express": "5.1.0",
+    "next": "15.4.1"
+  }
+}

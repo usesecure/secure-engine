@@ -1,0 +1,120 @@
+{
+  "schema_version": "secure-json-v1",
+  "engine_version": "0.1.0",
+  "document_type": "scan-report",
+  "repository": {
+    "name": "phase2-fixture",
+    "vcs": null,
+    "revision": null,
+    "repository_kind": "directory",
+    "content_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "identity_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "configuration": {
+    "include_hidden": false,
+    "max_files": 100000,
+    "max_file_bytes": 4194304,
+    "respect_ignore_files": true,
+    "include_patterns": [],
+    "exclude_patterns": [],
+    "include_generated": false,
+    "include_vendor": false,
+    "include_nested_repositories": false,
+    "max_total_bytes": 536870912,
+    "max_depth": null,
+    "max_errors": 100,
+    "parse_cache_enabled": true,
+    "max_cache_bytes": 268435456,
+    "max_parser_diagnostics": 1000,
+    "max_facts_per_file": 10000,
+    "max_total_facts": 100000
+  },
+  "scan": {
+    "started_at": "2026-07-16T00:00:00Z",
+    "finished_at": "2026-07-16T00:00:00Z",
+    "duration_ms": 0,
+    "complete": true,
+    "files_discovered": 1,
+    "files_scanned": 1
+  },
+  "inventory": {
+    "entries_seen": 2,
+    "candidate_files": 1,
+    "files_selected": 1,
+    "files_scanned": 1,
+    "text_files": 1,
+    "binary_files": 0,
+    "generated_files": 0,
+    "vendor_files": 0,
+    "bytes_scanned": 18,
+    "symlinks_skipped": 0,
+    "nested_repositories_skipped": 0,
+    "hit_file_limit": false,
+    "hit_total_byte_limit": false
+  },
+  "parsing": {
+    "files_eligible": 1,
+    "files_parsed": 1,
+    "files_with_diagnostics": 0,
+    "facts_extracted": 1,
+    "duration_ms": 1,
+    "cache_enabled": true,
+    "cache_hits": 0,
+    "cache_misses": 1,
+    "cache_writes": 1,
+    "cache_entries_ignored": 0
+  },
+  "facts": [{
+    "fact_id": "sf_eeeeeeeeeeeeeeeeeeeeeeee",
+    "kind": "function",
+    "location": {
+      "path": "app.js",
+      "span": {
+        "start_byte": 0,
+        "end_byte": 18,
+        "start_line": 1,
+        "start_column": 1,
+        "end_line": 1,
+        "end_column": 19
+      }
+    },
+    "name": "main",
+    "relationships": [],
+    "provenance": {
+      "parser": "secure-tree-sitter-adapter-v1",
+      "parser_version": "0.26.11",
+      "grammar": "tree-sitter-javascript@0.25.0:javascript",
+      "extractor_version": "normalized-js-facts-v1"
+    },
+    "fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  }],
+  "parser_diagnostics": [],
+  "parser_coverage": [{
+    "parser_mode": "javascript",
+    "files_eligible": 1,
+    "files_parsed": 1,
+    "files_with_diagnostics": 0,
+    "facts_extracted": 1
+  }],
+  "files": [{
+    "path": "app.js",
+    "kind": "source",
+    "size_bytes": 18,
+    "content_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "language": "JavaScript",
+    "origin": "project",
+    "is_binary": false
+  }],
+  "languages": [{"name": "JavaScript", "file_count": 1, "bytes": 18}],
+  "manifests": [],
+  "frameworks": [],
+  "entry_points": [],
+  "capabilities": [],
+  "trust_boundaries": [],
+  "findings": [],
+  "limitations": [{"code": "syntax-evidence-only", "message": "Phase 2 syntax evidence only"}],
+  "skipped_files": [],
+  "exclusions": [],
+  "errors": [],
+  "report_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

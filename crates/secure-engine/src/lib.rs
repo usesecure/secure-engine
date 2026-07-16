@@ -1,7 +1,9 @@
-//! Deterministic, local-first repository inventory shared by every Secure Engine interface.
+//! Deterministic local-first inventory and normalized syntax facts shared by every interface.
 
+mod cache;
 mod classify;
 mod model;
+mod parser;
 mod scan;
 mod workspace;
 

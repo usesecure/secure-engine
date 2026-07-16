@@ -32,6 +32,7 @@ struct SecureApp {
     include_patterns_input: String,
     exclude_patterns_input: String,
     max_depth_input: usize,
+    cache_directory_input: String,
     status: String,
     progress: f32,
     report: Option<ScanReport>,
@@ -47,6 +48,7 @@ impl SecureApp {
             include_patterns_input: String::new(),
             exclude_patterns_input: String::new(),
             max_depth_input: 0,
+            cache_directory_input: String::new(),
             status: "Ready. Choose a local repository.".into(),
             progress: 0.0,
             report: None,
@@ -64,7 +66,10 @@ impl SecureApp {
         controls.include_patterns = parse_patterns(&self.include_patterns_input);
         controls.exclude_patterns = parse_patterns(&self.exclude_patterns_input);
         controls.max_depth = (self.max_depth_input > 0).then_some(self.max_depth_input);
+        controls.cache_directory = (!self.cache_directory_input.trim().is_empty())
+            .then(|| PathBuf::from(self.cache_directory_input.trim()));
         let request = controls.request(PathBuf::from(self.repository_input.trim()));
+        self.controls.clear_cache_before_scan = false;
         let cancellation = CancellationToken::new();
         let worker_cancellation = cancellation.clone();
         let (sender, receiver) = bounded(256);
@@ -148,6 +153,19 @@ impl SecureApp {
                 self.progress = f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0;
                 self.status = format!("Inventory {completed}/{total}: {path}");
             }
+            ProgressEvent::Parsing {
+                completed,
+                total,
+                path,
+                parser_mode,
+            } => {
+                let basis_points = completed
+                    .saturating_mul(10_000)
+                    .checked_div(total)
+                    .unwrap_or(0);
+                self.progress = f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0;
+                self.status = format!("Parsing {completed}/{total}: {path} ({parser_mode})");
+            }
             ProgressEvent::Finalizing => self.status = "Finalizing deterministic report…".into(),
             ProgressEvent::Complete { files_scanned } => {
                 self.progress = 1.0;
@@ -216,7 +234,7 @@ impl eframe::App for SecureApp {
         egui::CentralPanel::default().show(root_ui, |ui| {
             ui.heading("Deterministic repository inventory");
             ui.label(
-                "Phase 1 inventories local repository evidence; it does not claim vulnerabilities.",
+                "Phase 2 inventories and parses local syntax evidence; it does not claim vulnerabilities.",
             );
             let controls_enabled = !self.scanning();
             ui.collapsing("Inventory controls", |ui| {
@@ -232,6 +250,11 @@ impl eframe::App for SecureApp {
                         ui.checkbox(
                             &mut self.controls.include_nested_repositories,
                             "Nested repositories",
+                        );
+                        ui.checkbox(&mut self.controls.parse_cache_enabled, "Parse cache");
+                        ui.checkbox(
+                            &mut self.controls.clear_cache_before_scan,
+                            "Clear cache before scan",
                         );
                     });
                     egui::Grid::new("resource-controls")
@@ -258,10 +281,39 @@ impl eframe::App for SecureApp {
                                 egui::DragValue::new(&mut self.controls.max_errors).range(1..=1000),
                             );
                             ui.end_row();
+                            ui.label("Max cache bytes");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_cache_bytes)
+                                    .range(1..=16_u64 * 1024 * 1024 * 1024),
+                            );
+                            ui.label("Parser diagnostics");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_parser_diagnostics)
+                                    .range(1..=100_000),
+                            );
+                            ui.end_row();
+                            ui.label("Facts per file");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_facts_per_file)
+                                    .range(1..=100_000),
+                            );
+                            ui.label("Total facts");
+                            ui.add(
+                                egui::DragValue::new(&mut self.controls.max_total_facts)
+                                    .range(1..=10_000_000),
+                            );
+                            ui.end_row();
                             ui.label("Max depth (0 = unlimited)");
                             ui.add(egui::DragValue::new(&mut self.max_depth_input).range(0..=1024));
                             ui.end_row();
                         });
+                    ui.horizontal(|ui| {
+                        ui.label("Cache directory (optional)");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.cache_directory_input)
+                                .desired_width(420.0),
+                        );
+                    });
                     ui.columns(2, |columns| {
                         columns[0].label("Include globs — one per line");
                         columns[0].add(
@@ -337,6 +389,30 @@ impl eframe::App for SecureApp {
                         &report.trust_boundaries.len().to_string(),
                     );
                     summary_row(ui, "Findings", &report.findings.len().to_string());
+                    summary_row(
+                        ui,
+                        "Parsed files",
+                        &format!(
+                            "{} / {}",
+                            report.parsing.files_parsed, report.parsing.files_eligible
+                        ),
+                    );
+                    summary_row(ui, "Normalized facts", &report.facts.len().to_string());
+                    summary_row(
+                        ui,
+                        "Parser diagnostics",
+                        &report.parser_diagnostics.len().to_string(),
+                    );
+                    summary_row(
+                        ui,
+                        "Cache hits / misses / writes",
+                        &format!(
+                            "{} / {} / {}",
+                            report.parsing.cache_hits,
+                            report.parsing.cache_misses,
+                            report.parsing.cache_writes
+                        ),
+                    );
                     summary_row(ui, "Skipped files", &report.skipped_files.len().to_string());
                     summary_row(ui, "Bounded errors", &report.errors.len().to_string());
                     summary_row(ui, "Schema", &report.schema_version);
@@ -368,6 +444,33 @@ impl eframe::App for SecureApp {
                 ui.collapsing("Analysis limitations", |ui| {
                     for limitation in &report.limitations {
                         ui.label(format!("{} — {}", limitation.code, limitation.message));
+                    }
+                });
+                ui.collapsing("Normalized syntax facts", |ui| {
+                    for fact in &report.facts {
+                        ui.label(format!(
+                            "{} — {} ({})",
+                            fact.kind,
+                            fact.name.as_deref().unwrap_or("unnamed"),
+                            fact.location.path
+                        ));
+                    }
+                });
+                ui.collapsing("Parser coverage and diagnostics", |ui| {
+                    for coverage in &report.parser_coverage {
+                        ui.label(format!(
+                            "{} — {} parsed, {} facts, {} files with diagnostics",
+                            coverage.parser_mode,
+                            coverage.files_parsed,
+                            coverage.facts_extracted,
+                            coverage.files_with_diagnostics
+                        ));
+                    }
+                    for diagnostic in &report.parser_diagnostics {
+                        ui.label(format!(
+                            "{} — {} ({})",
+                            diagnostic.code, diagnostic.message, diagnostic.location.path
+                        ));
                     }
                 });
                 ui.collapsing("Exclusions and skipped inputs", |ui| {

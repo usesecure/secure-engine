@@ -159,8 +159,64 @@ fn malformed_phase_one_controls_use_invalid_input_exit_code()
         "--max-total-bytes",
         "--max-depth",
         "--max-errors",
+        "--no-cache",
+        "--clear-cache",
+        "--cache-dir",
+        "--max-cache-bytes",
+        "--max-parser-diagnostics",
+        "--max-facts-per-file",
+        "--max-total-facts",
     ] {
         assert!(help_text.contains(flag), "missing {flag}");
     }
+    Ok(())
+}
+
+#[test]
+fn phase_two_cli_reports_cold_and_warm_cache_results_without_path_leakage()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let cache = temporary.path().join("cache");
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/phase2-js-ts");
+    let cold = secure()
+        .args(["scan", fixture, "--cache-dir"])
+        .arg(&cache)
+        .args(["--clear-cache", "--format", "secure-json-v1"])
+        .output()?;
+    assert!(
+        cold.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cold.stderr)
+    );
+    let cold_report: serde_json::Value = serde_json::from_slice(&cold.stdout)?;
+    assert_eq!(cold_report["parsing"]["cache_hits"], 0);
+    assert_eq!(cold_report["parsing"]["cache_misses"], 9);
+    assert!(
+        cold_report["facts"]
+            .as_array()
+            .is_some_and(|facts| !facts.is_empty())
+    );
+    assert!(String::from_utf8_lossy(&cold.stderr).contains("secure: parsing"));
+
+    let warm = secure()
+        .args(["scan", fixture, "--cache-dir"])
+        .arg(&cache)
+        .output()?;
+    assert!(warm.status.success());
+    let warm_report: serde_json::Value = serde_json::from_slice(&warm.stdout)?;
+    assert_eq!(warm_report["parsing"]["cache_hits"], 9);
+    assert_eq!(warm_report["parsing"]["cache_misses"], 0);
+    assert_eq!(cold_report["facts"], warm_report["facts"]);
+    assert_eq!(
+        cold_report["report_fingerprint"],
+        warm_report["report_fingerprint"]
+    );
+    assert!(!String::from_utf8(cold.stdout)?.contains(&cache.to_string_lossy().to_string()));
+
+    let invalid = secure()
+        .args(["scan", fixture, "--max-total-facts", "0"])
+        .output()?;
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(invalid.stdout.is_empty());
     Ok(())
 }

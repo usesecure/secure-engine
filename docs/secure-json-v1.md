@@ -7,9 +7,9 @@ The public integration boundary is the `secure` process and [`schemas/secure-jso
 - `schema_version` is exactly `secure-json-v1`; incompatible identifiers are rejected.
 - Unknown object fields are tolerated in v1 so producers can add optional evidence.
 - All paths and spans are repository-relative, slash-normalized, and never contain source text.
-- `scan.started_at`, `scan.finished_at`, and `scan.duration_ms` are documented volatile fields. `report_fingerprint` excludes them. All other fields are stable for the same files and configuration.
+- `scan.started_at`, `scan.finished_at`, `scan.duration_ms`, `parsing.duration_ms`, and the four `parsing.cache_*` counters are documented volatile fields. `report_fingerprint` excludes them. Facts, diagnostics, coverage, and other evidence remain stable for the same files and configuration.
 - `repository.content_fingerprint` hashes relative paths and file bytes. It identifies content without exporting the absolute repository path.
-- Findings remain normalized but empty in Phase 1 because vulnerability rules are intentionally deferred.
+- Findings remain normalized but empty in Phase 2 because vulnerability rules are intentionally deferred.
 - Errors are bounded and path-sanitized. Skipped files contain a stable reason, not host paths or file contents.
 
 ## Phase 1 additive inventory fields
@@ -23,6 +23,18 @@ Phase 1 does not change the schema identifier or remove/rename any v1 field. It 
 - report: `exclusions` contains reason/count pairs and deliberately omits excluded paths.
 
 The producer emits these properties in Phase 1. Consumers must continue tolerating their absence and any future additive v1 properties. Ignore rules and exclude globs are applied before file opening; generated/vendor/nested roots are pruned before traversal. Symbolic links are never followed.
+
+## Phase 2 additive parsing fields
+
+Phase 2 keeps every Phase 0 and Phase 1 field compatible and adds optional properties:
+
+- configuration: cache, parser-diagnostic, per-file fact, and report-wide fact bounds;
+- report: `parsing` contains coverage, duration, and cache counters;
+- report: `facts` contains stable IDs, exact repository-relative spans, bounded normalized names and relationships, fingerprints, and parser/extractor provenance;
+- report: `parser_diagnostics` contains recoverable, source-free syntax diagnostics;
+- report: `parser_coverage` distinguishes JavaScript, JSX, TypeScript, and TSX modes.
+
+Facts are syntax evidence only. They carry no severity or confidence and do not imply a vulnerability. Cache location and clear-cache controls are runtime-only and are never serialized. Cache state affects only the documented volatile counters; cold and warm reports have the same facts and `report_fingerprint`.
 
 ## Exit codes
 
@@ -46,4 +58,4 @@ cargo run -p secure-engine --example mock_secure_skill -- \
   schemas/secure-json-v1.schema.json fixtures/secure-json-v1/valid-report.json
 ```
 
-It validates the schema version and JSON Schema, then reads capability evidence and findings. It neither installs nor executes Secure Skill.
+It validates the schema version and JSON Schema, then reads normalized facts, parser diagnostics, capability evidence, and findings. It neither installs nor executes Secure Skill.

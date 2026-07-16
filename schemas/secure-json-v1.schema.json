@@ -70,7 +70,12 @@
             { "type": "null" }
           ]
         },
-        "max_errors": { "type": "integer", "minimum": 1, "maximum": 1000 }
+        "max_errors": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "parse_cache_enabled": { "type": "boolean" },
+        "max_cache_bytes": { "type": "integer", "minimum": 1, "maximum": 17179869184 },
+        "max_parser_diagnostics": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "max_facts_per_file": { "type": "integer", "minimum": 1, "maximum": 100000 },
+        "max_total_facts": { "type": "integer", "minimum": 1, "maximum": 10000000 }
       }
     },
     "repository": {
@@ -134,6 +139,81 @@
         "nested_repositories_skipped": { "type": "integer", "minimum": 0 },
         "hit_file_limit": { "type": "boolean" },
         "hit_total_byte_limit": { "type": "boolean" }
+      }
+    },
+    "parsing": {
+      "type": "object",
+      "required": ["files_eligible", "files_parsed", "files_with_diagnostics", "facts_extracted", "duration_ms", "cache_enabled", "cache_hits", "cache_misses", "cache_writes", "cache_entries_ignored"],
+      "properties": {
+        "files_eligible": { "type": "integer", "minimum": 0 },
+        "files_parsed": { "type": "integer", "minimum": 0 },
+        "files_with_diagnostics": { "type": "integer", "minimum": 0 },
+        "facts_extracted": { "type": "integer", "minimum": 0 },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "cache_enabled": { "type": "boolean" },
+        "cache_hits": { "type": "integer", "minimum": 0 },
+        "cache_misses": { "type": "integer", "minimum": 0 },
+        "cache_writes": { "type": "integer", "minimum": 0 },
+        "cache_entries_ignored": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "parserProvenance": {
+      "type": "object",
+      "required": ["parser", "parser_version", "grammar", "extractor_version"],
+      "properties": {
+        "parser": { "type": "string", "minLength": 1 },
+        "parser_version": { "type": "string", "minLength": 1 },
+        "grammar": { "type": "string", "minLength": 1 },
+        "extractor_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "factRelationship": {
+      "type": "object",
+      "required": ["kind", "target"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1, "maxLength": 512 }
+      }
+    },
+    "normalizedFact": {
+      "type": "object",
+      "required": ["fact_id", "kind", "location", "name", "relationships", "provenance", "fingerprint"],
+      "properties": {
+        "fact_id": { "type": "string", "pattern": "^sf_[0-9a-f]{24}$" },
+        "kind": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "name": {
+          "oneOf": [
+            { "type": "string", "minLength": 1, "maxLength": 512 },
+            { "type": "null" }
+          ]
+        },
+        "relationships": { "type": "array", "items": { "$ref": "#/$defs/factRelationship" } },
+        "provenance": { "$ref": "#/$defs/parserProvenance" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "parserDiagnostic": {
+      "type": "object",
+      "required": ["diagnostic_id", "code", "message", "location", "recoverable", "provenance"],
+      "properties": {
+        "diagnostic_id": { "type": "string", "pattern": "^pd_[0-9a-f]{24}$" },
+        "code": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "location": { "$ref": "#/$defs/location" },
+        "recoverable": { "type": "boolean" },
+        "provenance": { "$ref": "#/$defs/parserProvenance" }
+      }
+    },
+    "parserCoverage": {
+      "type": "object",
+      "required": ["parser_mode", "files_eligible", "files_parsed", "files_with_diagnostics", "facts_extracted"],
+      "properties": {
+        "parser_mode": { "enum": ["javascript", "jsx", "typescript", "tsx"] },
+        "files_eligible": { "type": "integer", "minimum": 0 },
+        "files_parsed": { "type": "integer", "minimum": 0 },
+        "files_with_diagnostics": { "type": "integer", "minimum": 0 },
+        "facts_extracted": { "type": "integer", "minimum": 0 }
       }
     },
     "language": {
@@ -256,6 +336,10 @@
         "configuration": { "$ref": "#/$defs/configuration" },
         "scan": { "$ref": "#/$defs/scanMetadata" },
         "inventory": { "$ref": "#/$defs/inventory" },
+        "parsing": { "$ref": "#/$defs/parsing" },
+        "facts": { "type": "array", "items": { "$ref": "#/$defs/normalizedFact" } },
+        "parser_diagnostics": { "type": "array", "maxItems": 100000, "items": { "$ref": "#/$defs/parserDiagnostic" } },
+        "parser_coverage": { "type": "array", "items": { "$ref": "#/$defs/parserCoverage" } },
         "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
         "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
         "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } },

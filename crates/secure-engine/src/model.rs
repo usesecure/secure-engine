@@ -9,17 +9,29 @@ pub struct ScanRequest {
     pub repository: PathBuf,
     /// Deterministic scan settings recorded in the report.
     pub configuration: ScanConfiguration,
+    /// Runtime-only cache location and one-shot maintenance controls.
+    pub cache: CacheControl,
 }
 
 impl ScanRequest {
-    /// Creates a request with safe Phase 1 inventory defaults.
+    /// Creates a request with safe Phase 2 inventory, parsing, and cache defaults.
     #[must_use]
     pub fn new(repository: impl Into<PathBuf>) -> Self {
         Self {
             repository: repository.into(),
             configuration: ScanConfiguration::default(),
+            cache: CacheControl::default(),
         }
     }
+}
+
+/// Runtime-only parse-cache controls. Cache paths are never serialized into reports.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CacheControl {
+    /// Optional local cache base directory. The repository-specific directory is derived safely.
+    pub directory: Option<PathBuf>,
+    /// Atomically retire the selected repository cache before scanning.
+    pub clear_before_scan: bool,
 }
 
 /// Resource limits and traversal settings that affect inventory output.
@@ -51,6 +63,16 @@ pub struct ScanConfiguration {
     pub max_depth: Option<usize>,
     /// Maximum non-fatal errors retained in the report.
     pub max_errors: usize,
+    /// Whether supported JavaScript and TypeScript parse results may use the local cache.
+    pub parse_cache_enabled: bool,
+    /// Maximum bytes retained in the repository-specific parse cache.
+    pub max_cache_bytes: u64,
+    /// Maximum parser diagnostics retained across the report.
+    pub max_parser_diagnostics: usize,
+    /// Maximum normalized facts retained per parsed file.
+    pub max_facts_per_file: usize,
+    /// Maximum normalized facts retained across the report.
+    pub max_total_facts: usize,
 }
 
 impl Default for ScanConfiguration {
@@ -68,6 +90,11 @@ impl Default for ScanConfiguration {
             max_total_bytes: 512 * 1024 * 1024,
             max_depth: None,
             max_errors: 100,
+            parse_cache_enabled: true,
+            max_cache_bytes: 256 * 1024 * 1024,
+            max_parser_diagnostics: 1_000,
+            max_facts_per_file: 10_000,
+            max_total_facts: 100_000,
         }
     }
 }
@@ -90,6 +117,18 @@ pub struct ScanReport {
     /// Aggregate inventory and resource-limit results added in Phase 1.
     #[serde(default)]
     pub inventory: InventorySummary,
+    /// Aggregate Phase 2 parsing and cache measurements.
+    #[serde(default)]
+    pub parsing: ParsingSummary,
+    /// Deterministic normalized syntax facts. These are evidence, not findings.
+    #[serde(default)]
+    pub facts: Vec<NormalizedFact>,
+    /// Bounded recoverable parser diagnostics.
+    #[serde(default)]
+    pub parser_diagnostics: Vec<ParserDiagnostic>,
+    /// Per-parser-mode coverage for supported inputs.
+    #[serde(default)]
+    pub parser_coverage: Vec<ParserCoverage>,
     /// Regular files that were successfully inventoried.
     pub files: Vec<FileRecord>,
     /// Aggregated detected languages.
@@ -104,7 +143,7 @@ pub struct ScanReport {
     pub capabilities: Vec<CapabilityEvidence>,
     /// Trust-boundary evidence suitable for later agent review.
     pub trust_boundaries: Vec<TrustBoundaryEvidence>,
-    /// Normalized deterministic findings. Empty during Phase 1 inventory.
+    /// Normalized deterministic findings. Empty during Phase 2 syntax analysis.
     pub findings: Vec<Finding>,
     /// Known limitations of this analysis.
     pub limitations: Vec<Limitation>,
@@ -187,6 +226,104 @@ pub struct InventorySummary {
     pub hit_file_limit: bool,
     /// Whether reading stopped at `max_total_bytes`.
     pub hit_total_byte_limit: bool,
+}
+
+/// Aggregate Phase 2 parsing and local-cache results.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ParsingSummary {
+    /// Non-binary JavaScript, JSX, TypeScript, and TSX files selected for parsing.
+    pub files_eligible: usize,
+    /// Eligible files producing a recoverable syntax tree or valid cache entry.
+    pub files_parsed: usize,
+    /// Parsed files containing at least one recoverable syntax diagnostic.
+    pub files_with_diagnostics: usize,
+    /// Total normalized facts retained in the report.
+    pub facts_extracted: usize,
+    /// Wall-clock parsing and cache time in milliseconds; volatile.
+    pub duration_ms: u64,
+    /// Whether parse-cache reads and writes were enabled.
+    pub cache_enabled: bool,
+    /// Valid cache entries reused; volatile.
+    pub cache_hits: usize,
+    /// Eligible files without a reusable cache entry; volatile.
+    pub cache_misses: usize,
+    /// Atomic cache entries written; volatile.
+    pub cache_writes: usize,
+    /// Corrupt or incompatible entries ignored safely; volatile.
+    pub cache_entries_ignored: usize,
+}
+
+/// Stable parser and extractor provenance attached to facts and diagnostics.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ParserProvenance {
+    /// Secure Engine parser adapter identifier.
+    pub parser: String,
+    /// Tree-sitter runtime version.
+    pub parser_version: String,
+    /// Selected grammar and grammar crate version.
+    pub grammar: String,
+    /// Secure Engine extractor version.
+    pub extractor_version: String,
+}
+
+/// A normalized relationship from one syntax fact to a stable target name.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct FactRelationship {
+    /// Relationship kind such as `calls`, `imports`, or `handles`.
+    pub kind: String,
+    /// Bounded normalized target; never source text beyond the relevant syntax name.
+    pub target: String,
+}
+
+/// Deterministic syntax evidence produced by a Secure Engine-owned parser adapter.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct NormalizedFact {
+    /// Stable identifier derived from kind, location, names, relationships, and provenance.
+    pub fact_id: String,
+    /// Fact category such as `function`, `call`, `http-route`, or `environment-access`.
+    pub kind: String,
+    /// Exact repository-relative syntax evidence.
+    pub location: SourceLocation,
+    /// Optional bounded normalized symbol or operation name.
+    pub name: Option<String>,
+    /// Stable normalized module, call, route, or operation relationships.
+    pub relationships: Vec<FactRelationship>,
+    /// Parser and extractor provenance.
+    pub provenance: ParserProvenance,
+    /// Stable evidence fingerprint independent of scan timing and cache state.
+    pub fingerprint: String,
+}
+
+/// Recoverable parser diagnostic with no source snippet or absolute path.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ParserDiagnostic {
+    /// Stable diagnostic identifier.
+    pub diagnostic_id: String,
+    /// Stable category such as `syntax-error`, `missing-syntax`, or `invalid-utf8`.
+    pub code: String,
+    /// Sanitized deterministic description.
+    pub message: String,
+    /// Exact repository-relative location when available.
+    pub location: SourceLocation,
+    /// Tree-sitter recovery allows other facts from the file to remain useful.
+    pub recoverable: bool,
+    /// Parser and grammar provenance.
+    pub provenance: ParserProvenance,
+}
+
+/// Deterministic coverage for one parser mode.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ParserCoverage {
+    /// `javascript`, `jsx`, `typescript`, or `tsx`.
+    pub parser_mode: String,
+    /// Files eligible for this mode.
+    pub files_eligible: usize,
+    /// Files parsed or restored from a compatible cache entry.
+    pub files_parsed: usize,
+    /// Files with recoverable parser diagnostics.
+    pub files_with_diagnostics: usize,
+    /// Facts retained for this mode.
+    pub facts_extracted: usize,
 }
 
 /// Stable repository-relative location.
@@ -401,6 +538,17 @@ pub enum ProgressEvent {
         total: usize,
         /// Current repository-relative path.
         path: String,
+    },
+    /// Supported-language parsing progress.
+    Parsing {
+        /// Number of eligible files already parsed or restored from cache.
+        completed: usize,
+        /// Total eligible files selected for parsing.
+        total: usize,
+        /// Current repository-relative path.
+        path: String,
+        /// `javascript`, `jsx`, `typescript`, or `tsx`.
+        parser_mode: String,
     },
     /// Report normalization and fingerprints are being finalized.
     Finalizing,

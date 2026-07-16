@@ -8,8 +8,8 @@ use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use secure_engine::{
-    CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ProgressEvent, SCHEMA_VERSION,
-    SECURE_JSON_V1_SCHEMA, ScanError, ScanRequest, scan_repository,
+    CacheControl, CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ProgressEvent,
+    SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError, ScanRequest, scan_repository,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -32,7 +32,7 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Inventory a local repository and emit a versioned report.
-    Scan(ScanArgs),
+    Scan(Box<ScanArgs>),
     /// Check the local engine contract and runtime.
     Doctor(FormatArgs),
     /// Inspect public integration schemas.
@@ -47,7 +47,7 @@ enum Command {
 struct ScanArgs {
     /// Local repository directory.
     repository: PathBuf,
-    /// Machine format. Phase 1 preserves secure-json-v1.
+    /// Machine format. Phase 2 preserves secure-json-v1 additively.
     #[arg(long, default_value = SCHEMA_VERSION)]
     format: String,
     /// Atomically write the report here instead of stdout.
@@ -89,11 +89,32 @@ struct ScanArgs {
     /// Do not honor .gitignore and related repository ignore files.
     #[arg(long)]
     no_ignore: bool,
+    /// Disable local reuse of supported-language parse results.
+    #[arg(long)]
+    no_cache: bool,
+    /// Retire this repository's parse cache before scanning.
+    #[arg(long)]
+    clear_cache: bool,
+    /// Local parse-cache base directory; never exported in the report.
+    #[arg(long, value_name = "DIRECTORY")]
+    cache_dir: Option<PathBuf>,
+    /// Maximum repository-specific parse-cache bytes.
+    #[arg(long, default_value_t = 256 * 1024 * 1024)]
+    max_cache_bytes: u64,
+    /// Maximum parser diagnostics retained in the report.
+    #[arg(long, default_value_t = 1_000)]
+    max_parser_diagnostics: usize,
+    /// Maximum normalized facts retained per parsed file.
+    #[arg(long, default_value_t = 10_000)]
+    max_facts_per_file: usize,
+    /// Maximum normalized facts retained across the report.
+    #[arg(long, default_value_t = 100_000)]
+    max_total_facts: usize,
 }
 
 #[derive(Debug, Args)]
 struct FormatArgs {
-    /// Machine format. Phase 1 preserves secure-json-v1.
+    /// Machine format. Phase 2 preserves secure-json-v1 additively.
     #[arg(long, default_value = SCHEMA_VERSION)]
     format: String,
 }
@@ -119,7 +140,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<u8, (u8, String)> {
     match cli.command {
-        Command::Scan(arguments) => run_scan(arguments),
+        Command::Scan(arguments) => run_scan(*arguments),
         Command::Doctor(arguments) => run_doctor(&arguments.format),
         Command::Schema {
             command: SchemaCommand::Print { schema },
@@ -133,6 +154,10 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
         || arguments.max_file_bytes == 0
         || arguments.max_total_bytes == 0
         || arguments.max_errors == 0
+        || arguments.max_cache_bytes == 0
+        || arguments.max_parser_diagnostics == 0
+        || arguments.max_facts_per_file == 0
+        || arguments.max_total_facts == 0
     {
         return Err((
             EXIT_INVALID_INPUT,
@@ -162,6 +187,15 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     request.configuration.include_generated = arguments.include_generated;
     request.configuration.include_vendor = arguments.include_vendor;
     request.configuration.include_nested_repositories = arguments.include_nested_repositories;
+    request.configuration.parse_cache_enabled = !arguments.no_cache;
+    request.configuration.max_cache_bytes = arguments.max_cache_bytes;
+    request.configuration.max_parser_diagnostics = arguments.max_parser_diagnostics;
+    request.configuration.max_facts_per_file = arguments.max_facts_per_file;
+    request.configuration.max_total_facts = arguments.max_total_facts;
+    request.cache = CacheControl {
+        directory: arguments.cache_dir,
+        clear_before_scan: arguments.clear_cache,
+    };
     let report = scan_repository(&request, &cancellation, |event| print_progress(&event))
         .map_err(scan_error)?;
     let bytes = serde_json::to_vec_pretty(&report).map_err(|_| {
@@ -208,9 +242,7 @@ fn run_doctor(format: &str) -> Result<u8, (u8, String)> {
             DoctorCheck {
                 name: "advanced-rules".into(),
                 status: "warn".into(),
-                detail:
-                    "Phase 1 provides repository inventory; vulnerability rules are not enabled"
-                        .into(),
+                detail: "Phase 2 provides normalized JavaScript and TypeScript syntax evidence; vulnerability rules are not enabled".into(),
             },
         ],
     };
@@ -256,6 +288,16 @@ fn print_progress(event: &ProgressEvent) {
         } => {
             if *completed == 0 || completed.saturating_add(1) == *total || completed % 250 == 0 {
                 eprintln!("secure: inventory {completed}/{total}");
+            }
+        }
+        ProgressEvent::Parsing {
+            completed,
+            total,
+            parser_mode,
+            ..
+        } => {
+            if *completed == 0 || completed.saturating_add(1) == *total || completed % 100 == 0 {
+                eprintln!("secure: parsing {completed}/{total} ({parser_mode})");
             }
         }
         ProgressEvent::Finalizing => eprintln!("secure: finalizing deterministic report"),

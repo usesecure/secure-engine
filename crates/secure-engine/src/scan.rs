@@ -4,25 +4,27 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
+use crate::cache::ParseCache;
 use crate::classify::{
     FileOrigin, classify_file, detect_language, entry_point_kind, framework_matches, is_binary,
     is_build_automation, manifest_info,
 };
+use crate::parser::{ParserMode, parse_source};
 use crate::workspace::{
     PathFilters, ReadOutcome, canonical_repository, discover_files, read_file_no_follow,
 };
 use crate::{
     BoundedError, CapabilityEvidence, ENGINE_VERSION, EntryPointEvidence, ExclusionSummary,
     FileRecord, Finding, FrameworkEvidence, InventorySummary, LanguageSummary, Limitation,
-    ManifestEvidence, ProgressEvent, RepositoryIdentity, SCHEMA_VERSION, ScanConfiguration,
-    ScanMetadata, ScanReport, ScanRequest, SkippedFile, SourceLocation, SourceSpan,
-    TrustBoundaryEvidence,
+    ManifestEvidence, NormalizedFact, ParserCoverage, ParserDiagnostic, ParsingSummary,
+    ProgressEvent, RepositoryIdentity, SCHEMA_VERSION, ScanConfiguration, ScanMetadata, ScanReport,
+    ScanRequest, SkippedFile, SourceLocation, SourceSpan, TrustBoundaryEvidence,
 };
 
 const MAX_CONFIGURED_ERRORS: usize = 1000;
@@ -30,6 +32,10 @@ const MAX_CONFIGURED_FILES: usize = 10_000_000;
 const MAX_CONFIGURED_FILE_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_CONFIGURED_TOTAL_BYTES: u64 = 16 * 1024 * 1024 * 1024 * 1024;
 const MAX_CONFIGURED_DEPTH: usize = 1024;
+const MAX_CONFIGURED_CACHE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const MAX_CONFIGURED_PARSER_DIAGNOSTICS: usize = 100_000;
+const MAX_CONFIGURED_FACTS_PER_FILE: usize = 100_000;
+const MAX_CONFIGURED_TOTAL_FACTS: usize = 10_000_000;
 const GIT_METADATA_LIMIT: u64 = 4 * 1024 * 1024;
 
 /// Cooperative cancellation shared safely across threads.
@@ -118,7 +124,14 @@ where
         cancellation,
         &mut progress,
     )?;
+    let mut parse_cache =
+        ParseCache::open(&root, &request.configuration, &request.cache, cancellation)?;
     let total = discovery.files.len();
+    let parsing_candidates = discovery
+        .files
+        .iter()
+        .filter(|file| ParserMode::for_path(&file.relative).is_some())
+        .count();
     let mut limitations = inventory_limitations(&request.configuration, &discovery);
     let mut files = Vec::with_capacity(total);
     let mut skipped_files = discovery.skipped_files;
@@ -139,6 +152,16 @@ where
     let mut generated_files = 0_usize;
     let mut vendor_files = 0_usize;
     let mut total_limit_reached = false;
+    let mut facts = Vec::<NormalizedFact>::new();
+    let mut parser_diagnostics = Vec::<ParserDiagnostic>::new();
+    let mut coverage = BTreeMap::<String, (usize, usize, usize, usize)>::new();
+    let mut files_eligible_for_parsing = 0_usize;
+    let mut files_parsed = 0_usize;
+    let mut files_with_diagnostics = 0_usize;
+    let mut parsing_completed = 0_usize;
+    let mut parsing_duration = Duration::ZERO;
+    let mut facts_truncated = false;
+    let mut diagnostics_truncated = false;
 
     for (index, discovered) in discovery.files.iter().enumerate() {
         check_cancelled(cancellation)?;
@@ -237,11 +260,87 @@ where
             path: discovered.relative.clone(),
             kind: kind.into(),
             size_bytes,
-            content_fingerprint,
+            content_fingerprint: content_fingerprint.clone(),
             language,
             origin: discovered.origin.as_str().into(),
             is_binary: binary,
         });
+
+        if !binary && let Some(parser_mode) = ParserMode::for_path(&discovered.relative) {
+            files_eligible_for_parsing = files_eligible_for_parsing.saturating_add(1);
+            progress(ProgressEvent::Parsing {
+                completed: parsing_completed,
+                total: parsing_candidates,
+                path: discovered.relative.clone(),
+                parser_mode: parser_mode.as_str().into(),
+            });
+            let parse_started = Instant::now();
+            let key = ParseCache::key(
+                &discovered.relative,
+                &content_fingerprint,
+                parser_mode,
+                &request.configuration,
+            )?;
+            let cached = if request.configuration.parse_cache_enabled {
+                parse_cache.load(
+                    &key,
+                    &discovered.relative,
+                    parser_mode,
+                    &request.configuration,
+                    cancellation,
+                )?
+            } else {
+                None
+            };
+            let output = if let Some(output) = cached {
+                output
+            } else {
+                let output = parse_source(
+                    &discovered.relative,
+                    &content,
+                    parser_mode,
+                    &request.configuration,
+                    cancellation,
+                )?;
+                if request.configuration.parse_cache_enabled {
+                    parse_cache.store(&key, &output, cancellation)?;
+                }
+                output
+            };
+            parsing_duration = parsing_duration.saturating_add(parse_started.elapsed());
+            parsing_completed = parsing_completed.saturating_add(1);
+            let mode_coverage = coverage.entry(parser_mode.as_str().into()).or_default();
+            mode_coverage.0 = mode_coverage.0.saturating_add(1);
+            if output.parsed {
+                files_parsed = files_parsed.saturating_add(1);
+                mode_coverage.1 = mode_coverage.1.saturating_add(1);
+            }
+            if !output.diagnostics.is_empty() {
+                files_with_diagnostics = files_with_diagnostics.saturating_add(1);
+                mode_coverage.2 = mode_coverage.2.saturating_add(1);
+            }
+
+            let fact_capacity = request
+                .configuration
+                .max_total_facts
+                .saturating_sub(facts.len());
+            let retained_facts = output.facts.len().min(fact_capacity);
+            if retained_facts < output.facts.len() {
+                facts_truncated = true;
+            }
+            mode_coverage.3 = mode_coverage.3.saturating_add(retained_facts);
+            facts.extend(output.facts.into_iter().take(retained_facts));
+
+            let diagnostic_capacity = request
+                .configuration
+                .max_parser_diagnostics
+                .saturating_sub(parser_diagnostics.len());
+            let retained_diagnostics = output.diagnostics.len().min(diagnostic_capacity);
+            if retained_diagnostics < output.diagnostics.len() {
+                diagnostics_truncated = true;
+            }
+            parser_diagnostics.extend(output.diagnostics.into_iter().take(retained_diagnostics));
+        }
 
         if let Some(manifest) = manifest {
             let location = start_location(&discovered.relative);
@@ -312,6 +411,10 @@ where
     sort_and_deduplicate(&mut entry_points);
     sort_and_deduplicate(&mut capabilities);
     sort_and_deduplicate(&mut trust_boundaries);
+    facts.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
+    facts.dedup_by(|left, right| left.fact_id == right.fact_id);
+    parser_diagnostics.sort_by(|left, right| left.diagnostic_id.cmp(&right.diagnostic_id));
+    parser_diagnostics.dedup_by(|left, right| left.diagnostic_id == right.diagnostic_id);
     skipped_files
         .sort_by(|left, right| (&left.path, &left.reason).cmp(&(&right.path, &right.reason)));
     skipped_files.dedup();
@@ -323,6 +426,24 @@ where
             message: format!(
                 "Content reads stopped at {} total bytes",
                 request.configuration.max_total_bytes
+            ),
+        });
+    }
+    if facts_truncated {
+        limitations.push(Limitation {
+            code: "normalized-fact-limit-reached".into(),
+            message: format!(
+                "Only the first {} normalized facts were retained",
+                request.configuration.max_total_facts
+            ),
+        });
+    }
+    if diagnostics_truncated {
+        limitations.push(Limitation {
+            code: "parser-diagnostic-limit-reached".into(),
+            message: format!(
+                "Only the first {} parser diagnostics were retained",
+                request.configuration.max_parser_diagnostics
             ),
         });
     }
@@ -357,6 +478,36 @@ where
         hit_file_limit: discovery.candidate_files > request.configuration.max_files,
         hit_total_byte_limit: total_limit_reached,
     };
+    let cache_stats = parse_cache.stats();
+    let parser_coverage = coverage
+        .into_iter()
+        .map(
+            |(
+                parser_mode,
+                (files_eligible, files_parsed, files_with_diagnostics, facts_extracted),
+            )| {
+                ParserCoverage {
+                    parser_mode,
+                    files_eligible,
+                    files_parsed,
+                    files_with_diagnostics,
+                    facts_extracted,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    let parsing = ParsingSummary {
+        files_eligible: files_eligible_for_parsing,
+        files_parsed,
+        files_with_diagnostics,
+        facts_extracted: facts.len(),
+        duration_ms: u64::try_from(parsing_duration.as_millis()).unwrap_or(u64::MAX),
+        cache_enabled: request.configuration.parse_cache_enabled,
+        cache_hits: cache_stats.hits,
+        cache_misses: cache_stats.misses,
+        cache_writes: cache_stats.writes,
+        cache_entries_ignored: cache_stats.ignored,
+    };
 
     let mut report = ScanReport {
         schema_version: SCHEMA_VERSION.into(),
@@ -373,6 +524,10 @@ where
             files_scanned,
         },
         inventory,
+        parsing,
+        facts,
+        parser_diagnostics,
+        parser_coverage,
         files,
         languages,
         manifests,
@@ -430,6 +585,34 @@ fn validate_configuration(configuration: &ScanConfiguration) -> Result<(), ScanE
             "max_depth cannot exceed {MAX_CONFIGURED_DEPTH}"
         )));
     }
+    if configuration.max_cache_bytes == 0
+        || configuration.max_cache_bytes > MAX_CONFIGURED_CACHE_BYTES
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_cache_bytes must be between 1 and {MAX_CONFIGURED_CACHE_BYTES}"
+        )));
+    }
+    if configuration.max_parser_diagnostics == 0
+        || configuration.max_parser_diagnostics > MAX_CONFIGURED_PARSER_DIAGNOSTICS
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_parser_diagnostics must be between 1 and {MAX_CONFIGURED_PARSER_DIAGNOSTICS}"
+        )));
+    }
+    if configuration.max_facts_per_file == 0
+        || configuration.max_facts_per_file > MAX_CONFIGURED_FACTS_PER_FILE
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_facts_per_file must be between 1 and {MAX_CONFIGURED_FACTS_PER_FILE}"
+        )));
+    }
+    if configuration.max_total_facts == 0
+        || configuration.max_total_facts > MAX_CONFIGURED_TOTAL_FACTS
+    {
+        return Err(ScanError::InvalidConfiguration(format!(
+            "max_total_facts must be between 1 and {MAX_CONFIGURED_TOTAL_FACTS}"
+        )));
+    }
     Ok(())
 }
 
@@ -439,13 +622,15 @@ fn inventory_limitations(
 ) -> Vec<Limitation> {
     let mut limitations = vec![
         Limitation {
-            code: "inventory-only".into(),
-            message: "Phase 1 classifies repository evidence and does not run vulnerability rules"
-                .into(),
+            code: "syntax-evidence-only".into(),
+            message:
+                "Phase 2 emits normalized syntax evidence and does not run vulnerability rules"
+                    .into(),
         },
         Limitation {
-            code: "no-language-parser".into(),
-            message: "Language detection is extension-based; source files are not parsed".into(),
+            code: "parser-coverage-limited".into(),
+            message: "Language-aware parsing is limited to JavaScript, JSX, TypeScript, and TSX"
+                .into(),
         },
         Limitation {
             code: "framework-hints-only".into(),
@@ -793,6 +978,15 @@ fn format_timestamp(timestamp: OffsetDateTime) -> Result<String, ScanError> {
 
 fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
     #[derive(Serialize)]
+    struct StableParsing {
+        files_eligible: usize,
+        files_parsed: usize,
+        files_with_diagnostics: usize,
+        facts_extracted: usize,
+        cache_enabled: bool,
+    }
+
+    #[derive(Serialize)]
     struct StableReport<'a> {
         schema_version: &'a str,
         engine_version: &'a str,
@@ -802,6 +996,10 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         files_discovered: usize,
         files_scanned: usize,
         inventory: &'a InventorySummary,
+        parsing: StableParsing,
+        facts: &'a [NormalizedFact],
+        parser_diagnostics: &'a [ParserDiagnostic],
+        parser_coverage: &'a [ParserCoverage],
         files: &'a [FileRecord],
         languages: &'a [LanguageSummary],
         manifests: &'a [ManifestEvidence],
@@ -825,6 +1023,16 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         files_discovered: report.scan.files_discovered,
         files_scanned: report.scan.files_scanned,
         inventory: &report.inventory,
+        parsing: StableParsing {
+            files_eligible: report.parsing.files_eligible,
+            files_parsed: report.parsing.files_parsed,
+            files_with_diagnostics: report.parsing.files_with_diagnostics,
+            facts_extracted: report.parsing.facts_extracted,
+            cache_enabled: report.parsing.cache_enabled,
+        },
+        facts: &report.facts,
+        parser_diagnostics: &report.parser_diagnostics,
+        parser_coverage: &report.parser_coverage,
         files: &report.files,
         languages: &report.languages,
         manifests: &report.manifests,

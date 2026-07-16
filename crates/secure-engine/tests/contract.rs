@@ -29,8 +29,12 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     let phase_one: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
         "fixtures/secure-json-v1/phase1-report.json",
     ))?)?;
+    let phase_two: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
+        "fixtures/secure-json-v1/phase2-report.json",
+    ))?)?;
     assert!(validator.is_valid(&valid));
     assert!(validator.is_valid(&phase_one));
+    assert!(validator.is_valid(&phase_two));
     assert!(!validator.is_valid(&malformed));
     assert!(!validator.is_valid(&incompatible));
     let legacy_report: ScanReport = serde_json::from_value(valid)?;
@@ -42,6 +46,9 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     assert_eq!(legacy_report.inventory.files_scanned, 0);
     assert_eq!(legacy_report.files[0].origin, "project");
     assert!(!legacy_report.files[0].is_binary);
+    assert_eq!(legacy_report.parsing.files_parsed, 0);
+    assert!(legacy_report.facts.is_empty());
+    assert!(legacy_report.parser_diagnostics.is_empty());
     Ok(())
 }
 
