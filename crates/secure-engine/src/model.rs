@@ -63,7 +63,7 @@ pub struct ScanConfiguration {
     pub max_depth: Option<usize>,
     /// Maximum non-fatal errors retained in the report.
     pub max_errors: usize,
-    /// Whether supported JavaScript and TypeScript parse results may use the local cache.
+    /// Whether supported JavaScript, TypeScript, Rust, Python, and Go parse results may use the local cache.
     pub parse_cache_enabled: bool,
     /// Maximum bytes retained in the repository-specific parse cache.
     pub max_cache_bytes: u64,
@@ -338,7 +338,7 @@ pub struct ParserDiagnostic {
 /// Deterministic coverage for one parser mode.
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct ParserCoverage {
-    /// `javascript`, `jsx`, `typescript`, or `tsx`.
+    /// `javascript`, `jsx`, `typescript`, `tsx`, `rust`, `python`, or `go`.
     pub parser_mode: String,
     /// Files eligible for this mode.
     pub files_eligible: usize,
@@ -715,7 +715,7 @@ pub enum ProgressEvent {
         total: usize,
         /// Current repository-relative path.
         path: String,
-        /// `javascript`, `jsx`, `typescript`, or `tsx`.
+        /// `javascript`, `jsx`, `typescript`, `tsx`, `rust`, `python`, or `go`.
         parser_mode: String,
     },
     /// Phase 3 graph construction and deterministic rule execution has begun.

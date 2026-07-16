@@ -6,10 +6,10 @@ All identifiers and fingerprints are stable for the same repository content and 
 
 ## Analysis boundary
 
-Propagation is intraprocedural by default and crosses only uniquely resolved local function calls. `max_interprocedural_depth` bounds repeated propagation; graph and finding counts have independent limits. Sanitizer-like calls stop taint. A preceding auth/authorization guard in the same analyzed function produces guard-dominance evidence. Runtime framework middleware, dynamic imports, non-unique aliases, callbacks, and unresolved calls are not inferred.
+Propagation is intraprocedural by default and crosses only uniquely resolved local function calls, including calls between supported-language files. `max_interprocedural_depth` bounds repeated propagation; graph and finding counts have independent limits. Sanitizer-like calls stop taint. Parameterized SQL call shapes do not become raw-query findings. A preceding local auth/authorization guard, recognized dependency/decorator, or locally visible framework middleware produces guard-dominance evidence. Unresolved runtime middleware, dynamic imports, ambiguous dispatch, callbacks, reflection, generated code, and unresolved calls are not inferred.
 
 ## Findings and suppressions
 
-Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path. `SE1007` requires a recognized route or Server Action handler, a sensitive operation, and the demonstrated absence of a preceding recognized guard in that handler. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.
+Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.
 
 Use `secure rules list` for the catalog and `secure explain <finding-id> --report <report.json>` for one complete path. Exact suppressions use `--suppress RULE_ID:RELATIVE_PATH:START_BYTE:REASON`; every entry produces an auditable diagnostic.

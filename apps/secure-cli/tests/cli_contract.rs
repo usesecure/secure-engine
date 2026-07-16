@@ -35,6 +35,58 @@ fn scan_output_is_valid_and_stdout_stays_empty_for_file_output()
 }
 
 #[test]
+fn phase_five_languages_share_json_and_sarif_cli_contracts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/phase5-multilang"
+    );
+    let json = secure()
+        .args([
+            "scan",
+            fixture,
+            "--format",
+            "secure-json-v1",
+            "--no-cache",
+            "--quiet",
+        ])
+        .output()?;
+    assert_eq!(json.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+    let schema: serde_json::Value = serde_json::from_str(secure_engine::SECURE_JSON_V1_SCHEMA)?;
+    assert!(jsonschema::validator_for(&schema)?.is_valid(&report));
+    for mode in ["rust", "python", "go"] {
+        assert!(
+            report["parser_coverage"]
+                .as_array()
+                .is_some_and(|coverage| {
+                    coverage.iter().any(|item| item["parser_mode"] == mode)
+                })
+        );
+    }
+
+    let sarif = secure()
+        .args([
+            "scan",
+            fixture,
+            "--format",
+            "sarif",
+            "--no-cache",
+            "--quiet",
+        ])
+        .output()?;
+    assert_eq!(sarif.status.code(), Some(1));
+    let sarif: serde_json::Value = serde_json::from_slice(&sarif.stdout)?;
+    assert_eq!(sarif["version"], "2.1.0");
+    assert!(
+        sarif["runs"][0]["results"]
+            .as_array()
+            .is_some_and(|results| !results.is_empty())
+    );
+    Ok(())
+}
+
+#[test]
 fn doctor_and_schema_are_machine_readable() -> Result<(), Box<dyn std::error::Error>> {
     let doctor = secure()
         .args(["doctor", "--format", "secure-json-v1"])

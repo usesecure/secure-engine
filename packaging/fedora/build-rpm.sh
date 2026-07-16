@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/phase4-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/phase5-rpm}"
 topdir="$target/rpmbuild"
 stage_parent="$target/stage"
 stage="$stage_parent/secure-engine-0.1.0"

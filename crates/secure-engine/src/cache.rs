@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::graph::GRAPH_EXTRACTOR_VERSION;
 use crate::parser::{
-    EXTRACTOR_VERSION, PARSER_ADAPTER_VERSION, ParseOutput, ParserMode, TREE_SITTER_VERSION,
-    provenance, validate_cached_output,
+    ParseOutput, ParserMode, TREE_SITTER_VERSION, provenance, validate_cached_output,
 };
 use crate::workspace::{ReadOutcome, read_file_no_follow};
 use crate::{CacheControl, CancellationToken, ScanConfiguration, ScanError};
@@ -106,9 +105,9 @@ impl ParseCache {
             path.as_bytes(),
             content_fingerprint.as_bytes(),
             mode.as_str().as_bytes(),
-            PARSER_ADAPTER_VERSION.as_bytes(),
+            parser_provenance.parser.as_bytes(),
             TREE_SITTER_VERSION.as_bytes(),
-            EXTRACTOR_VERSION.as_bytes(),
+            parser_provenance.extractor_version.as_bytes(),
             GRAPH_EXTRACTOR_VERSION.as_bytes(),
             parser_provenance.grammar.as_bytes(),
             &configuration,
@@ -473,6 +472,9 @@ mod tests {
         let changed_content =
             ParseCache::key("app.ts", "bbb", ParserMode::TypeScript, &configuration)?;
         let changed_mode = ParseCache::key("app.ts", "aaa", ParserMode::Tsx, &configuration)?;
+        let rust = ParseCache::key("app.ts", "aaa", ParserMode::Rust, &configuration)?;
+        let python = ParseCache::key("app.ts", "aaa", ParserMode::Python, &configuration)?;
+        let go = ParseCache::key("app.ts", "aaa", ParserMode::Go, &configuration)?;
         let mut changed_configuration = configuration.clone();
         changed_configuration.max_facts_per_file = 5;
         let changed_limit = ParseCache::key(
@@ -483,6 +485,9 @@ mod tests {
         )?;
         assert_ne!(baseline, changed_content);
         assert_ne!(baseline, changed_mode);
+        assert_ne!(baseline, rust);
+        assert_ne!(rust, python);
+        assert_ne!(python, go);
         assert_ne!(baseline, changed_limit);
         Ok(())
     }

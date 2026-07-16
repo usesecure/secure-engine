@@ -477,6 +477,35 @@ mod tests {
     }
 
     #[test]
+    fn desktop_and_core_preserve_identical_phase_five_languages()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase5-multilang");
+        let controls = InventoryControls {
+            parse_cache_enabled: false,
+            ..InventoryControls::default()
+        };
+        let request = controls.request(repository);
+        let desktop = inventory_repository(&request, &CancellationToken::new(), |_| {})?;
+        let core = secure_engine::scan_repository(&request, &CancellationToken::new(), |_| {})?;
+        assert_eq!(desktop.report_fingerprint, core.report_fingerprint);
+        assert_eq!(desktop.parser_coverage, core.parser_coverage);
+        assert_eq!(desktop.facts, core.facts);
+        assert_eq!(desktop.graph, core.graph);
+        assert_eq!(desktop.findings, core.findings);
+        for mode in ["rust", "python", "go"] {
+            assert!(
+                desktop
+                    .parser_coverage
+                    .iter()
+                    .any(|coverage| coverage.parser_mode == mode)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn finding_filters_and_sorts_are_stable_and_cover_every_dimension()
     -> Result<(), Box<dyn std::error::Error>> {
         let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

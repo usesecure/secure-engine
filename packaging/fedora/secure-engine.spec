@@ -44,4 +44,7 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 
 %changelog
 * Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.0-1
+- Phase 5 Rust, Python, Go, and mixed-monorepo analysis
+
+* Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.0-1
 - Phase 4 local CLI and native desktop MVP

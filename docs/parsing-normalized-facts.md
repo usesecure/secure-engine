@@ -1,23 +1,34 @@
-# JavaScript and TypeScript normalized facts
+# Multi-language normalized facts
 
-Phase 2 parses `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, and `.cts` files that survive the Phase 1 inventory policy. Ignored, excluded, generated, vendor, nested-repository, binary, unreadable, and oversized files are never sent to the parser.
+Phase 5 parses JavaScript/TypeScript (`.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts`), Rust (`.rs`), Python (`.py`, `.pyi`), and Go (`.go`) files that survive the Phase 1 inventory policy. Ignored, excluded, generated, vendor, nested-repository, binary, unreadable, and oversized files are never sent to a parser.
+
+Each adapter uses one pinned Tree-sitter grammar in-process and produces the same Secure-owned fact shape. Parser modes, grammar versions, and extractor versions are part of cache identity. JavaScript/TypeScript adapter versions, fact fingerprints, and cache-key inputs remain unchanged from Phase 2.
 
 ## Fact families
 
 - functions, methods, imports, exports, and calls;
 - Express-style routes and Next.js App Router handlers;
 - Next.js Server Action candidates marked by `use server`;
+- Axum and Actix-style Rust routes and handler parameters;
+- FastAPI, Flask, and Django-style Python decorators and route registration;
+- `net/http`, Gin, Chi, and Echo-style Go route registration;
 - environment access and authentication/authorization guard candidates;
 - process execution, database, filesystem, network, redirect, template, deserialization, and dynamic-code operations.
 
-These are conservative syntax classifications. A `database-access` fact means a recognized call shape exists; it does not prove injection or any other vulnerability. `findings` remains empty.
+These are conservative syntax classifications. A `database-access`, deserialization, template, or `unsafe`-adjacent construct alone does not prove a vulnerability. Findings require the shared graph/rule evidence described separately; a Rust `unsafe` block alone never creates a finding.
 
 Every fact contains a repository-relative location with half-open bytes and one-based Unicode scalar line/column coordinates. Names and relationships are limited to relevant symbols, modules, routes, environment names, and operation names. No argument payloads or complete source snippets are exported.
 
 ## Recovery and limits
 
-Malformed source may produce both useful facts and recoverable diagnostics. Invalid UTF-8 produces a bounded non-recoverable parser diagnostic. Parsing and extraction honor cancellation, per-file fact limits, a total fact limit, and the report-wide parser-diagnostic limit.
+Malformed source may produce both useful facts and recoverable diagnostics. Invalid UTF-8 produces a bounded non-recoverable parser diagnostic. Parsing and extraction honor cancellation, per-file fact limits, a total fact limit, graph limits, and the report-wide parser-diagnostic limit.
 
 ## Cache lifecycle
 
-The cache is enabled by default and repository-specific. CLI and desktop can disable it, clear it before a scan, choose a local base directory, and set its byte bound. Valid cache entries reproduce the exact same facts and report fingerprint. Content, parser mode, versions, or relevant configuration changes produce a miss. Corrupt or incompatible entries are ignored without failing the scan.
+The cache is enabled by default and repository-specific. CLI and desktop can disable it, clear it before a scan, choose a local base directory, and set its byte bound. Valid entries reproduce the exact same facts, graph, findings, and report fingerprint. Content, language/parser mode, grammar, parser adapter, extractor version, or relevant configuration changes produce a miss. Corrupt, cross-language, or incompatible entries are ignored without failing the scan.
+
+## Language boundaries
+
+- Rust extraction does not expand procedural macros, generated code, trait-object dispatch, or runtime framework layers. Axum/Actix route registration, request extractors, local guards, SQLx/raw query shapes, `Command`, filesystem, Reqwest, redirect, and deserialization calls are recognized conservatively.
+- Python extraction does not execute decorators or resolve monkey patching, metaclasses, dynamic attributes, or runtime imports. FastAPI/Flask/Django routes, request objects and dependencies/decorators, subprocess and dynamic-code calls, raw SQL, filesystem, Requests/HTTPX, redirects, templates, and pickle shapes are recognized conservatively.
+- Go extraction does not resolve ambiguous interfaces, callbacks, reflection, or generated code. `net/http`, Gin, Chi, and Echo routes, request/context values, local middleware/guards, `os/exec`, `database/sql`, filesystem, HTTP clients, redirects, templates, and deserialization calls are recognized conservatively.

@@ -2,9 +2,9 @@
 
 Local-first security analysis for entire codebases.
 
-Secure Engine is the local Rust analysis core of the Secure project family. Phase 4 turns its bounded JavaScript, JSX, TypeScript, and TSX evidence graph and seven high-confidence rules into a usable CLI and native desktop product with safe source inspection, exact suppressions, local history, deterministic baselines, JSON/SARIF export, and Fedora RPM packaging.
+Secure Engine is the local Rust analysis core of the Secure project family. Phase 5 applies the same bounded evidence graph and seven high-confidence rules to JavaScript/TypeScript, Rust, Python, and Go. The CLI and native desktop product retain safe source inspection, exact suppressions, local history, deterministic baselines, JSON/SARIF export, and Fedora RPM packaging.
 
-Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Development and contract details are in [docs/development.md](./docs/development.md), [docs/evidence-graph-and-rules.md](./docs/evidence-graph-and-rules.md), [docs/secure-json-v1.md](./docs/secure-json-v1.md), and [docs/phase4-cli-desktop.md](./docs/phase4-cli-desktop.md). Fedora package operations are documented separately in [docs/fedora-packaging.md](./docs/fedora-packaging.md).
+Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Development and contract details are in [docs/development.md](./docs/development.md), [docs/parsing-normalized-facts.md](./docs/parsing-normalized-facts.md), [docs/evidence-graph-and-rules.md](./docs/evidence-graph-and-rules.md), and [docs/secure-json-v1.md](./docs/secure-json-v1.md). Fedora package operations are documented separately in [docs/fedora-packaging.md](./docs/fedora-packaging.md).
 
 ## Project family
 

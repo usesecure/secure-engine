@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/phase4-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/phase5-rpm}"
 rpm_path="${1:-}"
 if test -z "$rpm_path"; then
   rpm_path="$(find "$target/rpmbuild/RPMS" -type f -name 'secure-engine-*.rpm' -print -quit)"
@@ -36,7 +36,7 @@ appstreamcli validate --no-net "$extract/usr/share/metainfo/dev.usesecure.Secure
 if test "${SECURE_SKIP_DESKTOP_SMOKE:-0}" != 1; then
   test -n "${DISPLAY:-}"
   set +e
-  timeout 5s "$extract/usr/bin/secure-desktop" "$root/fixtures/phase3-rules" >"$target/desktop-smoke.stdout" 2>"$target/desktop-smoke.stderr"
+  timeout 5s "$extract/usr/bin/secure-desktop" "$root/fixtures/phase5-multilang" >"$target/desktop-smoke.stdout" 2>"$target/desktop-smoke.stderr"
   status=$?
   set -e
   test "$status" -eq 124

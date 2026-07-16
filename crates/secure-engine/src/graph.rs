@@ -406,7 +406,7 @@ pub(crate) fn analyze(
         {
             function_nodes.insert(qualified.clone(), node.clone());
             raw_functions
-                .entry(raw.clone())
+                .entry(function_resolution_key(raw, &record.provenance))
                 .or_default()
                 .push(qualified.clone());
         }
@@ -611,7 +611,7 @@ pub(crate) fn analyze(
     let findings_were_truncated = findings.len() > configuration.max_findings;
     findings.truncate(configuration.max_findings);
     let truncated = builder.truncated || findings_were_truncated;
-    let limitations = analysis_limitations(configuration, truncated);
+    let limitations = analysis_limitations(configuration, truncated, units);
     Ok(AnalysisResult {
         summary: AnalysisSummary {
             nodes: graph.nodes.len(),
@@ -1033,7 +1033,7 @@ fn extract_record_for_node(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn record(
+pub(crate) fn record(
     kind: &str,
     name: Option<&str>,
     function: Option<&str>,
@@ -1118,7 +1118,7 @@ fn add_control_and_call_edges(
             && let Some(callee) = record
                 .callee
                 .as_ref()
-                .and_then(|name| unique_function(name, raw_functions))
+                .and_then(|name| unique_function(name, raw_functions, &record.provenance))
             && let Some(target) = function_nodes.get(callee)
         {
             let _edge = builder.edge("calls", node, target, &record.location, &record.provenance);
@@ -1140,7 +1140,7 @@ fn propagate_local_call(
     let Some(callee_function) = record
         .callee
         .as_ref()
-        .and_then(|name| unique_function(name, functions))
+        .and_then(|name| unique_function(name, functions, &record.provenance))
     else {
         return;
     };
@@ -1360,6 +1360,7 @@ fn apply_suppressions(
 fn analysis_limitations(
     configuration: &ScanConfiguration,
     truncated: bool,
+    units: &[ProgramUnit],
 ) -> Vec<crate::Limitation> {
     let mut limitations = vec![
         crate::Limitation { code: "bounded-interprocedural-analysis".into(), message: format!("Local inter-procedural propagation is bounded to {} traversal levels", configuration.max_interprocedural_depth) },
@@ -1370,6 +1371,37 @@ fn analysis_limitations(
         limitations.push(crate::Limitation {
             code: "analysis-limit-reached".into(),
             message: "A configured graph or finding bound truncated Phase 3 analysis".into(),
+        });
+    }
+    let grammars = units
+        .iter()
+        .map(|unit| unit.provenance.grammar.as_str())
+        .collect::<Vec<_>>();
+    if grammars
+        .iter()
+        .any(|grammar| grammar.contains("tree-sitter-rust"))
+    {
+        limitations.push(crate::Limitation {
+            code: "rust-dynamic-dispatch-limited".into(),
+            message: "Trait-object dispatch, macros beyond their parsed invocation, and generated Rust are not expanded".into(),
+        });
+    }
+    if grammars
+        .iter()
+        .any(|grammar| grammar.contains("tree-sitter-python"))
+    {
+        limitations.push(crate::Limitation {
+            code: "python-dynamic-runtime-limited".into(),
+            message: "Monkey patching, dynamic attributes, metaclasses, and runtime decorator behavior are not resolved".into(),
+        });
+    }
+    if grammars
+        .iter()
+        .any(|grammar| grammar.contains("tree-sitter-go"))
+    {
+        limitations.push(crate::Limitation {
+            code: "go-interface-callback-limited".into(),
+            message: "Ambiguous interface dispatch, callbacks, reflection, and generated Go are not resolved".into(),
         });
     }
     limitations
@@ -1452,10 +1484,31 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
 fn unique_function<'a>(
     callee: &str,
     functions: &'a BTreeMap<String, Vec<String>>,
+    provenance: &ParserProvenance,
 ) -> Option<&'a String> {
-    let leaf = callee.rsplit('.').next().unwrap_or(callee);
-    let matches = functions.get(leaf)?;
+    let leaf = callee
+        .rsplit(['.', ':'])
+        .find(|part| !part.is_empty())
+        .unwrap_or(callee);
+    let matches = functions.get(&function_resolution_key(leaf, provenance))?;
     (matches.len() == 1).then(|| &matches[0])
+}
+
+fn function_resolution_key(name: &str, provenance: &ParserProvenance) -> String {
+    let namespace = if provenance.grammar.contains("tree-sitter-javascript")
+        || provenance.grammar.contains("tree-sitter-typescript")
+    {
+        "javascript-typescript"
+    } else if provenance.grammar.contains("tree-sitter-rust") {
+        "rust"
+    } else if provenance.grammar.contains("tree-sitter-python") {
+        "python"
+    } else if provenance.grammar.contains("tree-sitter-go") {
+        "go"
+    } else {
+        "unknown"
+    };
+    format!("{namespace}:{name}")
 }
 
 fn containing_function<'a>(
@@ -1581,8 +1634,9 @@ fn sink_kind(callee: &str) -> Option<&'static str> {
 }
 
 fn is_raw_database_call(callee: &str) -> bool {
+    let normalized = callee.to_ascii_lowercase().replace("::", ".");
     matches!(
-        callee.to_ascii_lowercase().rsplit('.').next(),
+        normalized.rsplit('.').next(),
         Some("query" | "execute" | "raw" | "$queryraw" | "$executeraw")
     )
 }

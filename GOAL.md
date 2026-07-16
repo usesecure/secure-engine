@@ -1,5 +1,9 @@
 # Secure Engine - Implementation Goal
 
+## Current status
+
+Phases 0–4 are complete. Phase 5 expands the deterministic core to Rust, Python, and Go with pinned isolated parsers, shared normalized facts, the existing seven evidence-backed rules, mixed-monorepo support, and unchanged CLI/desktop/report boundaries. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
+
 Build Secure Engine as a local-first Rust security analyzer with one reusable core, a CLI, and a small native desktop interface. The first implementation must establish a reliable foundation and a stable integration contract with `usesecure/secure-skill`; it must not attempt broad vulnerability detection yet.
 
 ## Product relationship

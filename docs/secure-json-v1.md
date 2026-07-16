@@ -32,9 +32,11 @@ Phase 2 keeps every Phase 0 and Phase 1 field compatible and adds optional prope
 - report: `parsing` contains coverage, duration, and cache counters;
 - report: `facts` contains stable IDs, exact repository-relative spans, bounded normalized names and relationships, fingerprints, and parser/extractor provenance;
 - report: `parser_diagnostics` contains recoverable, source-free syntax diagnostics;
-- report: `parser_coverage` distinguishes JavaScript, JSX, TypeScript, and TSX modes.
+- report: `parser_coverage` distinguishes JavaScript, JSX, TypeScript, TSX, Rust, Python, and Go modes.
 
 Facts are syntax evidence only. They carry no severity or confidence and do not imply a vulnerability. Cache location and clear-cache controls are runtime-only and are never serialized. Cache state affects only the documented volatile counters; cold and warm reports have the same facts and `report_fingerprint`.
+
+Phase 5 extends only the `parser_coverage.parser_mode` enum and accepted parser provenance values. Rust, Python, and Go facts use the same Phase 2 object shapes, while graph paths and findings use the same Phase 3 shapes. Existing JavaScript/TypeScript identifiers and fingerprints remain stable.
 
 ## Phase 3 additive graph and finding fields
 

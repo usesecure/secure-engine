@@ -17,6 +17,10 @@ An optional AI layer may validate, explain, and prioritize structured evidence. 
 
 The goal is not to claim that Secure Engine detects every vulnerability. The goal is to outperform broad, noisy review workflows through measurable coverage, useful evidence, low false-positive rates, and transparent limitations.
 
+## Current implementation status
+
+Phases 0–4 are integrated. Phase 5 adds pinned, isolated Rust, Python, and Go Tree-sitter adapters in that order while preserving the JavaScript/TypeScript contract. All seven existing rule families, report projections, CLI/desktop behavior, history, baselines, SARIF, and Fedora packaging continue to use the one shared core. Java/Kotlin, C#, hosted services, AI validation, automatic fixes, telemetry, and additional package formats remain future work.
+
 ## Product boundaries
 
 Secure Engine owns:
@@ -320,9 +324,9 @@ Exit condition: a user can scan, inspect, suppress, export, and reopen a project
 
 ### Phase 5 - Multi-language expansion
 
-- Add Rust, Python, and Go adapters in that order.
-- Require fixtures and negative controls for every rule family added.
-- Profile memory, CPU, cache size, and incremental performance.
+- [Complete] Add Rust, Python, and Go adapters in that order.
+- [Complete] Require fixtures and negative controls for every rule family added.
+- [Complete] Profile memory, CPU, cache size, and incremental performance.
 
 Exit condition: support claims match measured language and framework coverage.
 

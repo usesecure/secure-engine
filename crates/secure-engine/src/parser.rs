@@ -14,6 +14,9 @@ pub(crate) const EXTRACTOR_VERSION: &str = "normalized-js-facts-v1";
 pub(crate) const TREE_SITTER_VERSION: &str = "0.26.11";
 const JAVASCRIPT_GRAMMAR_VERSION: &str = "0.25.0";
 const TYPESCRIPT_GRAMMAR_VERSION: &str = "0.23.2";
+const RUST_GRAMMAR_VERSION: &str = "0.24.2";
+const PYTHON_GRAMMAR_VERSION: &str = "0.25.0";
+const GO_GRAMMAR_VERSION: &str = "0.25.0";
 const MAX_NORMALIZED_NAME_BYTES: usize = 512;
 const MAX_DIAGNOSTICS_PER_FILE: usize = 256;
 const MAX_VISITED_NODES: usize = 5_000_000;
@@ -24,6 +27,9 @@ pub(crate) enum ParserMode {
     Jsx,
     TypeScript,
     Tsx,
+    Rust,
+    Python,
+    Go,
 }
 
 impl ParserMode {
@@ -34,6 +40,9 @@ impl ParserMode {
             "jsx" => Some(Self::Jsx),
             "ts" | "mts" | "cts" => Some(Self::TypeScript),
             "tsx" => Some(Self::Tsx),
+            "rs" => Some(Self::Rust),
+            "py" | "pyi" => Some(Self::Python),
+            "go" => Some(Self::Go),
             _ => None,
         }
     }
@@ -44,6 +53,9 @@ impl ParserMode {
             Self::Jsx => "jsx",
             Self::TypeScript => "typescript",
             Self::Tsx => "tsx",
+            Self::Rust => "rust",
+            Self::Python => "python",
+            Self::Go => "go",
         }
     }
 
@@ -52,6 +64,9 @@ impl ParserMode {
             Self::JavaScript | Self::Jsx => tree_sitter_javascript::LANGUAGE.into(),
             Self::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Self::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Self::Rust => tree_sitter_rust::LANGUAGE.into(),
+            Self::Python => tree_sitter_python::LANGUAGE.into(),
+            Self::Go => tree_sitter_go::LANGUAGE.into(),
         }
     }
 
@@ -59,7 +74,17 @@ impl ParserMode {
         match self {
             Self::JavaScript | Self::Jsx => JAVASCRIPT_GRAMMAR_VERSION,
             Self::TypeScript | Self::Tsx => TYPESCRIPT_GRAMMAR_VERSION,
+            Self::Rust => RUST_GRAMMAR_VERSION,
+            Self::Python => PYTHON_GRAMMAR_VERSION,
+            Self::Go => GO_GRAMMAR_VERSION,
         }
+    }
+
+    pub(crate) const fn is_javascript_family(self) -> bool {
+        matches!(
+            self,
+            Self::JavaScript | Self::Jsx | Self::TypeScript | Self::Tsx
+        )
     }
 }
 
@@ -76,16 +101,30 @@ pub(crate) fn provenance(mode: ParserMode) -> ParserProvenance {
     let grammar_crate = match mode {
         ParserMode::JavaScript | ParserMode::Jsx => "tree-sitter-javascript",
         ParserMode::TypeScript | ParserMode::Tsx => "tree-sitter-typescript",
+        ParserMode::Rust => "tree-sitter-rust",
+        ParserMode::Python => "tree-sitter-python",
+        ParserMode::Go => "tree-sitter-go",
     };
     ParserProvenance {
-        parser: PARSER_ADAPTER_VERSION.into(),
+        parser: if mode.is_javascript_family() {
+            PARSER_ADAPTER_VERSION
+        } else {
+            "secure-tree-sitter-multilang-adapter-v1"
+        }
+        .into(),
         parser_version: TREE_SITTER_VERSION.into(),
         grammar: format!(
             "{grammar_crate}@{}:{}",
             mode.grammar_version(),
             mode.as_str()
         ),
-        extractor_version: EXTRACTOR_VERSION.into(),
+        extractor_version: match mode {
+            ParserMode::Rust => "normalized-rust-facts-v1",
+            ParserMode::Python => "normalized-python-facts-v1",
+            ParserMode::Go => "normalized-go-facts-v1",
+            _ => EXTRACTOR_VERSION,
+        }
+        .into(),
     }
 }
 
@@ -147,7 +186,8 @@ pub(crate) fn parse_source(
     };
 
     let root = tree.root_node();
-    let global_use_server = contains_directive(root, content, "use server");
+    let global_use_server =
+        mode.is_javascript_family() && contains_directive(root, content, "use server");
     let mut facts = Vec::new();
     let mut diagnostics = Vec::new();
     let mut stack = vec![root];
@@ -200,15 +240,27 @@ pub(crate) fn parse_source(
             );
         }
 
-        extract_node_facts(
-            path,
-            content,
-            node,
-            global_use_server,
-            &parser_provenance,
-            configuration.max_facts_per_file,
-            &mut facts,
-        );
+        if mode.is_javascript_family() {
+            extract_node_facts(
+                path,
+                content,
+                node,
+                global_use_server,
+                &parser_provenance,
+                configuration.max_facts_per_file,
+                &mut facts,
+            );
+        } else {
+            crate::language::extract_node_facts(
+                path,
+                content,
+                node,
+                mode,
+                &parser_provenance,
+                configuration.max_facts_per_file,
+                &mut facts,
+            );
+        }
         if facts.len() >= configuration.max_facts_per_file {
             push_diagnostic(
                 &mut diagnostics,
@@ -244,15 +296,27 @@ pub(crate) fn parse_source(
         );
     }
     check_cancelled(cancellation)?;
-    let program = extract_program(
-        path,
-        content,
-        root,
-        &parser_provenance,
-        global_use_server,
-        configuration.max_graph_nodes,
-        cancellation,
-    )?;
+    let program = if mode.is_javascript_family() {
+        extract_program(
+            path,
+            content,
+            root,
+            &parser_provenance,
+            global_use_server,
+            configuration.max_graph_nodes,
+            cancellation,
+        )?
+    } else {
+        crate::language::extract_program(
+            path,
+            content,
+            root,
+            mode,
+            &parser_provenance,
+            configuration.max_graph_nodes,
+            cancellation,
+        )?
+    };
     facts.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
     facts.dedup_by(|left, right| left.fact_id == right.fact_id);
     diagnostics.sort_by(|left, right| left.diagnostic_id.cmp(&right.diagnostic_id));
@@ -970,7 +1034,7 @@ fn normalize_name(value: &str) -> Option<String> {
     (!normalized.is_empty()).then_some(normalized)
 }
 
-fn make_fact(
+pub(crate) fn make_fact(
     kind: &str,
     path: &str,
     content: &[u8],
@@ -1081,14 +1145,14 @@ fn push_diagnostic(
     }
 }
 
-fn relationship(kind: &str, target: &str) -> FactRelationship {
+pub(crate) fn relationship(kind: &str, target: &str) -> FactRelationship {
     FactRelationship {
         kind: kind.into(),
         target: normalize_name(target).unwrap_or_else(|| "unknown".into()),
     }
 }
 
-fn location_for_node(path: &str, content: &[u8], node: Node<'_>) -> SourceLocation {
+pub(crate) fn location_for_node(path: &str, content: &[u8], node: Node<'_>) -> SourceLocation {
     location_for_range(path, content, node.start_byte(), node.end_byte())
 }
 
@@ -1173,7 +1237,11 @@ mod tests {
             Some(ParserMode::TypeScript)
         );
         assert_eq!(ParserMode::for_path("page.tsx"), Some(ParserMode::Tsx));
-        assert_eq!(ParserMode::for_path("main.rs"), None);
+        assert_eq!(ParserMode::for_path("main.rs"), Some(ParserMode::Rust));
+        assert_eq!(ParserMode::for_path("app.py"), Some(ParserMode::Python));
+        assert_eq!(ParserMode::for_path("types.pyi"), Some(ParserMode::Python));
+        assert_eq!(ParserMode::for_path("main.go"), Some(ParserMode::Go));
+        assert_eq!(ParserMode::for_path("main.rb"), None);
     }
 
     #[test]

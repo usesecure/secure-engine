@@ -6,6 +6,7 @@ mod classify;
 mod export;
 mod graph;
 mod history;
+mod language;
 mod model;
 mod parser;
 mod sarif;
