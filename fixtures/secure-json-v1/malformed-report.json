@@ -1,0 +1,6 @@
+{
+  "schema_version": "secure-json-v1",
+  "engine_version": "0.1.0",
+  "document_type": "scan-report",
+  "repository": {"name": "/absolute/path/leak"}
+}

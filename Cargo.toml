@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/secure-engine",
+    "apps/secure-cli",
+    "apps/secure-desktop",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "MIT"
+repository = "https://github.com/usesecure/secure-engine"
+
+[workspace.dependencies]
+blake3 = "=1.8.5"
+clap = { version = "=4.6.2", features = ["derive"] }
+crossbeam-channel = "=0.5.16"
+ctrlc = "=3.5.2"
+eframe = { version = "=0.35.0", default-features = false, features = ["default_fonts", "glow", "x11"] }
+ignore = "=0.4.29"
+jsonschema = { version = "=0.47.0", default-features = false }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+secure-engine = { version = "=0.1.0", path = "crates/secure-engine" }
+tempfile = "=3.27.0"
+time = { version = "=0.3.53", features = ["formatting"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

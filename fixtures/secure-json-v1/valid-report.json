@@ -1,0 +1,50 @@
+{
+  "schema_version": "secure-json-v1",
+  "engine_version": "0.1.0",
+  "document_type": "scan-report",
+  "repository": {
+    "name": "integration-project",
+    "vcs": null,
+    "revision": null,
+    "content_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "identity_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "configuration": {
+    "include_hidden": false,
+    "max_files": 100000,
+    "max_file_bytes": 4194304,
+    "respect_ignore_files": true
+  },
+  "scan": {
+    "started_at": "2026-07-16T00:00:00Z",
+    "finished_at": "2026-07-16T00:00:00Z",
+    "duration_ms": 0,
+    "complete": true,
+    "files_discovered": 2,
+    "files_scanned": 2
+  },
+  "files": [],
+  "languages": [],
+  "manifests": [],
+  "frameworks": [],
+  "entry_points": [],
+  "capabilities": [{
+    "capability": "dependency-management",
+    "reason": "Detected cargo manifest",
+    "evidence": {
+      "path": "Cargo.toml",
+      "span": {"start_byte": 0, "end_byte": 0, "start_line": 1, "start_column": 1, "end_line": 1, "end_column": 1}
+    },
+    "fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }],
+  "trust_boundaries": [],
+  "findings": [],
+  "limitations": [{
+    "code": "inventory-only",
+    "message": "Phase 0 does not run vulnerability rules"
+  }],
+  "skipped_files": [],
+  "errors": [],
+  "report_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "future_additive_field": "consumers tolerate unknown v1 fields"
+}
