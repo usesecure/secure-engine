@@ -12,7 +12,7 @@ pub struct ScanRequest {
 }
 
 impl ScanRequest {
-    /// Creates a request with safe Phase 0 defaults.
+    /// Creates a request with safe Phase 1 inventory defaults.
     #[must_use]
     pub fn new(repository: impl Into<PathBuf>) -> Self {
         Self {
@@ -24,6 +24,8 @@ impl ScanRequest {
 
 /// Resource limits and traversal settings that affect inventory output.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ScanConfiguration {
     /// Whether hidden files excluded by the traversal library are included.
     pub include_hidden: bool,
@@ -33,6 +35,22 @@ pub struct ScanConfiguration {
     pub max_file_bytes: u64,
     /// Whether Git and repository ignore files are honored.
     pub respect_ignore_files: bool,
+    /// Repository-relative glob patterns; at least one must match when non-empty.
+    pub include_patterns: Vec<String>,
+    /// Repository-relative glob patterns that always exclude matching inputs.
+    pub exclude_patterns: Vec<String>,
+    /// Whether common generated/build directories are traversed.
+    pub include_generated: bool,
+    /// Whether common vendored dependency directories are traversed.
+    pub include_vendor: bool,
+    /// Whether nested Git repositories, worktrees, and submodules are traversed.
+    pub include_nested_repositories: bool,
+    /// Maximum total bytes read across all files.
+    pub max_total_bytes: u64,
+    /// Optional traversal depth, where the selected repository is depth zero.
+    pub max_depth: Option<usize>,
+    /// Maximum non-fatal errors retained in the report.
+    pub max_errors: usize,
 }
 
 impl Default for ScanConfiguration {
@@ -42,11 +60,19 @@ impl Default for ScanConfiguration {
             max_files: 100_000,
             max_file_bytes: 4 * 1024 * 1024,
             respect_ignore_files: true,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            include_generated: false,
+            include_vendor: false,
+            include_nested_repositories: false,
+            max_total_bytes: 512 * 1024 * 1024,
+            max_depth: None,
+            max_errors: 100,
         }
     }
 }
 
-/// Top-level Phase 0 scan report.
+/// Top-level versioned repository inventory report.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ScanReport {
     /// Contract version; always `secure-json-v1` for this model.
@@ -61,6 +87,9 @@ pub struct ScanReport {
     pub configuration: ScanConfiguration,
     /// Completion and documented volatile timing data.
     pub scan: ScanMetadata,
+    /// Aggregate inventory and resource-limit results added in Phase 1.
+    #[serde(default)]
+    pub inventory: InventorySummary,
     /// Regular files that were successfully inventoried.
     pub files: Vec<FileRecord>,
     /// Aggregated detected languages.
@@ -75,12 +104,15 @@ pub struct ScanReport {
     pub capabilities: Vec<CapabilityEvidence>,
     /// Trust-boundary evidence suitable for later agent review.
     pub trust_boundaries: Vec<TrustBoundaryEvidence>,
-    /// Normalized deterministic findings. Empty during Phase 0.
+    /// Normalized deterministic findings. Empty during Phase 1 inventory.
     pub findings: Vec<Finding>,
     /// Known limitations of this analysis.
     pub limitations: Vec<Limitation>,
     /// Inputs skipped due to a stable resource or representation reason.
     pub skipped_files: Vec<SkippedFile>,
+    /// Aggregate excluded-input reasons that do not reveal excluded paths.
+    #[serde(default)]
+    pub exclusions: Vec<ExclusionSummary>,
     /// Bounded, non-fatal, path-sanitized scan errors.
     pub errors: Vec<BoundedError>,
     /// Stable digest of the report after volatile scan metadata is excluded.
@@ -96,10 +128,17 @@ pub struct RepositoryIdentity {
     pub vcs: Option<String>,
     /// Git object identifier when readable locally.
     pub revision: Option<String>,
+    /// `directory`, `git-repository`, or `git-worktree`.
+    #[serde(default = "default_repository_kind")]
+    pub repository_kind: String,
     /// Stable digest over relative paths and file bytes.
     pub content_fingerprint: String,
     /// Stable digest over the safe identity fields.
     pub identity_fingerprint: String,
+}
+
+fn default_repository_kind() -> String {
+    "directory".into()
 }
 
 /// Scan lifecycle metadata. Timing fields are documented as volatile.
@@ -117,6 +156,37 @@ pub struct ScanMetadata {
     pub files_discovered: usize,
     /// Number of files successfully inventoried.
     pub files_scanned: usize,
+}
+
+/// Aggregate repository inventory counters and limit outcomes.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InventorySummary {
+    /// Entries yielded by safe traversal after ignore and directory pruning.
+    pub entries_seen: usize,
+    /// Regular files matching include/exclude selection before the file limit.
+    pub candidate_files: usize,
+    /// Candidate files retained under the deterministic file limit.
+    pub files_selected: usize,
+    /// Files successfully read and classified.
+    pub files_scanned: usize,
+    /// Successfully scanned non-binary files.
+    pub text_files: usize,
+    /// Successfully scanned binary files.
+    pub binary_files: usize,
+    /// Included files under recognized generated/build directories.
+    pub generated_files: usize,
+    /// Included files under recognized vendored dependency directories.
+    pub vendor_files: usize,
+    /// Total file bytes read and fingerprinted.
+    pub bytes_scanned: u64,
+    /// Symbolic links observed and not followed.
+    pub symlinks_skipped: usize,
+    /// Nested repositories or submodules pruned by the safe default.
+    pub nested_repositories_skipped: usize,
+    /// Whether candidates exceeded `max_files`.
+    pub hit_file_limit: bool,
+    /// Whether reading stopped at `max_total_bytes`.
+    pub hit_total_byte_limit: bool,
 }
 
 /// Stable repository-relative location.
@@ -158,6 +228,16 @@ pub struct FileRecord {
     pub content_fingerprint: String,
     /// Detected implementation language, when recognized.
     pub language: Option<String>,
+    /// `project`, `generated`, or `vendor`.
+    #[serde(default = "default_file_origin")]
+    pub origin: String,
+    /// Whether bounded content inspection classified this file as binary.
+    #[serde(default)]
+    pub is_binary: bool,
+}
+
+fn default_file_origin() -> String {
+    "project".into()
 }
 
 /// Aggregated language evidence.
@@ -281,6 +361,15 @@ pub struct SkippedFile {
     pub reason: String,
 }
 
+/// Aggregate count for one exclusion reason without revealing excluded names.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct ExclusionSummary {
+    /// Stable reason such as `vendor-directory` or `exclude-pattern`.
+    pub reason: String,
+    /// Number of roots or inputs pruned for this reason.
+    pub count: usize,
+}
+
 /// Non-fatal scan error with no host path or source text.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BoundedError {
@@ -297,6 +386,13 @@ pub struct BoundedError {
 pub enum ProgressEvent {
     /// Traversal has begun.
     Discovering,
+    /// Bounded traversal progress for large repositories.
+    DiscoveryProgress {
+        /// Entries yielded after safe directory pruning.
+        entries_seen: usize,
+        /// Matching regular-file candidates seen so far.
+        candidate_files: usize,
+    },
     /// File inventory progress.
     Inspecting {
         /// Number of files already considered.

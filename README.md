@@ -2,7 +2,7 @@
 
 Local-first security analysis for entire codebases.
 
-Secure Engine is the local Rust analysis core of the Secure project family. Phase 0 inventories repositories and exports deterministic evidence through a CLI and a small native desktop application. Parsing, semantic graphs, and vulnerability rules remain roadmap work.
+Secure Engine is the local Rust analysis core of the Secure project family. Phase 1 provides bounded, Git-aware repository inventory and exports deterministic evidence through a CLI and a small native desktop application. Parsing, semantic graphs, and vulnerability rules remain roadmap work.
 
 Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Development and contract details are in [docs/development.md](./docs/development.md) and [docs/secure-json-v1.md](./docs/secure-json-v1.md).
 
@@ -22,6 +22,7 @@ They integrate through a versioned CLI and JSON report contract. Secure Skill ma
 
 ```bash
 cargo run -p secure-cli -- scan . --format secure-json-v1 --output report.json
+cargo run -p secure-cli -- scan . --include 'src/**' --exclude 'src/generated/**' --max-files 50000
 cargo run -p secure-cli -- doctor --format secure-json-v1
 cargo run -p secure-cli -- schema print secure-json-v1
 cargo run -p secure-desktop -- .

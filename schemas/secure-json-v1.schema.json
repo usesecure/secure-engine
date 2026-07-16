@@ -12,6 +12,12 @@
       "minLength": 1,
       "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
     },
+    "relativeGlob": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*[\\\\\\u0000-\\u001F\\u007F]).+$"
+    },
     "fingerprint": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
@@ -41,9 +47,30 @@
       "required": ["include_hidden", "max_files", "max_file_bytes", "respect_ignore_files"],
       "properties": {
         "include_hidden": { "type": "boolean" },
-        "max_files": { "type": "integer", "minimum": 1 },
-        "max_file_bytes": { "type": "integer", "minimum": 1 },
-        "respect_ignore_files": { "type": "boolean" }
+        "max_files": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+        "max_file_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "respect_ignore_files": { "type": "boolean" },
+        "include_patterns": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/relativeGlob" }
+        },
+        "exclude_patterns": {
+          "type": "array",
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/relativeGlob" }
+        },
+        "include_generated": { "type": "boolean" },
+        "include_vendor": { "type": "boolean" },
+        "include_nested_repositories": { "type": "boolean" },
+        "max_total_bytes": { "type": "integer", "minimum": 1, "maximum": 17592186044416 },
+        "max_depth": {
+          "oneOf": [
+            { "type": "integer", "minimum": 0, "maximum": 1024 },
+            { "type": "null" }
+          ]
+        },
+        "max_errors": { "type": "integer", "minimum": 1, "maximum": 1000 }
       }
     },
     "repository": {
@@ -57,6 +84,9 @@
             { "type": "string", "pattern": "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$" },
             { "type": "null" }
           ]
+        },
+        "repository_kind": {
+          "enum": ["directory", "git-repository", "git-worktree"]
         },
         "content_fingerprint": { "$ref": "#/$defs/fingerprint" },
         "identity_fingerprint": { "$ref": "#/$defs/fingerprint" }
@@ -82,7 +112,28 @@
         "kind": { "type": "string", "minLength": 1 },
         "size_bytes": { "type": "integer", "minimum": 0 },
         "content_fingerprint": { "$ref": "#/$defs/fingerprint" },
-        "language": { "type": ["string", "null"] }
+        "language": { "type": ["string", "null"] },
+        "origin": { "enum": ["project", "generated", "vendor"] },
+        "is_binary": { "type": "boolean" }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "required": ["entries_seen", "candidate_files", "files_selected", "files_scanned", "text_files", "binary_files", "generated_files", "vendor_files", "bytes_scanned", "symlinks_skipped", "nested_repositories_skipped", "hit_file_limit", "hit_total_byte_limit"],
+      "properties": {
+        "entries_seen": { "type": "integer", "minimum": 0 },
+        "candidate_files": { "type": "integer", "minimum": 0 },
+        "files_selected": { "type": "integer", "minimum": 0 },
+        "files_scanned": { "type": "integer", "minimum": 0 },
+        "text_files": { "type": "integer", "minimum": 0 },
+        "binary_files": { "type": "integer", "minimum": 0 },
+        "generated_files": { "type": "integer", "minimum": 0 },
+        "vendor_files": { "type": "integer", "minimum": 0 },
+        "bytes_scanned": { "type": "integer", "minimum": 0 },
+        "symlinks_skipped": { "type": "integer", "minimum": 0 },
+        "nested_repositories_skipped": { "type": "integer", "minimum": 0 },
+        "hit_file_limit": { "type": "boolean" },
+        "hit_total_byte_limit": { "type": "boolean" }
       }
     },
     "language": {
@@ -177,6 +228,14 @@
         "reason": { "type": "string", "minLength": 1 }
       }
     },
+    "exclusion": {
+      "type": "object",
+      "required": ["reason", "count"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "count": { "type": "integer", "minimum": 1 }
+      }
+    },
     "boundedError": {
       "type": "object",
       "required": ["code", "path", "message"],
@@ -196,6 +255,7 @@
         "repository": { "$ref": "#/$defs/repository" },
         "configuration": { "$ref": "#/$defs/configuration" },
         "scan": { "$ref": "#/$defs/scanMetadata" },
+        "inventory": { "$ref": "#/$defs/inventory" },
         "files": { "type": "array", "items": { "$ref": "#/$defs/file" } },
         "languages": { "type": "array", "items": { "$ref": "#/$defs/language" } },
         "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } },
@@ -206,7 +266,8 @@
         "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
         "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } },
         "skipped_files": { "type": "array", "items": { "$ref": "#/$defs/skippedFile" } },
-        "errors": { "type": "array", "maxItems": 100, "items": { "$ref": "#/$defs/boundedError" } },
+        "exclusions": { "type": "array", "items": { "$ref": "#/$defs/exclusion" } },
+        "errors": { "type": "array", "maxItems": 1000, "items": { "$ref": "#/$defs/boundedError" } },
         "report_fingerprint": { "$ref": "#/$defs/fingerprint" }
       }
     },

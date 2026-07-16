@@ -19,8 +19,10 @@ clap = { version = "=4.6.2", features = ["derive"] }
 crossbeam-channel = "=0.5.16"
 ctrlc = "=3.5.2"
 eframe = { version = "=0.35.0", default-features = false, features = ["default_fonts", "glow", "x11"] }
+globset = "=0.4.19"
 ignore = "=0.4.29"
 jsonschema = { version = "=0.47.0", default-features = false }
+libc = "=0.2.186"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.150"
 secure-engine = { version = "=0.1.0", path = "crates/secure-engine" }

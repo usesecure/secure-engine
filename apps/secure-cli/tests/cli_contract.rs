@@ -84,3 +84,83 @@ fn unsupported_schema_has_documented_exit_code() -> Result<(), Box<dyn std::erro
     assert!(missing.stdout.is_empty());
     Ok(())
 }
+
+#[test]
+fn phase_one_controls_are_exposed_and_recorded_consistently()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/integration-project"
+    );
+    let output = secure()
+        .args([
+            "scan",
+            fixture,
+            "--include",
+            "**/*.rs",
+            "--exclude",
+            "src/main.rs",
+            "--include-hidden",
+            "--include-generated",
+            "--include-vendor",
+            "--include-nested-repositories",
+            "--max-files",
+            "10",
+            "--max-file-bytes",
+            "100",
+            "--max-total-bytes",
+            "12345",
+            "--max-depth",
+            "5",
+            "--max-errors",
+            "7",
+        ])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(report["configuration"]["include_patterns"][0], "**/*.rs");
+    assert_eq!(
+        report["configuration"]["exclude_patterns"][0],
+        "src/main.rs"
+    );
+    assert_eq!(report["configuration"]["max_total_bytes"], 12345);
+    assert_eq!(report["configuration"]["max_depth"], 5);
+    assert_eq!(report["configuration"]["max_errors"], 7);
+    assert_eq!(report["inventory"]["files_scanned"], 0);
+    Ok(())
+}
+
+#[test]
+fn malformed_phase_one_controls_use_invalid_input_exit_code()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/integration-project"
+    );
+    let malformed = secure()
+        .args(["scan", fixture, "--include", "["])
+        .output()?;
+    assert_eq!(malformed.status.code(), Some(2));
+    assert!(malformed.stdout.is_empty());
+
+    let help = secure().args(["scan", "--help"]).output()?;
+    assert!(help.status.success());
+    let help_text = String::from_utf8(help.stdout)?;
+    for flag in [
+        "--include",
+        "--exclude",
+        "--include-generated",
+        "--include-vendor",
+        "--include-nested-repositories",
+        "--max-total-bytes",
+        "--max-depth",
+        "--max-errors",
+    ] {
+        assert!(help_text.contains(flag), "missing {flag}");
+    }
+    Ok(())
+}

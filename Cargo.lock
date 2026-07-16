@@ -2601,8 +2601,10 @@ name = "secure-engine"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "globset",
  "ignore",
  "jsonschema",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

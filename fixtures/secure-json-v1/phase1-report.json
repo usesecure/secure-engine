@@ -1,0 +1,71 @@
+{
+  "schema_version": "secure-json-v1",
+  "engine_version": "0.1.0",
+  "document_type": "scan-report",
+  "repository": {
+    "name": "phase1-fixture",
+    "vcs": "git",
+    "revision": "0123456789012345678901234567890123456789",
+    "repository_kind": "git-repository",
+    "content_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "identity_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "configuration": {
+    "include_hidden": false,
+    "max_files": 100000,
+    "max_file_bytes": 4194304,
+    "respect_ignore_files": true,
+    "include_patterns": ["**/*.rs"],
+    "exclude_patterns": ["tests/private/**"],
+    "include_generated": false,
+    "include_vendor": false,
+    "include_nested_repositories": false,
+    "max_total_bytes": 536870912,
+    "max_depth": null,
+    "max_errors": 100
+  },
+  "scan": {
+    "started_at": "2026-07-16T00:00:00Z",
+    "finished_at": "2026-07-16T00:00:00Z",
+    "duration_ms": 0,
+    "complete": true,
+    "files_discovered": 1,
+    "files_scanned": 1
+  },
+  "inventory": {
+    "entries_seen": 4,
+    "candidate_files": 1,
+    "files_selected": 1,
+    "files_scanned": 1,
+    "text_files": 1,
+    "binary_files": 0,
+    "generated_files": 0,
+    "vendor_files": 0,
+    "bytes_scanned": 13,
+    "symlinks_skipped": 1,
+    "nested_repositories_skipped": 1,
+    "hit_file_limit": false,
+    "hit_total_byte_limit": false
+  },
+  "files": [{
+    "path": "src/main.rs",
+    "kind": "source",
+    "size_bytes": 13,
+    "content_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "language": "Rust",
+    "origin": "project",
+    "is_binary": false
+  }],
+  "languages": [{"name": "Rust", "file_count": 1, "bytes": 13}],
+  "manifests": [],
+  "frameworks": [],
+  "entry_points": [],
+  "capabilities": [],
+  "trust_boundaries": [],
+  "findings": [],
+  "limitations": [{"code": "inventory-only", "message": "Phase 1 inventory only"}],
+  "skipped_files": [{"path": "outside-link", "reason": "symlink-not-followed"}],
+  "exclusions": [{"reason": "nested-repository", "count": 1}],
+  "errors": [],
+  "report_fingerprint": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+}

@@ -3,7 +3,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use secure_engine::{CancellationToken, SECURE_JSON_V1_SCHEMA, ScanRequest, scan_repository};
+use secure_engine::{
+    CancellationToken, SECURE_JSON_V1_SCHEMA, ScanReport, ScanRequest, scan_repository,
+};
 
 fn workspace_path(path: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -24,9 +26,22 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     let incompatible: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
         "fixtures/secure-json-v1/incompatible-report.json",
     ))?)?;
+    let phase_one: serde_json::Value = serde_json::from_slice(&fs::read(workspace_path(
+        "fixtures/secure-json-v1/phase1-report.json",
+    ))?)?;
     assert!(validator.is_valid(&valid));
+    assert!(validator.is_valid(&phase_one));
     assert!(!validator.is_valid(&malformed));
     assert!(!validator.is_valid(&incompatible));
+    let legacy_report: ScanReport = serde_json::from_value(valid)?;
+    assert_eq!(
+        legacy_report.configuration.max_total_bytes,
+        512 * 1024 * 1024
+    );
+    assert_eq!(legacy_report.repository.repository_kind, "directory");
+    assert_eq!(legacy_report.inventory.files_scanned, 0);
+    assert_eq!(legacy_report.files[0].origin, "project");
+    assert!(!legacy_report.files[0].is_binary);
     Ok(())
 }
 

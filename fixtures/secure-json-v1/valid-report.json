@@ -23,8 +23,14 @@
     "files_discovered": 2,
     "files_scanned": 2
   },
-  "files": [],
-  "languages": [],
+  "files": [{
+    "path": "src/main.rs",
+    "kind": "source",
+    "size_bytes": 13,
+    "content_fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "language": "Rust"
+  }],
+  "languages": [{"name": "Rust", "file_count": 1, "bytes": 13}],
   "manifests": [],
   "frameworks": [],
   "entry_points": [],

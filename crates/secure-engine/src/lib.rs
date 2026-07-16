@@ -1,7 +1,9 @@
 //! Deterministic, local-first repository inventory shared by every Secure Engine interface.
 
+mod classify;
 mod model;
 mod scan;
+mod workspace;
 
 pub use model::*;
 pub use scan::{CancellationToken, ScanError, scan_repository};
