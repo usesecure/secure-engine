@@ -277,3 +277,156 @@ fn phase_two_cli_reports_cold_and_warm_cache_results_without_path_leakage()
     assert!(invalid.stdout.is_empty());
     Ok(())
 }
+
+#[test]
+fn sarif_quiet_verbose_and_no_color_preserve_machine_output()
+-> Result<(), Box<dyn std::error::Error>> {
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/phase3-rules");
+    let sarif = secure()
+        .args([
+            "scan",
+            fixture,
+            "--no-cache",
+            "--format",
+            "sarif",
+            "--quiet",
+            "--no-color",
+        ])
+        .output()?;
+    assert_eq!(sarif.status.code(), Some(1));
+    assert!(sarif.stderr.is_empty());
+    let document: serde_json::Value = serde_json::from_slice(&sarif.stdout)?;
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../../../schemas/sarif-schema-2.1.0.json"))?;
+    assert!(jsonschema::validator_for(&schema)?.is_valid(&document));
+    assert_eq!(document["version"], "2.1.0");
+
+    let verbose = secure()
+        .args(["scan", fixture, "--no-cache", "--verbose"])
+        .output()?;
+    assert_eq!(verbose.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&verbose.stderr).contains("secure: parsing"));
+    serde_json::from_slice::<serde_json::Value>(&verbose.stdout)?;
+    Ok(())
+}
+
+#[test]
+fn baseline_cli_creates_compares_and_rejects_malformed_input()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let report_path = temporary.path().join("report.json");
+    let clean_report_path = temporary.path().join("clean.json");
+    let baseline_path = temporary.path().join("baseline.json");
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/phase3-rules");
+    assert_eq!(
+        secure()
+            .args(["scan", fixture, "--no-cache", "--quiet", "--output"])
+            .arg(&report_path)
+            .status()?
+            .code(),
+        Some(1)
+    );
+    let mut clean_report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    clean_report["findings"] = serde_json::json!([]);
+    clean_report["report_fingerprint"] = serde_json::json!("c".repeat(64));
+    fs::write(
+        &clean_report_path,
+        serde_json::to_vec_pretty(&clean_report)?,
+    )?;
+    let created = secure()
+        .args(["baseline", "create"])
+        .arg(&report_path)
+        .arg("--output")
+        .arg(&baseline_path)
+        .output()?;
+    assert!(created.status.success());
+    let baseline: serde_json::Value = serde_json::from_slice(&fs::read(&baseline_path)?)?;
+    assert_eq!(baseline["format"], "secure-baseline-v1");
+    assert!(baseline.get("saved_at").is_none());
+
+    let unchanged = secure()
+        .args(["baseline", "compare"])
+        .arg(&baseline_path)
+        .arg(&report_path)
+        .output()?;
+    assert!(unchanged.status.success());
+    let comparison: serde_json::Value = serde_json::from_slice(&unchanged.stdout)?;
+    assert_eq!(comparison["new"].as_array().map(Vec::len), Some(0));
+
+    let changed = secure()
+        .args(["baseline", "compare"])
+        .arg(&baseline_path)
+        .arg(&clean_report_path)
+        .output()?;
+    assert_eq!(changed.status.code(), Some(1));
+    let comparison: serde_json::Value = serde_json::from_slice(&changed.stdout)?;
+    assert_eq!(comparison["resolved"].as_array().map(Vec::len), Some(12));
+
+    fs::write(&baseline_path, "{}")?;
+    let malformed = secure()
+        .args(["baseline", "compare"])
+        .arg(&baseline_path)
+        .arg(&report_path)
+        .output()?;
+    assert_eq!(malformed.status.code(), Some(2));
+    assert!(malformed.stdout.is_empty());
+    Ok(())
+}
+
+#[test]
+fn history_cli_lists_reopens_and_deletes_private_completed_scans()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let history = temporary.path().join("history");
+    let report_path = temporary.path().join("report.json");
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/integration-project"
+    );
+    let scan = secure()
+        .args([
+            "scan",
+            fixture,
+            "--quiet",
+            "--save-history",
+            "--history-dir",
+        ])
+        .arg(&history)
+        .arg("--output")
+        .arg(&report_path)
+        .output()?;
+    assert!(scan.status.success());
+    assert!(scan.stderr.is_empty());
+
+    let listed = secure()
+        .args(["history", "list", "--history-dir"])
+        .arg(&history)
+        .output()?;
+    assert!(listed.status.success());
+    let listing: serde_json::Value = serde_json::from_slice(&listed.stdout)?;
+    let scan_id = listing["scans"][0]["scan_id"]
+        .as_str()
+        .ok_or("missing scan ID")?;
+    assert!(!String::from_utf8_lossy(&listed.stdout).contains(fixture));
+
+    let shown = secure()
+        .args(["history", "show", scan_id, "--history-dir"])
+        .arg(&history)
+        .output()?;
+    assert!(shown.status.success());
+    let entry: serde_json::Value = serde_json::from_slice(&shown.stdout)?;
+    assert_eq!(entry["summary"]["status"], "complete");
+    assert!(!String::from_utf8_lossy(&shown.stdout).contains(fixture));
+
+    let deleted = secure()
+        .args(["history", "delete", scan_id, "--history-dir"])
+        .arg(&history)
+        .output()?;
+    assert!(deleted.status.success());
+    let missing = secure()
+        .args(["history", "show", scan_id, "--history-dir"])
+        .arg(&history)
+        .output()?;
+    assert_eq!(missing.status.code(), Some(2));
+    Ok(())
+}

@@ -1,16 +1,17 @@
 #![allow(missing_docs)]
 
-use std::ffi::OsString;
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand};
 use secure_engine::{
-    CacheControl, CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ProgressEvent,
-    SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError, ScanReport, ScanRequest, Suppression,
-    explain_finding, rules, scan_repository,
+    Baseline, CacheControl, CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION,
+    ExportFormat, HistoryStore, ProgressEvent, SCHEMA_VERSION, SECURE_JSON_V1_SCHEMA, ScanError,
+    ScanReport, ScanRequest, Suppression, compare_baseline, create_baseline,
+    default_history_directory, explain_finding, rules, scan_repository, serialize_export,
+    validate_baseline, write_export, write_json_artifact,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -48,6 +49,16 @@ enum Command {
     },
     /// Explain one finding from a completed secure-json-v1 report.
     Explain(ExplainArgs),
+    /// Create or compare deterministic finding baselines.
+    Baseline {
+        #[command(subcommand)]
+        command: BaselineCommand,
+    },
+    /// List, reopen, or delete completed local scans.
+    History {
+        #[command(subcommand)]
+        command: HistoryCommand,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -133,6 +144,24 @@ struct ScanArgs {
     /// Exact suppression: `RULE_ID:RELATIVE_PATH:START_BYTE:REASON`. Repeatable.
     #[arg(long = "suppress", value_name = "RULE:PATH:BYTE:REASON")]
     suppressions: Vec<String>,
+    /// Suppress progress and human-readable summaries on stderr.
+    #[arg(long, conflicts_with = "verbose")]
+    quiet: bool,
+    /// Emit detailed progress on stderr.
+    #[arg(long, conflicts_with = "quiet")]
+    verbose: bool,
+    /// Disable ANSI color. Output is currently color-free in every mode.
+    #[arg(long)]
+    no_color: bool,
+    /// Save the completed scan to local history.
+    #[arg(long)]
+    save_history: bool,
+    /// Override the private local history directory.
+    #[arg(long, value_name = "DIRECTORY")]
+    history_dir: Option<PathBuf>,
+    /// Maximum completed scans retained when saving history.
+    #[arg(long, default_value_t = 50)]
+    history_retention: usize,
 }
 
 #[derive(Debug, Args)]
@@ -166,6 +195,58 @@ struct ExplainArgs {
     report: PathBuf,
 }
 
+#[derive(Debug, Subcommand)]
+enum BaselineCommand {
+    /// Create a versioned baseline from a complete report.
+    Create {
+        /// Complete secure-json-v1 report.
+        report: PathBuf,
+        /// Atomically written baseline destination.
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Compare a baseline with a complete current report.
+    Compare {
+        /// Versioned baseline file.
+        baseline: PathBuf,
+        /// Complete current secure-json-v1 report.
+        report: PathBuf,
+        /// Optional atomic JSON destination; stdout is used otherwise.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum HistoryCommand {
+    /// List safe completed-scan metadata newest first.
+    List(HistoryOptions),
+    /// Reopen one complete historical report.
+    Show {
+        /// Local scan identifier.
+        scan_id: String,
+        #[command(flatten)]
+        options: HistoryOptions,
+    },
+    /// Explicitly delete one local history record.
+    Delete {
+        /// Local scan identifier.
+        scan_id: String,
+        #[command(flatten)]
+        options: HistoryOptions,
+    },
+}
+
+#[derive(Debug, Args)]
+struct HistoryOptions {
+    /// Override the private local history directory.
+    #[arg(long, value_name = "DIRECTORY")]
+    history_dir: Option<PathBuf>,
+    /// Maximum completed scans retained by this store.
+    #[arg(long, default_value_t = 50)]
+    retention: usize,
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(code) => ExitCode::from(code),
@@ -187,11 +268,14 @@ fn run(cli: Cli) -> Result<u8, (u8, String)> {
             command: RulesCommand::List,
         } => list_rules(),
         Command::Explain(arguments) => explain(&arguments),
+        Command::Baseline { command } => run_baseline(command),
+        Command::History { command } => run_history(command),
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
-    require_schema(&arguments.format)?;
+    let export_format = require_scan_format(&arguments.format)?;
     if arguments.max_files == 0
         || arguments.max_file_bytes == 0
         || arguments.max_total_bytes == 0
@@ -204,6 +288,8 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
         || arguments.max_graph_edges == 0
         || arguments.max_interprocedural_depth == 0
         || arguments.max_findings == 0
+        || arguments.history_retention == 0
+        || arguments.history_retention > 10_000
     {
         return Err((
             EXIT_INVALID_INPUT,
@@ -212,13 +298,7 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     }
 
     let cancellation = CancellationToken::new();
-    let signal_token = cancellation.clone();
-    ctrlc::set_handler(move || signal_token.cancel()).map_err(|_| {
-        (
-            EXIT_INTERNAL_FAILURE,
-            "cancellation handler could not be installed".into(),
-        )
-    })?;
+    install_cancellation(&cancellation)?;
 
     let mut request = ScanRequest::new(arguments.repository);
     request.configuration.include_hidden = arguments.include_hidden;
@@ -251,23 +331,55 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
         directory: arguments.cache_dir,
         clear_before_scan: arguments.clear_cache,
     };
-    let report = scan_repository(&request, &cancellation, |event| print_progress(&event))
-        .map_err(scan_error)?;
-    let bytes = serde_json::to_vec_pretty(&report).map_err(|_| {
-        (
-            EXIT_INTERNAL_FAILURE,
-            "complete report could not be serialized".into(),
-        )
-    })?;
+    let quiet = arguments.quiet;
+    let verbose = arguments.verbose;
+    let repository_path = request.repository.clone();
+    let report = scan_repository(&request, &cancellation, |event| {
+        print_progress(&event, quiet, verbose);
+    })
+    .map_err(scan_error)?;
     if cancellation.is_cancelled() {
         return Err((EXIT_CANCELLED, "scan cancelled".into()));
     }
 
     if let Some(output) = arguments.output {
-        atomic_write(&output, &bytes).map_err(|message| (EXIT_INVALID_INPUT, message))?;
-        eprintln!("secure: wrote complete report");
+        write_export(&report, export_format, &output, &cancellation)
+            .map_err(|error| export_error(&error, "report"))?;
+        if !quiet {
+            eprintln!("secure: wrote complete report to {}", output.display());
+        }
     } else {
+        let bytes = serialize_export(&report, export_format).map_err(|_| {
+            (
+                EXIT_INTERNAL_FAILURE,
+                "complete report could not be serialized".into(),
+            )
+        })?;
         write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
+    }
+    if arguments.save_history {
+        let directory = arguments
+            .history_dir
+            .unwrap_or_else(default_history_directory);
+        let store = HistoryStore::open(directory, arguments.history_retention)
+            .map_err(|error| (EXIT_INVALID_INPUT, error.to_string()))?;
+        let saved = store
+            .record(&report, Some(&repository_path), None, &cancellation)
+            .map_err(|error| history_error(&error))?;
+        if !quiet {
+            eprintln!("secure: saved history {}", saved.scan_id);
+        }
+    }
+    if !quiet {
+        eprintln!(
+            "secure: {} findings, {} files, {} facts, {} graph nodes, {} cache hits, {} ms",
+            report.findings.len(),
+            report.inventory.files_scanned,
+            report.facts.len(),
+            report.analysis.nodes,
+            report.parsing.cache_hits,
+            report.scan.duration_ms
+        );
     }
     Ok(if report.findings.is_empty() {
         0
@@ -323,22 +435,7 @@ fn list_rules() -> Result<u8, (u8, String)> {
 }
 
 fn explain(arguments: &ExplainArgs) -> Result<u8, (u8, String)> {
-    let metadata = fs::metadata(&arguments.report)
-        .map_err(|_| (EXIT_INVALID_INPUT, "report could not be read".into()))?;
-    if !metadata.is_file() || metadata.len() > 64 * 1024 * 1024 {
-        return Err((
-            EXIT_INVALID_INPUT,
-            "report must be a regular file no larger than 64 MiB".into(),
-        ));
-    }
-    let bytes = fs::read(&arguments.report)
-        .map_err(|_| (EXIT_INVALID_INPUT, "report could not be read".into()))?;
-    let report = serde_json::from_slice::<ScanReport>(&bytes).map_err(|_| {
-        (
-            EXIT_INVALID_INPUT,
-            "report is not a compatible scan report".into(),
-        )
-    })?;
+    let report = read_report(&arguments.report)?;
     require_schema(&report.schema_version)?;
     let finding = explain_finding(&report, &arguments.finding_id).ok_or_else(|| {
         (
@@ -354,6 +451,138 @@ fn explain(arguments: &ExplainArgs) -> Result<u8, (u8, String)> {
     })?;
     write_stdout(&output).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
     Ok(0)
+}
+
+fn run_baseline(command: BaselineCommand) -> Result<u8, (u8, String)> {
+    let cancellation = CancellationToken::new();
+    install_cancellation(&cancellation)?;
+    match command {
+        BaselineCommand::Create { report, output } => {
+            let report = read_report(&report)?;
+            let baseline = create_baseline(&report)
+                .map_err(|error| (EXIT_INVALID_INPUT, error.to_string()))?;
+            write_json_artifact(&baseline, &output, &cancellation)
+                .map_err(|error| export_error(&error, "baseline"))?;
+            eprintln!(
+                "secure: wrote deterministic baseline to {}",
+                output.display()
+            );
+            Ok(0)
+        }
+        BaselineCommand::Compare {
+            baseline,
+            report,
+            output,
+        } => {
+            let baseline = read_baseline(&baseline)?;
+            let report = read_report(&report)?;
+            let comparison = compare_baseline(&baseline, &report)
+                .map_err(|error| (EXIT_INVALID_INPUT, error.to_string()))?;
+            if let Some(output) = output {
+                write_json_artifact(&comparison, &output, &cancellation)
+                    .map_err(|error| export_error(&error, "baseline comparison"))?;
+            } else {
+                let bytes = serde_json::to_vec_pretty(&comparison).map_err(|_| {
+                    (
+                        EXIT_INTERNAL_FAILURE,
+                        "baseline comparison could not be serialized".into(),
+                    )
+                })?;
+                write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
+            }
+            eprintln!(
+                "secure: baseline {} new, {} changed, {} resolved, {} unchanged",
+                comparison.new.len(),
+                comparison.changed.len(),
+                comparison.resolved.len(),
+                comparison.unchanged.len()
+            );
+            Ok(if comparison.has_changes() {
+                EXIT_POLICY_FINDINGS
+            } else {
+                0
+            })
+        }
+    }
+}
+
+fn run_history(command: HistoryCommand) -> Result<u8, (u8, String)> {
+    let cancellation = CancellationToken::new();
+    install_cancellation(&cancellation)?;
+    match command {
+        HistoryCommand::List(options) => {
+            let store = history_store(options)?;
+            let listing = store
+                .list(&cancellation)
+                .map_err(|error| history_error(&error))?;
+            write_json_stdout(&listing)?;
+        }
+        HistoryCommand::Show { scan_id, options } => {
+            let store = history_store(options)?;
+            let entry = store
+                .show(&scan_id, &cancellation)
+                .map_err(|error| history_error(&error))?;
+            write_json_stdout(&entry)?;
+        }
+        HistoryCommand::Delete { scan_id, options } => {
+            let store = history_store(options)?;
+            store
+                .delete(&scan_id)
+                .map_err(|error| history_error(&error))?;
+            write_json_stdout(&serde_json::json!({"deleted": scan_id}))?;
+        }
+    }
+    Ok(0)
+}
+
+fn history_store(options: HistoryOptions) -> Result<HistoryStore, (u8, String)> {
+    let directory = options
+        .history_dir
+        .unwrap_or_else(default_history_directory);
+    HistoryStore::open(directory, options.retention)
+        .map_err(|error| (EXIT_INVALID_INPUT, error.to_string()))
+}
+
+fn read_report(path: &PathBuf) -> Result<ScanReport, (u8, String)> {
+    let bytes = read_bounded_json(path, "report")?;
+    let report = serde_json::from_slice::<ScanReport>(&bytes).map_err(|_| {
+        (
+            EXIT_INVALID_INPUT,
+            "report is not a compatible scan report".into(),
+        )
+    })?;
+    require_schema(&report.schema_version)?;
+    if !report.scan.complete {
+        return Err((EXIT_INVALID_INPUT, "report is not complete".into()));
+    }
+    Ok(report)
+}
+
+fn read_baseline(path: &PathBuf) -> Result<Baseline, (u8, String)> {
+    let bytes = read_bounded_json(path, "baseline")?;
+    let baseline = serde_json::from_slice::<Baseline>(&bytes)
+        .map_err(|_| (EXIT_INVALID_INPUT, "baseline is malformed".into()))?;
+    validate_baseline(&baseline).map_err(|error| (EXIT_INVALID_INPUT, error.to_string()))?;
+    Ok(baseline)
+}
+
+fn read_bounded_json(path: &PathBuf, kind: &str) -> Result<Vec<u8>, (u8, String)> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|_| (EXIT_INVALID_INPUT, format!("{kind} could not be read")))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 64 * 1024 * 1024
+    {
+        return Err((
+            EXIT_INVALID_INPUT,
+            format!("{kind} must be a regular file no larger than 64 MiB"),
+        ));
+    }
+    fs::read(path).map_err(|_| (EXIT_INVALID_INPUT, format!("{kind} could not be read")))
+}
+
+fn write_json_stdout<T: serde::Serialize>(value: &T) -> Result<(), (u8, String)> {
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|_| (EXIT_INTERNAL_FAILURE, "JSON output failed".into()))?;
+    write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))
 }
 
 fn parse_suppression(value: &str) -> Result<Suppression, (u8, String)> {
@@ -394,7 +623,21 @@ fn require_schema(schema: &str) -> Result<(), (u8, String)> {
     }
 }
 
-fn print_progress(event: &ProgressEvent) {
+fn require_scan_format(format: &str) -> Result<ExportFormat, (u8, String)> {
+    match format {
+        SCHEMA_VERSION => Ok(ExportFormat::SecureJson),
+        "sarif" | "sarif-2.1.0" => Ok(ExportFormat::Sarif),
+        _ => Err((
+            EXIT_UNSUPPORTED_SCHEMA,
+            format!("unsupported scan format '{format}'; expected {SCHEMA_VERSION} or sarif"),
+        )),
+    }
+}
+
+fn print_progress(event: &ProgressEvent, quiet: bool, verbose: bool) {
+    if quiet {
+        return;
+    }
     match event {
         ProgressEvent::Discovering => eprintln!("secure: discovering repository files"),
         ProgressEvent::DiscoveryProgress {
@@ -406,7 +649,11 @@ fn print_progress(event: &ProgressEvent) {
         ProgressEvent::Inspecting {
             completed, total, ..
         } => {
-            if *completed == 0 || completed.saturating_add(1) == *total || completed % 250 == 0 {
+            if verbose
+                || *completed == 0
+                || completed.saturating_add(1) == *total
+                || completed % 250 == 0
+            {
                 eprintln!("secure: inventory {completed}/{total}");
             }
         }
@@ -416,7 +663,11 @@ fn print_progress(event: &ProgressEvent) {
             parser_mode,
             ..
         } => {
-            if *completed == 0 || completed.saturating_add(1) == *total || completed % 100 == 0 {
+            if verbose
+                || *completed == 0
+                || completed.saturating_add(1) == *total
+                || completed % 100 == 0
+            {
                 eprintln!("secure: parsing {completed}/{total} ({parser_mode})");
             }
         }
@@ -440,38 +691,35 @@ fn scan_error(error: ScanError) -> (u8, String) {
     }
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    if !parent.is_dir() {
-        return Err("output parent is not a directory".into());
-    }
-    let file_name = path
-        .file_name()
-        .filter(|name| !name.is_empty())
-        .ok_or_else(|| "output path must name a file".to_owned())?;
-    let mut temporary_name = OsString::from(".");
-    temporary_name.push(file_name);
-    temporary_name.push(format!(".secure-tmp-{}", std::process::id()));
-    let temporary = parent.join(temporary_name);
+fn install_cancellation(cancellation: &CancellationToken) -> Result<(), (u8, String)> {
+    let signal_token = cancellation.clone();
+    ctrlc::set_handler(move || signal_token.cancel()).map_err(|_| {
+        (
+            EXIT_INTERNAL_FAILURE,
+            "cancellation handler could not be installed".into(),
+        )
+    })
+}
 
-    let result = (|| -> io::Result<()> {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
-        fs::rename(&temporary, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ignored = fs::remove_file(&temporary);
+fn export_error(error: &secure_engine::ExportError, artifact: &str) -> (u8, String) {
+    match error {
+        secure_engine::ExportError::Cancelled => (EXIT_CANCELLED, error.to_string()),
+        secure_engine::ExportError::Serialization => (EXIT_INTERNAL_FAILURE, error.to_string()),
+        secure_engine::ExportError::Write => (
+            EXIT_INVALID_INPUT,
+            format!("{artifact} could not be written atomically"),
+        ),
     }
-    result.map_err(|_| "report could not be written atomically".into())
+}
+
+fn history_error(error: &secure_engine::HistoryError) -> (u8, String) {
+    match error {
+        secure_engine::HistoryError::Cancelled => (EXIT_CANCELLED, error.to_string()),
+        secure_engine::HistoryError::Invalid(_) | secure_engine::HistoryError::NotFound => {
+            (EXIT_INVALID_INPUT, error.to_string())
+        }
+        secure_engine::HistoryError::Storage => (EXIT_INTERNAL_FAILURE, error.to_string()),
+    }
 }
 
 fn write_stdout(bytes: &[u8]) -> Result<(), String> {

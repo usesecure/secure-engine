@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">Secure Engine</title>
+  <description id="description">A shield containing a deterministic evidence path</description>
+  <defs>
+    <linearGradient id="shield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#shield)" d="M64 7 113 25v34c0 31-18 52-49 63C33 111 15 90 15 59V25Z"/>
+  <path fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" d="M39 42h21l16 20h15M39 86h20l17-24"/>
+  <circle cx="37" cy="42" r="8" fill="#fff"/>
+  <circle cx="37" cy="86" r="8" fill="#fff"/>
+  <circle cx="92" cy="62" r="8" fill="#fff"/>
+</svg>

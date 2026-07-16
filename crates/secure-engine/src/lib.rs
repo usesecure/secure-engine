@@ -1,16 +1,27 @@
 //! Deterministic local-first inventory, syntax facts, evidence graph, and rules shared by every interface.
 
+mod baseline;
 mod cache;
 mod classify;
+mod export;
 mod graph;
+mod history;
 mod model;
 mod parser;
+mod sarif;
 mod scan;
+mod source;
+mod storage;
 mod workspace;
 
+pub use baseline::*;
+pub use export::*;
 pub use graph::rules;
+pub use history::*;
 pub use model::*;
+pub use sarif::*;
 pub use scan::{CancellationToken, ScanError, scan_repository};
+pub use source::*;
 
 /// Finds one deterministic finding in a completed shared-engine report.
 #[must_use]

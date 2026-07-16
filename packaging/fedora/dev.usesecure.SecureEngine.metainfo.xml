@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.usesecure.SecureEngine</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Secure Engine</name>
+  <summary>Local deterministic security analysis</summary>
+  <developer id="usesecure.dev">
+    <name>Secure Engine maintainers</name>
+  </developer>
+  <url type="homepage">https://github.com/usesecure/secure-engine</url>
+  <description>
+    <p>Secure Engine scans local JavaScript and TypeScript repositories, presents reproducible evidence paths, and exports private JSON and SARIF reports.</p>
+  </description>
+  <launchable type="desktop-id">dev.usesecure.SecureEngine.desktop</launchable>
+  <provides>
+    <binary>secure</binary>
+    <binary>secure-desktop</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+    <category>Security</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-07-16" />
+  </releases>
+</component>

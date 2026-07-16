@@ -1,98 +1,183 @@
 #![allow(missing_docs)]
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::thread;
+
+use crossbeam_channel::{Receiver, Sender, bounded};
 use eframe::egui;
-use secure_desktop::{InventoryControls, spawn_inventory_worker};
-use secure_engine::{CancellationToken, ProgressEvent, ScanError, ScanReport};
-use std::path::PathBuf;
+use secure_desktop::{
+    FindingFilter, FindingSort, InventoryControls, SuppressionFilter, filter_findings,
+    spawn_inventory_worker, spawn_source_preview_worker,
+};
+use secure_engine::{
+    Baseline, BaselineComparison, CancellationToken, ExportFormat, HistoryEntry, HistoryListing,
+    HistoryStore, HistorySummary, ProgressEvent, ScanError, ScanReport, SourcePreview, Suppression,
+    compare_baseline, create_baseline, default_history_directory, write_export,
+    write_json_artifact,
+};
 
 fn main() -> eframe::Result {
     let initial_repository = std::env::args().nth(1).unwrap_or_else(|| ".".into());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([960.0, 720.0])
-            .with_min_inner_size([640.0, 420.0]),
+            .with_inner_size([1180.0, 780.0])
+            .with_min_inner_size([800.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(
         "Secure Engine",
         options,
-        Box::new(move |_creation_context| Ok(Box::new(SecureApp::new(initial_repository)))),
+        Box::new(move |creation_context| {
+            Ok(Box::new(SecureApp::new(
+                creation_context.egui_ctx.clone(),
+                initial_repository,
+            )))
+        }),
     )
 }
 
-enum WorkerMessage {
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Page {
+    #[default]
+    Overview,
+    Findings,
+    Architecture,
+    Dependencies,
+    History,
+    Settings,
+}
+
+enum AppMessage {
     Progress(ProgressEvent),
-    Finished(Box<Result<ScanReport, ScanError>>),
+    ScanFinished(Box<Result<ScanReport, ScanError>>),
+    RepositoryPicked(Option<PathBuf>),
+    SourceLoaded(Result<SourcePreview, String>),
+    ExportFinished(Result<PathBuf, String>),
+    HistoryLoaded(Result<HistoryListing, String>),
+    HistoryRecorded(Result<HistorySummary, String>),
+    HistoryOpened(Box<Result<(HistoryEntry, Option<PathBuf>), String>>),
+    HistoryDeleted(Result<String, String>),
+    BaselineCreated(Box<Result<(Baseline, PathBuf), String>>),
+    BaselineCompared(Box<Result<BaselineComparison, String>>),
 }
 
 struct SecureApp {
+    context: egui::Context,
+    sender: Sender<AppMessage>,
+    receiver: Receiver<AppMessage>,
     repository_input: String,
+    current_repository: Option<PathBuf>,
+    recent_projects: Vec<PathBuf>,
     controls: InventoryControls,
     include_patterns_input: String,
     exclude_patterns_input: String,
     max_depth_input: usize,
     cache_directory_input: String,
     status: String,
+    stage: String,
     progress: f32,
     report: Option<ScanReport>,
-    receiver: Option<Receiver<WorkerMessage>>,
     cancellation: Option<CancellationToken>,
+    scanning: bool,
+    page: Page,
+    finding_filter: FindingFilter,
+    finding_sort: FindingSort,
+    selected_finding: Option<String>,
+    source_preview: Option<SourcePreview>,
+    source_loading: bool,
+    suppression_reason: String,
+    history: Vec<HistorySummary>,
+    history_recovered: usize,
+    history_retention: usize,
+    history_directory: PathBuf,
+    baseline: Option<Baseline>,
+    comparison: Option<BaselineComparison>,
+    text_scale: f32,
+    operation_busy: bool,
 }
 
 impl SecureApp {
-    fn new(repository_input: String) -> Self {
-        Self {
+    fn new(context: egui::Context, repository_input: String) -> Self {
+        let (sender, receiver) = bounded(512);
+        let mut app = Self {
+            context,
+            sender,
+            receiver,
             repository_input,
+            current_repository: None,
+            recent_projects: Vec::new(),
             controls: InventoryControls::default(),
             include_patterns_input: String::new(),
             exclude_patterns_input: String::new(),
             max_depth_input: 0,
             cache_directory_input: String::new(),
             status: "Ready. Choose a local repository.".into(),
+            stage: "ready".into(),
             progress: 0.0,
             report: None,
-            receiver: None,
             cancellation: None,
+            scanning: false,
+            page: Page::Overview,
+            finding_filter: FindingFilter::default(),
+            finding_sort: FindingSort::default(),
+            selected_finding: None,
+            source_preview: None,
+            source_loading: false,
+            suppression_reason: String::new(),
+            history: Vec::new(),
+            history_recovered: 0,
+            history_retention: 50,
+            history_directory: default_history_directory(),
+            baseline: None,
+            comparison: None,
+            text_scale: 1.0,
+            operation_busy: false,
+        };
+        app.refresh_history();
+        app
+    }
+
+    fn start_scan(&mut self) {
+        if self.scanning || self.repository_input.trim().is_empty() {
+            return;
         }
-    }
-
-    fn scanning(&self) -> bool {
-        self.receiver.is_some()
-    }
-
-    fn start_scan(&mut self, context: &egui::Context) {
+        let repository = PathBuf::from(self.repository_input.trim());
         let mut controls = self.controls.clone();
         controls.include_patterns = parse_patterns(&self.include_patterns_input);
         controls.exclude_patterns = parse_patterns(&self.exclude_patterns_input);
         controls.max_depth = (self.max_depth_input > 0).then_some(self.max_depth_input);
         controls.cache_directory = (!self.cache_directory_input.trim().is_empty())
             .then(|| PathBuf::from(self.cache_directory_input.trim()));
-        let request = controls.request(PathBuf::from(self.repository_input.trim()));
+        let request = controls.request(repository.clone());
         self.controls.clear_cache_before_scan = false;
         let cancellation = CancellationToken::new();
         let worker_cancellation = cancellation.clone();
-        let (sender, receiver) = bounded(256);
-        let repaint_context = context.clone();
-        self.receiver = Some(receiver);
         self.cancellation = Some(cancellation);
+        self.current_repository = Some(repository.clone());
+        remember_project(&mut self.recent_projects, repository);
+        self.scanning = true;
         self.report = None;
+        self.selected_finding = None;
+        self.source_preview = None;
+        self.comparison = None;
         self.progress = 0.0;
+        self.stage = "discovering".into();
         self.status = "Discovering repository files…".into();
-
-        let progress_sender = sender.clone();
-        let completion_sender = sender;
-        let completion_context = repaint_context.clone();
+        let progress_sender = self.sender.clone();
+        let completion_sender = self.sender.clone();
+        let repaint_progress = self.context.clone();
+        let repaint_complete = self.context.clone();
         let _worker = spawn_inventory_worker(
             request,
             worker_cancellation,
             move |event| {
-                let _ignored = progress_sender.try_send(WorkerMessage::Progress(event));
-                repaint_context.request_repaint();
+                let _ignored = progress_sender.try_send(AppMessage::Progress(event));
+                repaint_progress.request_repaint();
             },
             move |result| {
-                send_finished(&completion_sender, result);
-                completion_context.request_repaint();
+                let _ignored = completion_sender.send(AppMessage::ScanFinished(Box::new(result)));
+                repaint_complete.request_repaint();
             },
         );
     }
@@ -100,57 +185,370 @@ impl SecureApp {
     fn cancel_scan(&mut self) {
         if let Some(cancellation) = &self.cancellation {
             cancellation.cancel();
+            self.stage = "cancelling".into();
             self.status = "Cancelling…".into();
         }
     }
 
-    fn receive_worker_messages(&mut self) {
-        let Some(receiver) = self.receiver.take() else {
+    fn clear_result(&mut self) {
+        if !self.scanning {
+            self.report = None;
+            self.selected_finding = None;
+            self.source_preview = None;
+            self.comparison = None;
+            self.stage = "ready".into();
+            self.status = "Result cleared. Ready to scan.".into();
+            self.progress = 0.0;
+        }
+    }
+
+    fn pick_repository(&mut self) {
+        if self.operation_busy || self.scanning {
+            return;
+        }
+        self.operation_busy = true;
+        self.status = "Opening repository picker…".into();
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let selected = rfd::FileDialog::new().pick_folder();
+            let _ignored = sender.send(AppMessage::RepositoryPicked(selected));
+            context.request_repaint();
+        });
+    }
+
+    fn load_source(&mut self, location: secure_engine::SourceLocation) {
+        let Some(repository) = self.current_repository.clone() else {
+            self.status = "The original repository is unavailable for source preview.".into();
             return;
         };
-        let mut keep_receiver = true;
-        loop {
-            match receiver.try_recv() {
-                Ok(WorkerMessage::Progress(event)) => self.apply_progress(event),
-                Ok(WorkerMessage::Finished(result)) => {
-                    self.apply_result(*result);
-                    keep_receiver = false;
-                    break;
-                }
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => {
-                    self.status = "Scan worker stopped unexpectedly".into();
-                    self.cancellation = None;
-                    keep_receiver = false;
-                    break;
+        self.source_loading = true;
+        self.source_preview = None;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        let _worker = spawn_source_preview_worker(
+            repository,
+            location,
+            CancellationToken::new(),
+            move |result| {
+                let message = result.map_err(|error| error.to_string());
+                let _ignored = sender.send(AppMessage::SourceLoaded(message));
+                context.request_repaint();
+            },
+        );
+    }
+
+    fn export_report(&mut self, format: ExportFormat) {
+        let Some(report) = self.report.clone() else {
+            return;
+        };
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        self.status = "Choosing export destination…".into();
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let (label, extension) = match format {
+                ExportFormat::SecureJson => ("Secure JSON", "json"),
+                ExportFormat::Sarif => ("SARIF 2.1.0", "sarif"),
+            };
+            let selected = rfd::FileDialog::new()
+                .add_filter(label, &[extension])
+                .set_file_name(format!("secure-report.{extension}"))
+                .save_file();
+            let result = selected.map_or_else(
+                || Err("Export cancelled".into()),
+                |path| {
+                    write_export(&report, format, &path, &CancellationToken::new())
+                        .map(|()| path)
+                        .map_err(|error| error.to_string())
+                },
+            );
+            let _ignored = sender.send(AppMessage::ExportFinished(result));
+            context.request_repaint();
+        });
+    }
+
+    fn create_baseline_file(&mut self) {
+        let Some(report) = self.report.clone() else {
+            return;
+        };
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        self.status = "Choosing baseline destination…".into();
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = create_baseline(&report)
+                .map_err(|error| error.to_string())
+                .and_then(|baseline| {
+                    rfd::FileDialog::new()
+                        .add_filter("Secure baseline", &["json"])
+                        .set_file_name("secure-baseline.json")
+                        .save_file()
+                        .ok_or_else(|| "Baseline creation cancelled".to_owned())
+                        .and_then(|path| {
+                            write_json_artifact(&baseline, &path, &CancellationToken::new())
+                                .map_err(|error| error.to_string())?;
+                            Ok((baseline, path))
+                        })
+                });
+            let _ignored = sender.send(AppMessage::BaselineCreated(Box::new(result)));
+            context.request_repaint();
+        });
+    }
+
+    fn compare_baseline_file(&mut self) {
+        let Some(report) = self.report.clone() else {
+            return;
+        };
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        self.status = "Choosing baseline…".into();
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = rfd::FileDialog::new()
+                .add_filter("Secure baseline", &["json"])
+                .pick_file()
+                .ok_or_else(|| "Baseline comparison cancelled".to_owned())
+                .and_then(|path| read_baseline_file(&path))
+                .and_then(|baseline| {
+                    compare_baseline(&baseline, &report).map_err(|error| error.to_string())
+                });
+            let _ignored = sender.send(AppMessage::BaselineCompared(Box::new(result)));
+            context.request_repaint();
+        });
+    }
+
+    fn refresh_history(&mut self) {
+        let directory = self.history_directory.clone();
+        let retention = self.history_retention;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = HistoryStore::open(directory, retention)
+                .and_then(|store| store.list(&CancellationToken::new()))
+                .map_err(|error| error.to_string());
+            let _ignored = sender.send(AppMessage::HistoryLoaded(result));
+            context.request_repaint();
+        });
+    }
+
+    fn record_history(&self, report: ScanReport, repository: Option<PathBuf>) {
+        let directory = self.history_directory.clone();
+        let retention = self.history_retention;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = HistoryStore::open(directory, retention)
+                .and_then(|store| {
+                    store.record(
+                        &report,
+                        repository.as_deref(),
+                        None,
+                        &CancellationToken::new(),
+                    )
+                })
+                .map_err(|error| error.to_string());
+            let _ignored = sender.send(AppMessage::HistoryRecorded(result));
+            context.request_repaint();
+        });
+    }
+
+    fn open_history(&mut self, scan_id: String) {
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        self.status = format!("Opening {scan_id}…");
+        let directory = self.history_directory.clone();
+        let retention = self.history_retention;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = HistoryStore::open(directory, retention)
+                .and_then(|store| {
+                    let cancellation = CancellationToken::new();
+                    let entry = store.show(&scan_id, &cancellation)?;
+                    let repository = store.repository_path(&scan_id, &cancellation)?;
+                    Ok((entry, repository))
+                })
+                .map_err(|error| error.to_string());
+            let _ignored = sender.send(AppMessage::HistoryOpened(Box::new(result)));
+            context.request_repaint();
+        });
+    }
+
+    fn compare_history(&mut self, scan_id: String) {
+        let Some(current) = self.report.clone() else {
+            self.status = "Open or complete a current scan before comparing history.".into();
+            return;
+        };
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        let directory = self.history_directory.clone();
+        let retention = self.history_retention;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = HistoryStore::open(directory, retention)
+                .and_then(|store| store.show(&scan_id, &CancellationToken::new()))
+                .map_err(|error| error.to_string())
+                .and_then(|entry| create_baseline(&entry.report).map_err(|error| error.to_string()))
+                .and_then(|baseline| {
+                    compare_baseline(&baseline, &current).map_err(|error| error.to_string())
+                });
+            let _ignored = sender.send(AppMessage::BaselineCompared(Box::new(result)));
+            context.request_repaint();
+        });
+    }
+
+    fn delete_history(&mut self, scan_id: String) {
+        if self.operation_busy {
+            return;
+        }
+        self.operation_busy = true;
+        let directory = self.history_directory.clone();
+        let retention = self.history_retention;
+        let sender = self.sender.clone();
+        let context = self.context.clone();
+        thread::spawn(move || {
+            let result = HistoryStore::open(directory, retention)
+                .and_then(|store| store.delete(&scan_id))
+                .map(|()| scan_id)
+                .map_err(|error| error.to_string());
+            let _ignored = sender.send(AppMessage::HistoryDeleted(result));
+            context.request_repaint();
+        });
+    }
+
+    fn apply_message(&mut self, message: AppMessage) {
+        match message {
+            AppMessage::Progress(event) => self.apply_progress(event),
+            AppMessage::ScanFinished(result) => self.apply_scan_result(*result),
+            AppMessage::RepositoryPicked(selected) => {
+                self.operation_busy = false;
+                if let Some(path) = selected {
+                    self.repository_input = path.display().to_string();
+                    remember_project(&mut self.recent_projects, path);
+                    self.status = "Repository selected. Ready to scan.".into();
+                } else {
+                    self.status = "Repository selection cancelled.".into();
                 }
             }
-        }
-        if keep_receiver {
-            self.receiver = Some(receiver);
+            AppMessage::SourceLoaded(result) => {
+                self.source_loading = false;
+                match result {
+                    Ok(preview) => {
+                        self.status = format!("Loaded safe preview for {}", preview.path);
+                        self.source_preview = Some(preview);
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            AppMessage::ExportFinished(result) => {
+                self.operation_busy = false;
+                self.status = result.map_or_else(
+                    |error| error,
+                    |path| format!("Exported atomically to {}", path.display()),
+                );
+            }
+            AppMessage::HistoryLoaded(result) => match result {
+                Ok(listing) => {
+                    self.history = listing.scans;
+                    self.history_recovered = listing.corrupt_entries_recovered;
+                }
+                Err(error) => self.status = error,
+            },
+            AppMessage::HistoryRecorded(result) => match result {
+                Ok(summary) => {
+                    self.status = format!("Complete and saved as {}", summary.scan_id);
+                    self.refresh_history();
+                }
+                Err(error) => self.status = format!("Scan complete; history failed: {error}"),
+            },
+            AppMessage::HistoryOpened(result) => {
+                self.operation_busy = false;
+                match *result {
+                    Ok((entry, repository)) => {
+                        self.report = Some(entry.report);
+                        self.current_repository.clone_from(&repository);
+                        if let Some(repository) = repository {
+                            self.repository_input = repository.display().to_string();
+                            remember_project(&mut self.recent_projects, repository);
+                        }
+                        self.selected_finding = None;
+                        self.source_preview = None;
+                        self.stage = "history".into();
+                        self.status = format!("Reopened {}", entry.summary.scan_id);
+                        self.page = Page::Overview;
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            AppMessage::HistoryDeleted(result) => {
+                self.operation_busy = false;
+                self.status =
+                    result.map_or_else(|error| error, |scan_id| format!("Deleted {scan_id}"));
+                self.refresh_history();
+            }
+            AppMessage::BaselineCreated(result) => {
+                self.operation_busy = false;
+                match *result {
+                    Ok((baseline, path)) => {
+                        self.baseline = Some(baseline);
+                        self.status = format!("Baseline saved to {}", path.display());
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
+            AppMessage::BaselineCompared(result) => {
+                self.operation_busy = false;
+                match *result {
+                    Ok(comparison) => {
+                        self.status = format!(
+                            "Baseline: {} new, {} changed, {} resolved",
+                            comparison.new.len(),
+                            comparison.changed.len(),
+                            comparison.resolved.len()
+                        );
+                        self.comparison = Some(comparison);
+                    }
+                    Err(error) => self.status = error,
+                }
+            }
         }
     }
 
     fn apply_progress(&mut self, event: ProgressEvent) {
         match event {
-            ProgressEvent::Discovering => self.status = "Discovering repository files…".into(),
+            ProgressEvent::Discovering => {
+                self.stage = "discovering".into();
+                self.status = "Discovering repository files…".into();
+            }
             ProgressEvent::DiscoveryProgress {
                 entries_seen,
                 candidate_files,
             } => {
                 self.status =
-                    format!("Discovery: {entries_seen} entries, {candidate_files} matching files");
+                    format!("Discovery: {entries_seen} entries, {candidate_files} candidates");
             }
             ProgressEvent::Inspecting {
                 completed,
                 total,
                 path,
             } => {
-                let basis_points = completed
-                    .saturating_mul(10_000)
-                    .checked_div(total)
-                    .unwrap_or(0);
-                self.progress = f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0;
+                self.stage = "inventory".into();
+                self.progress = fraction(completed, total);
                 self.status = format!("Inventory {completed}/{total}: {path}");
             }
             ProgressEvent::Parsing {
@@ -159,17 +557,18 @@ impl SecureApp {
                 path,
                 parser_mode,
             } => {
-                let basis_points = completed
-                    .saturating_mul(10_000)
-                    .checked_div(total)
-                    .unwrap_or(0);
-                self.progress = f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0;
+                self.stage = "parsing".into();
+                self.progress = fraction(completed, total);
                 self.status = format!("Parsing {completed}/{total}: {path} ({parser_mode})");
             }
             ProgressEvent::Analyzing { facts } => {
-                self.status = format!("Building evidence graph from {facts} facts…");
+                self.stage = "analysis".into();
+                self.status = format!("Building graph and rules from {facts} facts…");
             }
-            ProgressEvent::Finalizing => self.status = "Finalizing deterministic report…".into(),
+            ProgressEvent::Finalizing => {
+                self.stage = "finalizing".into();
+                self.status = "Finalizing deterministic report…".into();
+            }
             ProgressEvent::Complete { files_scanned } => {
                 self.progress = 1.0;
                 self.status = format!("Complete: {files_scanned} files");
@@ -177,390 +576,842 @@ impl SecureApp {
         }
     }
 
-    fn apply_result(&mut self, result: Result<ScanReport, ScanError>) {
+    fn apply_scan_result(&mut self, result: Result<ScanReport, ScanError>) {
+        self.scanning = false;
         self.cancellation = None;
         match result {
             Ok(report) => {
                 self.progress = 1.0;
-                self.status = format!("Complete: {} files", report.scan.files_scanned);
-                self.report = Some(report);
+                self.stage = "complete".into();
+                self.status = if report.findings.is_empty() {
+                    "Complete: no findings.".into()
+                } else {
+                    format!("Complete: {} findings.", report.findings.len())
+                };
+                self.report = Some(report.clone());
+                self.record_history(report, self.current_repository.clone());
             }
             Err(ScanError::Cancelled) => {
                 self.progress = 0.0;
+                self.stage = "cancelled".into();
                 self.status = "Cancelled. No partial report was published.".into();
                 self.report = None;
             }
             Err(error) => {
                 self.progress = 0.0;
+                self.stage = "error".into();
                 self.status = error.to_string();
                 self.report = None;
             }
         }
     }
-}
 
-impl eframe::App for SecureApp {
-    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
-        self.receive_worker_messages();
-        if self.scanning() {
-            context.request_repaint_after(std::time::Duration::from_millis(100));
+    fn receive_messages(&mut self) {
+        while let Ok(message) = self.receiver.try_recv() {
+            self.apply_message(message);
         }
     }
 
-    #[allow(clippy::too_many_lines)]
-    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let context = root_ui.ctx().clone();
+    fn keyboard_shortcuts(&mut self, context: &egui::Context) {
+        if context.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, egui::Key::R)) {
+            self.start_scan();
+        }
+        if context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.cancel_scan();
+        }
+        for (key, page) in [
+            (egui::Key::Num1, Page::Overview),
+            (egui::Key::Num2, Page::Findings),
+            (egui::Key::Num3, Page::Architecture),
+            (egui::Key::Num4, Page::Dependencies),
+            (egui::Key::Num5, Page::History),
+            (egui::Key::Num6, Page::Settings),
+        ] {
+            if context.input_mut(|input| input.consume_key(egui::Modifiers::CTRL, key)) {
+                self.page = page;
+            }
+        }
+    }
+
+    fn toolbar(&mut self, root_ui: &mut egui::Ui) {
         egui::Panel::top("toolbar").show(root_ui, |ui| {
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.heading("Secure Engine");
                 ui.separator();
                 ui.label("Repository");
                 ui.add_enabled(
-                    !self.scanning(),
-                    egui::TextEdit::singleline(&mut self.repository_input).desired_width(360.0),
+                    !self.scanning,
+                    egui::TextEdit::singleline(&mut self.repository_input).desired_width(330.0),
                 );
                 if ui
-                    .add_enabled(!self.scanning(), egui::Button::new("Scan"))
+                    .add_enabled(
+                        !self.scanning && !self.operation_busy,
+                        egui::Button::new("Browse…"),
+                    )
                     .clicked()
                 {
-                    self.start_scan(&context);
+                    self.pick_repository();
                 }
                 if ui
-                    .add_enabled(self.scanning(), egui::Button::new("Cancel"))
+                    .add_enabled(!self.scanning, egui::Button::new("Start"))
+                    .clicked()
+                {
+                    self.start_scan();
+                }
+                if ui
+                    .add_enabled(self.scanning, egui::Button::new("Cancel"))
                     .clicked()
                 {
                     self.cancel_scan();
                 }
+                if ui
+                    .add_enabled(
+                        !self.scanning && self.report.is_some(),
+                        egui::Button::new("Rescan"),
+                    )
+                    .clicked()
+                {
+                    self.start_scan();
+                }
+                if ui
+                    .add_enabled(
+                        !self.scanning && self.report.is_some(),
+                        egui::Button::new("Clear"),
+                    )
+                    .clicked()
+                {
+                    self.clear_result();
+                }
             });
-        });
-
-        egui::CentralPanel::default().show(root_ui, |ui| {
-            ui.heading("Deterministic security evidence");
-            ui.label(
-                "Phase 3 connects local syntax evidence into bounded graph paths and high-confidence rules.",
-            );
-            let controls_enabled = !self.scanning();
-            ui.collapsing("Inventory controls", |ui| {
-                ui.add_enabled_ui(controls_enabled, |ui| {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.checkbox(&mut self.controls.include_hidden, "Hidden files");
-                        ui.checkbox(
-                            &mut self.controls.respect_ignore_files,
-                            "Honor ignore files",
-                        );
-                        ui.checkbox(&mut self.controls.include_generated, "Generated/build");
-                        ui.checkbox(&mut self.controls.include_vendor, "Vendor dependencies");
-                        ui.checkbox(
-                            &mut self.controls.include_nested_repositories,
-                            "Nested repositories",
-                        );
-                        ui.checkbox(&mut self.controls.parse_cache_enabled, "Parse cache");
-                        ui.checkbox(
-                            &mut self.controls.clear_cache_before_scan,
-                            "Clear cache before scan",
-                        );
-                    });
-                    egui::Grid::new("resource-controls")
-                        .num_columns(4)
-                        .show(ui, |ui| {
-                            ui.label("Max files");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_files)
-                                    .range(1..=10_000_000),
-                            );
-                            ui.label("Max file bytes");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_file_bytes)
-                                    .range(1..=1024_u64 * 1024 * 1024),
-                            );
-                            ui.end_row();
-                            ui.label("Max total bytes");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_total_bytes)
-                                    .range(1..=16_u64 * 1024 * 1024 * 1024 * 1024),
-                            );
-                            ui.label("Max errors");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_errors).range(1..=1000),
-                            );
-                            ui.end_row();
-                            ui.label("Max cache bytes");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_cache_bytes)
-                                    .range(1..=16_u64 * 1024 * 1024 * 1024),
-                            );
-                            ui.label("Parser diagnostics");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_parser_diagnostics)
-                                    .range(1..=100_000),
-                            );
-                            ui.end_row();
-                            ui.label("Facts per file");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_facts_per_file)
-                                    .range(1..=100_000),
-                            );
-                            ui.label("Total facts");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_total_facts)
-                                    .range(1..=10_000_000),
-                            );
-                            ui.end_row();
-                            ui.label("Graph nodes");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_graph_nodes)
-                                    .range(1..=10_000_000),
-                            );
-                            ui.label("Graph edges");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_graph_edges)
-                                    .range(1..=20_000_000),
-                            );
-                            ui.end_row();
-                            ui.label("Call traversal depth");
-                            ui.add(
-                                egui::DragValue::new(
-                                    &mut self.controls.max_interprocedural_depth,
-                                )
-                                .range(1..=32),
-                            );
-                            ui.label("Max findings");
-                            ui.add(
-                                egui::DragValue::new(&mut self.controls.max_findings)
-                                    .range(1..=1_000_000),
-                            );
-                            ui.end_row();
-                            ui.label("Max depth (0 = unlimited)");
-                            ui.add(egui::DragValue::new(&mut self.max_depth_input).range(0..=1024));
-                            ui.end_row();
-                        });
-                    ui.horizontal(|ui| {
-                        ui.label("Cache directory (optional)");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.cache_directory_input)
-                                .desired_width(420.0),
-                        );
-                    });
-                    ui.columns(2, |columns| {
-                        columns[0].label("Include globs — one per line");
-                        columns[0].add(
-                            egui::TextEdit::multiline(&mut self.include_patterns_input)
-                                .desired_rows(2),
-                        );
-                        columns[1].label("Exclude globs — one per line");
-                        columns[1].add(
-                            egui::TextEdit::multiline(&mut self.exclude_patterns_input)
-                                .desired_rows(2),
-                        );
-                    });
-                });
-            });
-            ui.add_space(8.0);
-            if let Some(report) = &self.report {
-                egui::Grid::new("summary").striped(true).show(ui, |ui| {
-                    summary_row(ui, "Repository", &report.repository.name);
-                    summary_row(ui, "Repository kind", &report.repository.repository_kind);
-                    summary_row(ui, "Files", &report.scan.files_scanned.to_string());
-                    summary_row(
-                        ui,
-                        "Candidate files",
-                        &report.inventory.candidate_files.to_string(),
-                    );
-                    summary_row(
-                        ui,
-                        "Bytes scanned",
-                        &report.inventory.bytes_scanned.to_string(),
-                    );
-                    summary_row(
-                        ui,
-                        "Text / binary",
-                        &format!(
-                            "{} / {}",
-                            report.inventory.text_files, report.inventory.binary_files
-                        ),
-                    );
-                    summary_row(
-                        ui,
-                        "Generated / vendor",
-                        &format!(
-                            "{} / {}",
-                            report.inventory.generated_files, report.inventory.vendor_files
-                        ),
-                    );
-                    summary_row(
-                        ui,
-                        "Symlinks skipped",
-                        &report.inventory.symlinks_skipped.to_string(),
-                    );
-                    summary_row(
-                        ui,
-                        "Nested repositories skipped",
-                        &report.inventory.nested_repositories_skipped.to_string(),
-                    );
-                    summary_row(
-                        ui,
-                        "Limits reached",
-                        &format!(
-                            "files: {}, bytes: {}",
-                            report.inventory.hit_file_limit, report.inventory.hit_total_byte_limit
-                        ),
-                    );
-                    summary_row(ui, "Languages", &report.languages.len().to_string());
-                    summary_row(ui, "Manifests", &report.manifests.len().to_string());
-                    summary_row(ui, "Framework hints", &report.frameworks.len().to_string());
-                    summary_row(ui, "Entry points", &report.entry_points.len().to_string());
-                    summary_row(ui, "Capabilities", &report.capabilities.len().to_string());
-                    summary_row(
-                        ui,
-                        "Trust boundaries",
-                        &report.trust_boundaries.len().to_string(),
-                    );
-                    summary_row(ui, "Findings", &report.findings.len().to_string());
-                    summary_row(
-                        ui,
-                        "Graph nodes / edges",
-                        &format!("{} / {}", report.analysis.nodes, report.analysis.edges),
-                    );
-                    summary_row(
-                        ui,
-                        "Candidate / suppressed paths",
-                        &format!(
-                            "{} / {}",
-                            report.analysis.candidate_paths, report.analysis.findings_suppressed
-                        ),
-                    );
-                    summary_row(
-                        ui,
-                        "Parsed files",
-                        &format!(
-                            "{} / {}",
-                            report.parsing.files_parsed, report.parsing.files_eligible
-                        ),
-                    );
-                    summary_row(ui, "Normalized facts", &report.facts.len().to_string());
-                    summary_row(
-                        ui,
-                        "Parser diagnostics",
-                        &report.parser_diagnostics.len().to_string(),
-                    );
-                    summary_row(
-                        ui,
-                        "Cache hits / misses / writes",
-                        &format!(
-                            "{} / {} / {}",
-                            report.parsing.cache_hits,
-                            report.parsing.cache_misses,
-                            report.parsing.cache_writes
-                        ),
-                    );
-                    summary_row(ui, "Skipped files", &report.skipped_files.len().to_string());
-                    summary_row(ui, "Bounded errors", &report.errors.len().to_string());
-                    summary_row(ui, "Schema", &report.schema_version);
-                    summary_row(ui, "Report fingerprint", &report.report_fingerprint);
-                });
-                ui.add_space(12.0);
-                ui.collapsing("Detected languages", |ui| {
-                    for language in &report.languages {
-                        ui.label(format!(
-                            "{} — {} files, {} bytes",
-                            language.name, language.file_count, language.bytes
-                        ));
-                    }
-                });
-                ui.collapsing("Capabilities and trust boundaries", |ui| {
-                    for capability in &report.capabilities {
-                        ui.label(format!(
-                            "{} — {} ({})",
-                            capability.capability, capability.reason, capability.evidence.path
-                        ));
-                    }
-                    for boundary in &report.trust_boundaries {
-                        ui.label(format!(
-                            "{} — {} ({})",
-                            boundary.kind, boundary.description, boundary.evidence.path
-                        ));
-                    }
-                });
-                ui.collapsing("Analysis limitations", |ui| {
-                    for limitation in &report.limitations {
-                        ui.label(format!("{} — {}", limitation.code, limitation.message));
-                    }
-                });
-                ui.collapsing("Findings and evidence paths", |ui| {
-                    for finding in &report.findings {
-                        ui.strong(format!(
-                            "{} — {} [{} / {}]",
-                            finding.rule_id,
-                            finding.title,
-                            finding.severity,
-                            finding.confidence
-                        ));
-                        ui.label(format!("Finding ID: {}", finding.finding_id));
-                        for (index, step) in finding.evidence_path.iter().enumerate() {
-                            ui.label(format!(
-                                "{}. {} — {}:{}:{}",
-                                index.saturating_add(1),
-                                step.kind,
-                                step.location.path,
-                                step.location.span.start_line,
-                                step.location.span.start_column
-                            ));
+            if !self.recent_projects.is_empty() {
+                ui.horizontal(|ui| {
+                    ui.weak("Recent:");
+                    for project in self.recent_projects.clone().into_iter().take(3) {
+                        let label = project
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or("repository");
+                        if ui
+                            .add_enabled(!self.scanning, egui::Button::new(label))
+                            .clicked()
+                        {
+                            self.repository_input = project.display().to_string();
                         }
-                        ui.separator();
-                    }
-                    for diagnostic in &report.suppression_diagnostics {
-                        ui.label(format!(
-                            "Suppression {} — {}",
-                            diagnostic.code, diagnostic.message
-                        ));
                     }
                 });
-                ui.collapsing("Normalized syntax facts", |ui| {
-                    for fact in &report.facts {
-                        ui.label(format!(
-                            "{} — {} ({})",
-                            fact.kind,
-                            fact.name.as_deref().unwrap_or("unnamed"),
-                            fact.location.path
-                        ));
-                    }
-                });
-                ui.collapsing("Parser coverage and diagnostics", |ui| {
-                    for coverage in &report.parser_coverage {
-                        ui.label(format!(
-                            "{} — {} parsed, {} facts, {} files with diagnostics",
-                            coverage.parser_mode,
-                            coverage.files_parsed,
-                            coverage.facts_extracted,
-                            coverage.files_with_diagnostics
-                        ));
-                    }
-                    for diagnostic in &report.parser_diagnostics {
-                        ui.label(format!(
-                            "{} — {} ({})",
-                            diagnostic.code, diagnostic.message, diagnostic.location.path
-                        ));
-                    }
-                });
-                ui.collapsing("Exclusions and skipped inputs", |ui| {
-                    for exclusion in &report.exclusions {
-                        ui.label(format!("{} — {}", exclusion.reason, exclusion.count));
-                    }
-                    for skipped in &report.skipped_files {
-                        ui.label(format!("{} — {}", skipped.path, skipped.reason));
-                    }
-                });
-            } else {
-                ui.weak("No completed report yet.");
             }
         });
+    }
 
+    fn navigation(&mut self, root_ui: &mut egui::Ui) {
+        egui::Panel::left("navigation")
+            .resizable(false)
+            .default_size(150.0)
+            .show(root_ui, |ui| {
+                ui.strong("Workspace");
+                ui.add_space(6.0);
+                for (page, label, shortcut) in [
+                    (Page::Overview, "Overview", "Ctrl+1"),
+                    (Page::Findings, "Findings", "Ctrl+2"),
+                    (Page::Architecture, "Architecture", "Ctrl+3"),
+                    (Page::Dependencies, "Dependencies", "Ctrl+4"),
+                    (Page::History, "Scan History", "Ctrl+5"),
+                    (Page::Settings, "Settings", "Ctrl+6"),
+                ] {
+                    if ui
+                        .selectable_label(self.page == page, format!("{label}  {shortcut}"))
+                        .clicked()
+                    {
+                        self.page = page;
+                    }
+                }
+                ui.separator();
+                ui.weak("Ctrl+R: rescan");
+                ui.weak("Esc: cancel");
+            });
+    }
+
+    fn central(&mut self, root_ui: &mut egui::Ui) {
+        egui::CentralPanel::default().show(root_ui, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| match self.page {
+                Page::Overview => self.overview(ui),
+                Page::Findings => self.findings(ui),
+                Page::Architecture => self.architecture(ui),
+                Page::Dependencies => self.dependencies(ui),
+                Page::History => self.history(ui),
+                Page::Settings => self.settings(ui),
+            });
+        });
+    }
+
+    fn overview(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Overview");
+        if self.scanning {
+            ui.spinner();
+            ui.label("A typed background scan is in progress. The interface remains responsive.");
+        }
+        let Some(report) = self.report.clone() else {
+            ui.add_space(16.0);
+            ui.weak(match self.stage.as_str() {
+                "cancelled" => "The last scan was cancelled; no partial result was retained.",
+                "error" => "The last scan failed. Review the status message below.",
+                _ => "No completed scan. Select a committed fixture or synthetic repository and press Start.",
+            });
+            return;
+        };
+        egui::Grid::new("overview-summary")
+            .striped(true)
+            .show(ui, |ui| {
+                summary_row(ui, "Repository", &report.repository.name);
+                summary_row(ui, "Files", &report.scan.files_scanned.to_string());
+                summary_row(ui, "Facts", &report.facts.len().to_string());
+                summary_row(
+                    ui,
+                    "Graph nodes / edges",
+                    &format!("{} / {}", report.analysis.nodes, report.analysis.edges),
+                );
+                summary_row(
+                    ui,
+                    "Rules evaluated",
+                    &report.analysis.rules_evaluated.to_string(),
+                );
+                summary_row(ui, "Findings", &report.findings.len().to_string());
+                summary_row(
+                    ui,
+                    "Cache hits / misses",
+                    &format!(
+                        "{} / {}",
+                        report.parsing.cache_hits, report.parsing.cache_misses
+                    ),
+                );
+                summary_row(ui, "Duration", &format!("{} ms", report.scan.duration_ms));
+                summary_row(ui, "Warnings", &report.parser_diagnostics.len().to_string());
+                summary_row(ui, "Bounded errors", &report.errors.len().to_string());
+                summary_row(ui, "Fingerprint", &report.report_fingerprint);
+            });
+        ui.add_space(10.0);
+        if report.findings.is_empty() {
+            ui.strong("No findings in this completed scan.");
+        } else {
+            ui.label(format!(
+                "{} active findings are ready for inspection.",
+                report.findings.len()
+            ));
+            if ui.button("Open findings").clicked() {
+                self.page = Page::Findings;
+            }
+        }
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .add_enabled(!self.operation_busy, egui::Button::new("Export JSON…"))
+                .clicked()
+            {
+                self.export_report(ExportFormat::SecureJson);
+            }
+            if ui
+                .add_enabled(!self.operation_busy, egui::Button::new("Export SARIF…"))
+                .clicked()
+            {
+                self.export_report(ExportFormat::Sarif);
+            }
+            if ui
+                .add_enabled(!self.operation_busy, egui::Button::new("Create baseline…"))
+                .clicked()
+            {
+                self.create_baseline_file();
+            }
+            if ui
+                .add_enabled(!self.operation_busy, egui::Button::new("Compare baseline…"))
+                .clicked()
+            {
+                self.compare_baseline_file();
+            }
+        });
+        if let Some(comparison) = &self.comparison {
+            ui.label(format!(
+                "Baseline comparison — new: {}, changed: {}, resolved: {}, unchanged: {}",
+                comparison.new.len(),
+                comparison.changed.len(),
+                comparison.resolved.len(),
+                comparison.unchanged.len()
+            ));
+        }
+        if self.baseline.is_some() {
+            ui.weak("A deterministic baseline is loaded for this session.");
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn findings(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Findings");
+        let Some(report) = self.report.clone() else {
+            ui.weak("Complete or reopen a scan to inspect findings.");
+            return;
+        };
+        ui.horizontal_wrapped(|ui| {
+            ui.label("Search");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.finding_filter.search).desired_width(160.0),
+            );
+            for (label, value) in [
+                ("Severity", &mut self.finding_filter.severity),
+                ("Confidence", &mut self.finding_filter.confidence),
+                ("Rule", &mut self.finding_filter.rule),
+                ("File", &mut self.finding_filter.file),
+                ("Category", &mut self.finding_filter.category),
+            ] {
+                ui.label(label);
+                ui.add(egui::TextEdit::singleline(value).desired_width(90.0));
+            }
+        });
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_label("Suppression")
+                .selected_text(format!("{:?}", self.finding_filter.suppression))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.finding_filter.suppression,
+                        SuppressionFilter::Any,
+                        "Any",
+                    );
+                    ui.selectable_value(
+                        &mut self.finding_filter.suppression,
+                        SuppressionFilter::Active,
+                        "Active",
+                    );
+                    ui.selectable_value(
+                        &mut self.finding_filter.suppression,
+                        SuppressionFilter::Suppressed,
+                        "Suppressed diagnostics",
+                    );
+                });
+            egui::ComboBox::from_label("Sort")
+                .selected_text(format!("{:?}", self.finding_sort))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.finding_sort, FindingSort::Severity, "Severity");
+                    ui.selectable_value(
+                        &mut self.finding_sort,
+                        FindingSort::Confidence,
+                        "Confidence",
+                    );
+                    ui.selectable_value(&mut self.finding_sort, FindingSort::Rule, "Rule");
+                    ui.selectable_value(&mut self.finding_sort, FindingSort::File, "File");
+                    ui.selectable_value(&mut self.finding_sort, FindingSort::Category, "Category");
+                });
+        });
+        let rows = filter_findings(&report, &self.finding_filter, self.finding_sort)
+            .into_iter()
+            .map(|finding| {
+                (
+                    finding.finding_id.clone(),
+                    finding.rule_id.clone(),
+                    finding.severity.clone(),
+                    finding.confidence.clone(),
+                    finding.category.clone(),
+                    finding
+                        .sink
+                        .as_ref()
+                        .map_or("unknown", |sink| sink.path.as_str())
+                        .to_owned(),
+                    finding.title.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        ui.separator();
+        egui::Grid::new("finding-table")
+            .striped(true)
+            .num_columns(7)
+            .show(ui, |ui| {
+                for heading in [
+                    "Rule",
+                    "Severity",
+                    "Confidence",
+                    "Category",
+                    "File",
+                    "Title",
+                    "",
+                ] {
+                    ui.strong(heading);
+                }
+                ui.end_row();
+                for (id, rule, severity, confidence, category, file, title) in rows {
+                    ui.label(rule);
+                    ui.label(severity);
+                    ui.label(confidence);
+                    ui.label(category);
+                    ui.label(file);
+                    ui.label(title);
+                    if ui
+                        .selectable_label(self.selected_finding.as_deref() == Some(&id), "Inspect")
+                        .clicked()
+                    {
+                        self.selected_finding = Some(id);
+                        self.source_preview = None;
+                    }
+                    ui.end_row();
+                }
+            });
+        if self.finding_filter.suppression == SuppressionFilter::Suppressed {
+            ui.weak("Suppressed findings are not retained as active results; audit diagnostics are shown below.");
+        }
+        let selected = self
+            .selected_finding
+            .as_deref()
+            .and_then(|id| {
+                report
+                    .findings
+                    .iter()
+                    .find(|finding| finding.finding_id == id)
+            })
+            .cloned();
+        if let Some(finding) = selected {
+            ui.separator();
+            ui.heading(format!("{} — {}", finding.rule_id, finding.title));
+            detail(ui, "Invariant", &finding.invariant);
+            detail(ui, "Impact", &finding.impact);
+            detail(ui, "Prerequisites", &finding.prerequisites.join("; "));
+            detail(ui, "Remediation", &finding.remediation);
+            detail(ui, "Verification", &finding.verification_state);
+            detail(ui, "Limitations", &finding.limitations.join("; "));
+            ui.strong("Ordered source-to-sink path");
+            for (index, step) in finding.evidence_path.iter().enumerate() {
+                ui.label(format!(
+                    "{}. {} — {}:{}:{}",
+                    index.saturating_add(1),
+                    step.kind,
+                    step.location.path,
+                    step.location.span.start_line,
+                    step.location.span.start_column
+                ));
+            }
+            if let Some(sink) = finding.sink.clone() {
+                if ui
+                    .add_enabled(
+                        !self.source_loading,
+                        egui::Button::new("Load safe source preview"),
+                    )
+                    .clicked()
+                {
+                    self.load_source(sink.clone());
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Suppression reason");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.suppression_reason)
+                            .desired_width(360.0),
+                    );
+                    let valid_reason = self.suppression_reason.trim().chars().count() >= 8;
+                    if ui
+                        .add_enabled(
+                            valid_reason && !self.scanning,
+                            egui::Button::new("Suppress exactly and rescan"),
+                        )
+                        .clicked()
+                    {
+                        self.controls.suppressions.push(Suppression {
+                            rule_id: finding.rule_id.clone(),
+                            path: sink.path,
+                            start_byte: sink.span.start_byte,
+                            reason: self.suppression_reason.trim().to_owned(),
+                        });
+                        self.suppression_reason.clear();
+                        self.start_scan();
+                    }
+                });
+            }
+            if self.source_loading {
+                ui.spinner();
+            }
+            if let Some(preview) = &self.source_preview {
+                ui.strong(format!(
+                    "{} lines {}–{} (highlight {}:{}–{}:{})",
+                    preview.path,
+                    preview.first_line,
+                    preview.last_line,
+                    preview.highlight_start_line,
+                    preview.highlight_start_column,
+                    preview.highlight_end_line,
+                    preview.highlight_end_column
+                ));
+                let mut text = preview.text.clone();
+                ui.add(
+                    egui::TextEdit::multiline(&mut text)
+                        .code_editor()
+                        .interactive(false)
+                        .desired_rows(12),
+                );
+            }
+        }
+        if !report.suppression_diagnostics.is_empty() {
+            ui.separator();
+            ui.strong("Suppression audit");
+            for diagnostic in &report.suppression_diagnostics {
+                ui.label(format!(
+                    "{} / {} — {}",
+                    diagnostic.rule_id, diagnostic.code, diagnostic.message
+                ));
+            }
+        }
+    }
+
+    fn architecture(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Architecture");
+        let Some(report) = self.report.as_ref() else {
+            ui.weak("Complete or reopen a scan to inspect the evidence graph.");
+            return;
+        };
+        ui.label(format!(
+            "{} nodes · {} edges",
+            report.graph.nodes.len(),
+            report.graph.edges.len()
+        ));
+        let relevant = self.selected_finding.as_deref().and_then(|id| {
+            report
+                .findings
+                .iter()
+                .find(|finding| finding.finding_id == id)
+        });
+        let node_ids = relevant.map(|finding| {
+            finding
+                .evidence_path
+                .iter()
+                .map(|step| step.node_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+        });
+        ui.columns(2, |columns| {
+            columns[0].strong("Relevant nodes");
+            for node in report
+                .graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node_ids
+                        .as_ref()
+                        .is_none_or(|ids| ids.contains(node.node_id.as_str()))
+                })
+                .take(250)
+            {
+                columns[0].label(format!(
+                    "{} · {} · {}:{}",
+                    node.kind,
+                    node.name.as_deref().unwrap_or("unnamed"),
+                    node.location.path,
+                    node.location.span.start_line
+                ));
+            }
+            columns[1].strong("Relevant edges");
+            for edge in report
+                .graph
+                .edges
+                .iter()
+                .filter(|edge| {
+                    node_ids.as_ref().is_none_or(|ids| {
+                        ids.contains(edge.from_node.as_str()) || ids.contains(edge.to_node.as_str())
+                    })
+                })
+                .take(400)
+            {
+                columns[1].label(format!(
+                    "{} · {} → {}",
+                    edge.kind, edge.from_node, edge.to_node
+                ));
+            }
+        });
+        for limitation in &report.limitations {
+            ui.weak(format!("{} — {}", limitation.code, limitation.message));
+        }
+    }
+
+    fn dependencies(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Dependencies and manifests");
+        let Some(report) = self.report.as_ref() else {
+            ui.weak("Complete or reopen a scan to inspect dependency evidence.");
+            return;
+        };
+        ui.strong("Languages");
+        for language in &report.languages {
+            ui.label(format!(
+                "{} — {} files, {} bytes",
+                language.name, language.file_count, language.bytes
+            ));
+        }
+        ui.separator();
+        ui.strong("Manifests");
+        for manifest in &report.manifests {
+            ui.label(format!("{} — {}", manifest.kind, manifest.location.path));
+        }
+        ui.separator();
+        ui.strong("Framework evidence");
+        for framework in &report.frameworks {
+            ui.label(format!("{} — {}", framework.name, framework.evidence.path));
+        }
+        ui.separator();
+        ui.strong("Capabilities and trust boundaries");
+        for capability in &report.capabilities {
+            ui.label(format!(
+                "{} — {} ({})",
+                capability.capability, capability.reason, capability.evidence.path
+            ));
+        }
+        for boundary in &report.trust_boundaries {
+            ui.label(format!(
+                "{} — {} ({})",
+                boundary.kind, boundary.description, boundary.evidence.path
+            ));
+        }
+    }
+
+    fn history(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Scan History");
+        ui.horizontal(|ui| {
+            if ui.button("Refresh").clicked() {
+                self.refresh_history();
+            }
+            ui.label(format!("Retention: {}", self.history_retention));
+            if self.history_recovered > 0 {
+                ui.label(format!(
+                    "Recovered {} corrupt entries",
+                    self.history_recovered
+                ));
+            }
+        });
+        if self.history.is_empty() {
+            ui.weak("No completed local scans are stored.");
+            return;
+        }
+        for scan in self.history.clone() {
+            ui.group(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.strong(&scan.display_name);
+                    ui.label(format!(
+                        "{} · {} findings · {}",
+                        scan.saved_at, scan.findings, scan.scan_id
+                    ));
+                    ui.label(if scan.repository_available {
+                        "repository available"
+                    } else {
+                        "repository moved or missing"
+                    });
+                    if ui
+                        .add_enabled(!self.operation_busy, egui::Button::new("Reopen"))
+                        .clicked()
+                    {
+                        self.open_history(scan.scan_id.clone());
+                    }
+                    if ui
+                        .add_enabled(
+                            !self.operation_busy && self.report.is_some(),
+                            egui::Button::new("Compare"),
+                        )
+                        .clicked()
+                    {
+                        self.compare_history(scan.scan_id.clone());
+                    }
+                    if ui
+                        .add_enabled(!self.operation_busy, egui::Button::new("Delete"))
+                        .clicked()
+                    {
+                        self.delete_history(scan.scan_id.clone());
+                    }
+                });
+            });
+        }
+        if let Some(comparison) = &self.comparison {
+            ui.separator();
+            ui.strong(format!(
+                "Comparison: {} new, {} changed, {} resolved, {} unchanged",
+                comparison.new.len(),
+                comparison.changed.len(),
+                comparison.resolved.len(),
+                comparison.unchanged.len()
+            ));
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn settings(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Settings");
+        ui.horizontal(|ui| {
+            ui.label("Text scale");
+            if ui
+                .add(egui::Slider::new(&mut self.text_scale, 0.8..=1.6))
+                .changed()
+            {
+                self.context.set_pixels_per_point(self.text_scale);
+            }
+            ui.label("History retention");
+            if ui
+                .add(egui::DragValue::new(&mut self.history_retention).range(1..=10_000))
+                .changed()
+            {
+                self.refresh_history();
+            }
+        });
+        ui.label(format!(
+            "Private history directory: {}",
+            self.history_directory.display()
+        ));
+        ui.separator();
+        ui.heading("Scan configuration");
+        ui.add_enabled_ui(!self.scanning, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(&mut self.controls.include_hidden, "Hidden files");
+                ui.checkbox(
+                    &mut self.controls.respect_ignore_files,
+                    "Honor ignore files",
+                );
+                ui.checkbox(&mut self.controls.include_generated, "Generated/build");
+                ui.checkbox(&mut self.controls.include_vendor, "Vendor dependencies");
+                ui.checkbox(
+                    &mut self.controls.include_nested_repositories,
+                    "Nested repositories",
+                );
+                ui.checkbox(&mut self.controls.parse_cache_enabled, "Parse cache");
+                ui.checkbox(
+                    &mut self.controls.clear_cache_before_scan,
+                    "Clear cache before scan",
+                );
+            });
+            egui::Grid::new("resource-controls")
+                .num_columns(4)
+                .striped(true)
+                .show(ui, |ui| {
+                    number_control(
+                        ui,
+                        "Max files",
+                        &mut self.controls.max_files,
+                        1..=10_000_000,
+                    );
+                    ui.label("Max file bytes");
+                    ui.add(
+                        egui::DragValue::new(&mut self.controls.max_file_bytes)
+                            .range(1..=1024_u64 * 1024 * 1024),
+                    );
+                    ui.end_row();
+                    ui.label("Max total bytes");
+                    ui.add(
+                        egui::DragValue::new(&mut self.controls.max_total_bytes)
+                            .range(1..=16_u64 * 1024 * 1024 * 1024 * 1024),
+                    );
+                    number_control(ui, "Max errors", &mut self.controls.max_errors, 1..=1000);
+                    ui.end_row();
+                    ui.label("Max cache bytes");
+                    ui.add(
+                        egui::DragValue::new(&mut self.controls.max_cache_bytes)
+                            .range(1..=16_u64 * 1024 * 1024 * 1024),
+                    );
+                    number_control(
+                        ui,
+                        "Parser diagnostics",
+                        &mut self.controls.max_parser_diagnostics,
+                        1..=100_000,
+                    );
+                    ui.end_row();
+                    number_control(
+                        ui,
+                        "Facts per file",
+                        &mut self.controls.max_facts_per_file,
+                        1..=100_000,
+                    );
+                    number_control(
+                        ui,
+                        "Total facts",
+                        &mut self.controls.max_total_facts,
+                        1..=10_000_000,
+                    );
+                    ui.end_row();
+                    number_control(
+                        ui,
+                        "Graph nodes",
+                        &mut self.controls.max_graph_nodes,
+                        1..=10_000_000,
+                    );
+                    number_control(
+                        ui,
+                        "Graph edges",
+                        &mut self.controls.max_graph_edges,
+                        1..=20_000_000,
+                    );
+                    ui.end_row();
+                    number_control(
+                        ui,
+                        "Call depth",
+                        &mut self.controls.max_interprocedural_depth,
+                        1..=32,
+                    );
+                    number_control(
+                        ui,
+                        "Max findings",
+                        &mut self.controls.max_findings,
+                        1..=1_000_000,
+                    );
+                    ui.end_row();
+                    number_control(
+                        ui,
+                        "Max depth (0 unlimited)",
+                        &mut self.max_depth_input,
+                        0..=1024,
+                    );
+                    ui.end_row();
+                });
+            ui.horizontal(|ui| {
+                ui.label("Cache directory (optional)");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.cache_directory_input)
+                        .desired_width(420.0),
+                );
+            });
+            ui.columns(2, |columns| {
+                columns[0].label("Include globs — one per line");
+                columns[0].add(
+                    egui::TextEdit::multiline(&mut self.include_patterns_input).desired_rows(3),
+                );
+                columns[1].label("Exclude globs — one per line");
+                columns[1].add(
+                    egui::TextEdit::multiline(&mut self.exclude_patterns_input).desired_rows(3),
+                );
+            });
+            ui.strong(format!(
+                "Exact suppressions: {}",
+                self.controls.suppressions.len()
+            ));
+            for suppression in &self.controls.suppressions {
+                ui.label(format!(
+                    "{} · {}:{} · {}",
+                    suppression.rule_id,
+                    suppression.path,
+                    suppression.start_byte,
+                    suppression.reason
+                ));
+            }
+        });
+    }
+
+    fn status_bar(&mut self, root_ui: &mut egui::Ui) {
         egui::Panel::bottom("status").show(root_ui, |ui| {
             ui.horizontal(|ui| {
-                ui.add(egui::ProgressBar::new(self.progress).desired_width(180.0));
+                ui.add(egui::ProgressBar::new(self.progress).desired_width(170.0));
+                ui.strong(format!("{}:", self.stage));
                 ui.label(&self.status);
             });
         });
+    }
+}
+
+impl eframe::App for SecureApp {
+    fn logic(&mut self, context: &egui::Context, _frame: &mut eframe::Frame) {
+        self.receive_messages();
+        self.keyboard_shortcuts(context);
+        if self.scanning || self.operation_busy || self.source_loading {
+            context.request_repaint_after(std::time::Duration::from_millis(80));
+        }
+    }
+
+    fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.toolbar(root_ui);
+        self.navigation(root_ui);
+        self.status_bar(root_ui);
+        self.central(root_ui);
     }
 }
 
@@ -572,14 +1423,53 @@ impl Drop for SecureApp {
     }
 }
 
-fn send_finished(sender: &Sender<WorkerMessage>, result: Result<ScanReport, ScanError>) {
-    let _ignored = sender.send(WorkerMessage::Finished(Box::new(result)));
+fn read_baseline_file(path: &Path) -> Result<Baseline, String> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "Baseline could not be read".to_owned())?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > 64 * 1024 * 1024
+    {
+        return Err("Baseline must be a regular file no larger than 64 MiB".into());
+    }
+    let bytes = fs::read(path).map_err(|_| "Baseline could not be read".to_owned())?;
+    let baseline = serde_json::from_slice::<Baseline>(&bytes)
+        .map_err(|_| "Baseline is malformed".to_owned())?;
+    secure_engine::validate_baseline(&baseline).map_err(|error| error.to_string())?;
+    Ok(baseline)
+}
+
+fn fraction(completed: usize, total: usize) -> f32 {
+    let basis_points = completed
+        .saturating_mul(10_000)
+        .checked_div(total)
+        .unwrap_or(0);
+    f32::from(u16::try_from(basis_points).unwrap_or(10_000)) / 10_000.0
+}
+
+fn remember_project(projects: &mut Vec<PathBuf>, project: PathBuf) {
+    projects.retain(|existing| existing != &project);
+    projects.insert(0, project);
+    projects.truncate(8);
 }
 
 fn summary_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.strong(label);
     ui.label(value);
     ui.end_row();
+}
+
+fn detail(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.strong(label);
+    ui.label(value);
+}
+
+fn number_control(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut usize,
+    range: std::ops::RangeInclusive<usize>,
+) {
+    ui.label(label);
+    ui.add(egui::DragValue::new(value).range(range));
 }
 
 fn parse_patterns(input: &str) -> Vec<String> {

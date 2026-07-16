@@ -10,7 +10,12 @@ repository.workspace = true
 [dependencies]
 crossbeam-channel.workspace = true
 eframe.workspace = true
+rfd.workspace = true
 secure-engine.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

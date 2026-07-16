@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Secure Engine
+Comment=Local deterministic security analysis
+Exec=secure-desktop
+Icon=dev.usesecure.SecureEngine
+Terminal=false
+Categories=Development;Security;
+Keywords=security;static analysis;SARIF;
+StartupNotify=true

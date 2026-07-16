@@ -14,9 +14,13 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 cargo deny check
+packaging/fedora/build-rpm.sh
+packaging/fedora/verify-rpm.sh
 ```
 
 `cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The scanner works offline after Cargo has fetched dependencies. It does not contact Secure Skill, a cloud service, or an AI provider.
+
+Phase 4 SARIF, baseline, history, source-containment, atomic-export, UI-boundary, RPM-content, and extracted-artifact checks are part of the workspace and Fedora gates. Packaging writes only below `target/phase4-rpm`; installation, upgrade, and removal are documented in `docs/fedora-packaging.md` and are not automated.
 
 To exercise the native shell, run `cargo run -p secure-desktop -- <repository>`. The scan runs outside the render thread. Closing the window or pressing Cancel signals the shared cancellation token.
 

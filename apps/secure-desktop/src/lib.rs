@@ -4,8 +4,9 @@ use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 
 use secure_engine::{
-    CacheControl, CancellationToken, ProgressEvent, ScanConfiguration, ScanError, ScanReport,
-    ScanRequest, Suppression,
+    CacheControl, CancellationToken, ExportError, ExportFormat, Finding, ProgressEvent,
+    ScanConfiguration, ScanError, ScanReport, ScanRequest, SourceLocation, SourcePreview,
+    SourcePreviewError, Suppression,
 };
 
 /// Native UI representation of shared inventory, parsing, graph, rule, and cache controls.
@@ -172,6 +173,174 @@ where
     })
 }
 
+/// Suppression-state choice exposed by the findings filter.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SuppressionFilter {
+    /// Include every finding visible in the completed report.
+    #[default]
+    Any,
+    /// Include active, unsuppressed findings.
+    Active,
+    /// Include suppressed findings. Completed reports retain only diagnostics, so this is empty.
+    Suppressed,
+}
+
+/// Pure, testable filters used by the native findings table.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct FindingFilter {
+    /// Case-insensitive severity match.
+    pub severity: String,
+    /// Case-insensitive confidence match.
+    pub confidence: String,
+    /// Case-insensitive rule identifier match.
+    pub rule: String,
+    /// Case-insensitive repository-relative file substring.
+    pub file: String,
+    /// Case-insensitive category match.
+    pub category: String,
+    /// Suppression state.
+    pub suppression: SuppressionFilter,
+    /// Case-insensitive search across key finding text.
+    pub search: String,
+}
+
+/// Stable finding-table sort modes.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FindingSort {
+    /// Highest impact severity first.
+    #[default]
+    Severity,
+    /// Highest confidence first.
+    Confidence,
+    /// Stable rule identifier.
+    Rule,
+    /// Repository-relative sink file.
+    File,
+    /// Security category.
+    Category,
+}
+
+/// Filters and sorts active findings without mutating the shared report.
+#[must_use]
+pub fn filter_findings<'a>(
+    report: &'a ScanReport,
+    filter: &FindingFilter,
+    sort: FindingSort,
+) -> Vec<&'a Finding> {
+    if filter.suppression == SuppressionFilter::Suppressed {
+        return Vec::new();
+    }
+    let mut findings = report
+        .findings
+        .iter()
+        .filter(|finding| {
+            text_matches(&finding.severity, &filter.severity)
+                && text_matches(&finding.confidence, &filter.confidence)
+                && text_matches(&finding.rule_id, &filter.rule)
+                && text_matches(&finding.category, &filter.category)
+                && text_matches(finding_file(finding), &filter.file)
+                && (filter.search.trim().is_empty()
+                    || [
+                        finding.rule_id.as_str(),
+                        finding.title.as_str(),
+                        finding.category.as_str(),
+                        finding.invariant.as_str(),
+                        finding_file(finding),
+                    ]
+                    .iter()
+                    .any(|value| text_matches(value, &filter.search)))
+        })
+        .collect::<Vec<_>>();
+    findings.sort_by(|left, right| {
+        let primary = match sort {
+            FindingSort::Severity => {
+                severity_rank(&right.severity).cmp(&severity_rank(&left.severity))
+            }
+            FindingSort::Confidence => {
+                confidence_rank(&right.confidence).cmp(&confidence_rank(&left.confidence))
+            }
+            FindingSort::Rule => left.rule_id.cmp(&right.rule_id),
+            FindingSort::File => finding_file(left).cmp(finding_file(right)),
+            FindingSort::Category => left.category.cmp(&right.category),
+        };
+        primary.then_with(|| left.finding_id.cmp(&right.finding_id))
+    });
+    findings
+}
+
+/// Starts a bounded source-preview load outside the render thread.
+pub fn spawn_source_preview_worker<C>(
+    repository: PathBuf,
+    location: SourceLocation,
+    cancellation: CancellationToken,
+    complete: C,
+) -> JoinHandle<()>
+where
+    C: FnOnce(Result<SourcePreview, SourcePreviewError>) + Send + 'static,
+{
+    thread::spawn(move || {
+        complete(secure_engine::load_source_preview(
+            &repository,
+            &location,
+            4,
+            1024 * 1024,
+            &cancellation,
+        ));
+    })
+}
+
+/// Starts one atomic report export outside the render thread.
+pub fn spawn_export_worker<C>(
+    report: ScanReport,
+    format: ExportFormat,
+    output: PathBuf,
+    cancellation: CancellationToken,
+    complete: C,
+) -> JoinHandle<()>
+where
+    C: FnOnce(Result<(), ExportError>) + Send + 'static,
+{
+    thread::spawn(move || {
+        complete(secure_engine::write_export(
+            &report,
+            format,
+            &output,
+            &cancellation,
+        ));
+    })
+}
+
+fn text_matches(value: &str, filter: &str) -> bool {
+    filter.trim().is_empty() || value.to_lowercase().contains(&filter.trim().to_lowercase())
+}
+
+fn finding_file(finding: &Finding) -> &str {
+    finding
+        .sink
+        .as_ref()
+        .or_else(|| finding.evidence.last())
+        .map_or("", |location| location.path.as_str())
+}
+
+fn severity_rank(value: &str) -> u8 {
+    match value {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
+fn confidence_rank(value: &str) -> u8 {
+    match value {
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -304,6 +473,102 @@ mod tests {
             desktop.suppression_diagnostics,
             core.suppression_diagnostics
         );
+        Ok(())
+    }
+
+    #[test]
+    fn finding_filters_and_sorts_are_stable_and_cover_every_dimension()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase3-rules");
+        let mut request = ScanRequest::new(repository);
+        request.configuration.parse_cache_enabled = false;
+        let report = inventory_repository(&request, &CancellationToken::new(), |_| {})?;
+        let expected = report
+            .findings
+            .iter()
+            .find(|finding| finding.rule_id == "SE1006")
+            .ok_or("missing SE1006 finding")?;
+        let filter = FindingFilter {
+            severity: expected.severity.clone(),
+            confidence: expected.confidence.clone(),
+            rule: expected.rule_id.clone(),
+            file: expected
+                .sink
+                .as_ref()
+                .map_or(String::new(), |sink| sink.path.clone()),
+            category: expected.category.clone(),
+            suppression: SuppressionFilter::Active,
+            search: expected.title.clone(),
+        };
+        let filtered = filter_findings(&report, &filter, FindingSort::File);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].rule_id, "SE1006");
+
+        let all = filter_findings(&report, &FindingFilter::default(), FindingSort::Severity);
+        assert_eq!(all.len(), 12);
+        assert_eq!(
+            all.first().map(|finding| finding.severity.as_str()),
+            Some("critical")
+        );
+        let suppressed = FindingFilter {
+            suppression: SuppressionFilter::Suppressed,
+            ..FindingFilter::default()
+        };
+        assert!(filter_findings(&report, &suppressed, FindingSort::Rule).is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn source_and_export_workers_run_outside_the_calling_thread()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/phase3-rules");
+        let mut request = ScanRequest::new(&repository);
+        request.configuration.parse_cache_enabled = false;
+        let report = inventory_repository(&request, &CancellationToken::new(), |_| {})?;
+        let location = report
+            .findings
+            .first()
+            .and_then(|finding| finding.sink.clone())
+            .ok_or("missing finding sink")?;
+        let expected_path = location.path.clone();
+        let caller = thread::current().id();
+        let (sender, receiver) = mpsc::channel();
+        let source_handle = spawn_source_preview_worker(
+            repository,
+            location,
+            CancellationToken::new(),
+            move |result| {
+                let _ignored = sender.send((thread::current().id(), result));
+            },
+        );
+        let (worker, preview) = receiver.recv()?;
+        assert_ne!(caller, worker);
+        let preview = preview?;
+        assert_eq!(preview.path, expected_path);
+        assert!(!preview.text.is_empty());
+        source_handle.join().map_err(|_| "source worker panicked")?;
+
+        let output_directory = tempfile::tempdir()?;
+        let output = output_directory.path().join("report.sarif");
+        let (sender, receiver) = mpsc::channel();
+        let export_handle = spawn_export_worker(
+            report,
+            ExportFormat::Sarif,
+            output.clone(),
+            CancellationToken::new(),
+            move |result| {
+                let _ignored = sender.send((thread::current().id(), result));
+            },
+        );
+        let (worker, result) = receiver.recv()?;
+        assert_ne!(caller, worker);
+        result?;
+        assert!(output.is_file());
+        export_handle.join().map_err(|_| "export worker panicked")?;
         Ok(())
     }
 }
