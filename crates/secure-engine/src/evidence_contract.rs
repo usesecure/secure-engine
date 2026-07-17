@@ -291,7 +291,10 @@ fn source_kind(rule_id: &str, identity: &str) -> EvidenceSourceKindV2 {
         EvidenceSourceKindV2::ProtectedResourceId
     } else if identity.contains("form-data") || identity.contains("server-action") {
         EvidenceSourceKindV2::FormDataValue
-    } else if identity.contains("body") || identity.contains("header") {
+    } else if identity.contains("body")
+        || identity.contains("header")
+        || identity.contains("cookie")
+    {
         EvidenceSourceKindV2::HttpBodyField
     } else {
         EvidenceSourceKindV2::HttpQueryValue

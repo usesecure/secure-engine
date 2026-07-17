@@ -1,6 +1,6 @@
 # Fedora RPM packaging
 
-The Fedora-first package contains `secure`, `secure-desktop`, desktop launcher metadata, AppStream metadata, a scalable icon, README, and MIT license. It is built entirely below `target/phase67-rpm`; neither build nor verification installs a system package or changes host configuration.
+The Fedora-first package contains `secure`, `secure-desktop`, desktop launcher metadata, AppStream metadata, a scalable icon, README, and MIT license. It is built entirely below `target/phase68-rpm`; neither build nor verification installs a system package or changes host configuration.
 
 ## Build and automated verification
 
@@ -14,7 +14,7 @@ The verifier compares the exact RPM file list, inspects package metadata, extrac
 ## Installation
 
 ```bash
-sudo dnf install ./target/phase67-rpm/rpmbuild/RPMS/x86_64/secure-engine-0.1.3-1.fc*.x86_64.rpm
+sudo dnf install ./target/phase68-rpm/rpmbuild/RPMS/x86_64/secure-engine-0.1.4-1.fc*.x86_64.rpm
 ```
 
 ## Upgrade

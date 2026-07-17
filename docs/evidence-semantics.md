@@ -4,6 +4,7 @@ Secure Engine 0.1.2 attaches an optional `semantic` object to security-relevant 
 
 Secure Engine 0.1.3 adds `semantics_version: secure-evidence-semantics-v2` and projects proven paths
 into public evidence contract v2. The original Phase 6.6 fields remain additive and compatible.
+Secure Engine 0.1.4 retains those public versions and refines only the internal proof construction.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
@@ -15,6 +16,6 @@ No pre-Phase-6.6 finding fingerprint is intentionally rewritten. Newly realizabl
 
 The analyzer resolves deterministic imports, destructuring and direct aliases through a bounded chain, propagates arguments and returns across uniquely resolved local helpers, and rejects paths whose recorded edges or local source order cannot be realized. A guard must dominate the sink, reject or prevent the unsafe branch, match the affected value, and establish the relevant policy. Blocklists, suffix/substring checks, userinfo checks, warning-only branches, unrelated-value checks, and authentication-only checks are not treated as proof.
 
-Filesystem policy requires lexical normalization plus a separator-aware root boundary. This does not prove symlink, junction, mount, race, or filesystem permission safety. Outbound and redirect policies require parsed destination components or a named exact allowlist and a safe fixed fallback. Fixed executable/argument-array invocation with shell processing disabled is not shell command injection; executable-specific argument injection remains unresolved.
+Filesystem policy requires lexical normalization plus a separator-aware root boundary. This does not prove symlink, junction, mount, race, or filesystem permission safety. Outbound and redirect policies require parsed destination components or structurally proven exact fixed membership and a safe fixed fallback. Fixed executable/argument-array invocation through supported APIs is no-shell by default unless an options object explicitly enables shell processing; executable-specific argument injection remains unresolved.
 
 The following remain explicitly bounded: dynamic imports, ambiguous aliases, callbacks, recursion, runtime middleware, reflection, generated code, framework-specific implicit authorization, OS/filesystem state, and analysis beyond configured graph, candidate-path, finding, and inter-procedural limits. Reports expose those uncertainties as limitations instead of inferring safety.

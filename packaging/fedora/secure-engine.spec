@@ -1,5 +1,5 @@
 Name:           secure-engine
-Version:        0.1.3
+Version:        0.1.4
 Release:        1%{?dist}
 Summary:        Local deterministic security analysis CLI and native desktop
 License:        MIT
@@ -45,6 +45,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 %{_datadir}/icons/hicolor/scalable/apps/dev.usesecure.SecureEngine.svg
 
 %changelog
+* Fri Jul 17 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.4-1
+- Phase 6.8 retired-evidence precision and evidence-path remediation
+
 * Thu Jul 16 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.3-1
 - Phase 6.7 public evidence-contract-v2 conformance and generalized remediation
 

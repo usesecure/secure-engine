@@ -6,6 +6,7 @@ pub(crate) const POLICY_FILESYSTEM: &str = "filesystem-path-confinement";
 pub(crate) const POLICY_OUTBOUND: &str = "outbound-destination-policy";
 pub(crate) const POLICY_REDIRECT: &str = "redirect-destination-policy";
 pub(crate) const POLICY_CODE: &str = "dynamic-code-control-data-separation";
+pub(crate) const POLICY_EXACT_ALLOWLIST: &str = "exact-value-allowlist";
 
 pub(crate) fn for_record(
     kind: &str,
@@ -201,6 +202,7 @@ fn guard_identity(value: &str) -> &'static str {
         };
     }
     match guard_policy(value) {
+        Some(POLICY_EXACT_ALLOWLIST) => "guard.exact-value-allowlist",
         Some(POLICY_FILESYSTEM) => "guard.filesystem-confinement",
         Some(POLICY_OUTBOUND) => "guard.outbound-destination",
         Some(POLICY_REDIRECT) => "guard.redirect-destination",
@@ -216,6 +218,7 @@ fn guard_policy(value: &str) -> Option<&'static str> {
         POLICY_COMMAND => Some(POLICY_COMMAND),
         POLICY_SQL => Some(POLICY_SQL),
         POLICY_CODE => Some(POLICY_CODE),
+        POLICY_EXACT_ALLOWLIST => Some(POLICY_EXACT_ALLOWLIST),
         _ => None,
     }
 }

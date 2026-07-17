@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Component, Path};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -93,6 +94,13 @@ struct CandidateTarget<'a> {
     node: &'a str,
     guards: Vec<String>,
     record: &'a ProgramRecord,
+}
+
+#[derive(Clone, Debug)]
+struct ImportBinding {
+    imported: String,
+    local: String,
+    module: String,
 }
 
 struct GraphBuilder {
@@ -411,6 +419,26 @@ pub(crate) fn analyze(
                 &right.record_id,
             ))
     });
+    let import_bindings = all_records
+        .iter()
+        .filter(|record| record.kind == "import-binding")
+        .filter_map(|record| {
+            Some((
+                record.location.path.clone(),
+                ImportBinding {
+                    imported: record.output.clone()?,
+                    local: record.name.clone()?,
+                    module: record.callee.clone()?,
+                },
+            ))
+        })
+        .fold(
+            BTreeMap::<String, Vec<ImportBinding>>::new(),
+            |mut bindings, (path, binding)| {
+                bindings.entry(path).or_default().push(binding);
+                bindings
+            },
+        );
     for record in &all_records {
         let node = builder.node_with_semantic(
             graph_kind_for_record(&record.kind, record.name.as_deref()),
@@ -459,6 +487,7 @@ pub(crate) fn analyze(
         &record_nodes,
         &function_nodes,
         &raw_functions,
+        &import_bindings,
         &mut builder,
     );
 
@@ -507,7 +536,7 @@ pub(crate) fn analyze(
         .filter(|record| matches!(record.kind.as_str(), "call" | "guard"))
         .filter_map(|record| {
             let callee = record.callee.as_deref()?;
-            let target = unique_function(callee, &raw_functions, &record.provenance)?;
+            let target = unique_function(callee, record, &raw_functions, &import_bindings)?;
             let policies = helper_guard_policies.get(target)?;
             Some(policies.iter().map(|policy| {
                 let mut propagated = (*record).clone();
@@ -523,7 +552,7 @@ pub(crate) fn analyze(
         let resolves_locally = record
             .callee
             .as_deref()
-            .and_then(|callee| unique_function(callee, &raw_functions, &record.provenance))
+            .and_then(|callee| unique_function(callee, record, &raw_functions, &import_bindings))
             .is_some();
         if !resolves_locally && let Some(function) = &record.function {
             guards.entry(function.clone()).or_default().push(record);
@@ -542,6 +571,7 @@ pub(crate) fn analyze(
         &handlers,
         &all_records,
         &raw_functions,
+        &import_bindings,
         &guards,
         &record_nodes,
         &function_nodes,
@@ -604,8 +634,13 @@ pub(crate) fn analyze(
                     }
                 }
                 "assignment" | "alias" | "transformation" => {
-                    let trace =
-                        trace_for_transformation(&snapshot, &function, record, &raw_functions);
+                    let trace = trace_for_transformation(
+                        &snapshot,
+                        &function,
+                        record,
+                        &raw_functions,
+                        &import_bindings,
+                    );
                     if let (Some(output), Some(trace)) = (&record.output, trace) {
                         let edge_kind = if matches!(record.kind.as_str(), "assignment" | "alias") {
                             "assignment"
@@ -659,6 +694,8 @@ pub(crate) fn analyze(
                     &snapshot,
                     &mut taints,
                     &raw_functions,
+                    &import_bindings,
+                    &helper_guard_policies,
                     &parameter_records,
                     &record_nodes,
                     &mut builder,
@@ -1129,7 +1166,8 @@ fn extract_record_for_node(
     match node.kind() {
         "member_expression" | "subscript_expression" => {
             if let Some(name) = expression_name(node, content)
-                && let Some(source_kind) = framework_member_source(function, &name)
+                && let Some(source_kind) =
+                    framework_member_source(function, &resolve_alias(&name, aliases))
                 && !nested_in_more_specific_source(node, content, function)
             {
                 records.push(record(
@@ -1145,10 +1183,17 @@ fn extract_record_for_node(
             }
         }
         "variable_declarator" => {
-            let output = node
-                .child_by_field_name("name")
-                .and_then(|item| expression_name(item, content));
+            let name_node = node.child_by_field_name("name");
+            let output = name_node.and_then(|item| expression_name(item, content));
             let value = node.child_by_field_name("value");
+            if let (Some(pattern), Some(value)) = (name_node, value)
+                && matches!(pattern.kind(), "object_pattern" | "array_pattern")
+            {
+                append_destructuring_records(
+                    path, content, pattern, value, function, provenance, aliases, records,
+                );
+                return;
+            }
             if let (Some(output), Some(value)) = (output, value) {
                 let callee =
                     call_callee(value, content).map(|callee| resolve_alias(&callee, aliases));
@@ -1205,12 +1250,12 @@ fn extract_record_for_node(
                 .and_then(|item| expression_name(item, content));
             let expression = node.utf8_text(content).unwrap_or_default();
             let source_inputs = value_names(node, content);
-            let source_kind = framework_call_source(
-                function,
-                raw_callee.as_deref().unwrap_or_default(),
-                expression,
-                &source_inputs,
-            );
+            let resolved_callee = raw_callee
+                .as_deref()
+                .map(|callee| resolve_alias(callee, aliases))
+                .unwrap_or_default();
+            let source_kind =
+                framework_call_source(function, &resolved_callee, expression, &source_inputs);
             if raw_callee.is_none() {
                 if let Some(source_kind) = source_kind
                     && let Some(output) = source_inputs.first()
@@ -1233,7 +1278,7 @@ fn extract_record_for_node(
             let inputs = argument_values(node, content);
             let mut sink = sink_kind(&callee);
             if sink == Some("process-execution")
-                && fixed_executable_with_shell_disabled(node, content, &callee)
+                && fixed_executable_without_shell(node, content, &callee)
             {
                 sink = Some("process-argument-execution");
             }
@@ -1322,12 +1367,12 @@ fn extract_record_for_node(
             }
         }
         "import_statement" => {
-            let name = node
+            let module = node
                 .child_by_field_name("source")
                 .and_then(|item| string_value(item, content));
             records.push(record(
                 "import",
-                name.as_deref(),
+                module.as_deref(),
                 function_name,
                 Vec::new(),
                 None,
@@ -1335,6 +1380,17 @@ fn extract_record_for_node(
                 location_for_node(path, content, node),
                 provenance,
             ));
+            if let Some(module) = module.as_deref() {
+                append_import_bindings(
+                    path,
+                    content,
+                    node,
+                    module,
+                    function_name,
+                    provenance,
+                    records,
+                );
+            }
         }
         "if_statement" => {
             if let Some(condition) = node.child_by_field_name("condition") {
@@ -1357,6 +1413,120 @@ fn extract_record_for_node(
             }
         }
         _ => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_destructuring_records(
+    path: &str,
+    content: &[u8],
+    pattern: Node<'_>,
+    value: Node<'_>,
+    function: Option<&FunctionInfo>,
+    provenance: &ParserProvenance,
+    aliases: &BTreeMap<String, String>,
+    records: &mut Vec<ProgramRecord>,
+) {
+    let Some(base) = expression_name(value, content) else {
+        return;
+    };
+    let resolved_base = resolve_alias(&base, aliases);
+    for index in 0..pattern.named_child_count() {
+        let Some(item) = pattern.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            continue;
+        };
+        let key = item
+            .child_by_field_name("key")
+            .and_then(|child| expression_name(child, content))
+            .or_else(|| expression_name(item, content));
+        let output = item
+            .child_by_field_name("value")
+            .and_then(|child| expression_name(child, content))
+            .or_else(|| expression_name(item, content));
+        let (Some(key), Some(output)) = (key, output) else {
+            continue;
+        };
+        let selected = format!("{base}.{key}");
+        let resolved_selected = format!("{resolved_base}.{key}");
+        let source = framework_member_source(function, &resolved_selected);
+        records.push(record(
+            if source.is_some() {
+                "source"
+            } else {
+                "assignment"
+            },
+            source.map(crate::framework_sources::FrameworkSourceKind::record_name),
+            function.map(|item| item.qualified_name.as_str()),
+            if source.is_some() {
+                Vec::new()
+            } else {
+                vec![selected]
+            },
+            Some(&output),
+            None,
+            location_for_node(path, content, item),
+            provenance,
+        ));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_import_bindings(
+    path: &str,
+    content: &[u8],
+    import: Node<'_>,
+    module: &str,
+    function: Option<&str>,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    let mut stack = vec![import];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_specifier" {
+            let imported = node
+                .child_by_field_name("name")
+                .and_then(|item| expression_name(item, content));
+            let local = node
+                .child_by_field_name("alias")
+                .and_then(|item| expression_name(item, content))
+                .or_else(|| imported.clone());
+            if let (Some(imported), Some(local)) = (imported, local) {
+                records.push(record(
+                    "import-binding",
+                    Some(&local),
+                    function,
+                    Vec::new(),
+                    Some(&imported),
+                    Some(module),
+                    location_for_node(path, content, node),
+                    provenance,
+                ));
+            }
+            continue;
+        }
+        if node.kind() == "namespace_import"
+            && let Some(local) = (0..node.named_child_count()).find_map(|index| {
+                node.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                    .and_then(|item| expression_name(item, content))
+            })
+        {
+            records.push(record(
+                "import-binding",
+                Some(&local),
+                function,
+                Vec::new(),
+                Some("*"),
+                Some(module),
+                location_for_node(path, content, node),
+                provenance,
+            ));
+            continue;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
     }
 }
 
@@ -1388,8 +1558,20 @@ pub(crate) fn record_with_dominance(
     provenance: &ParserProvenance,
     dominance: Option<(u64, u64)>,
 ) -> ProgramRecord {
-    let mut seen_inputs = BTreeSet::new();
-    inputs.retain(|input| seen_inputs.insert(input.clone()));
+    if inputs.iter().any(|input| input.starts_with("@argument:")) {
+        let mut seen_in_slot = BTreeSet::new();
+        inputs.retain(|input| {
+            if input.starts_with("@argument:") {
+                seen_in_slot.clear();
+                true
+            } else {
+                seen_in_slot.insert(input.clone())
+            }
+        });
+    } else {
+        let mut seen_inputs = BTreeSet::new();
+        inputs.retain(|input| seen_inputs.insert(input.clone()));
+    }
     let (dominance_start, dominance_end) = dominance.unzip();
     let mut hasher = blake3::Hasher::new();
     for value in [
@@ -1436,6 +1618,7 @@ fn add_control_and_call_edges(
     record_nodes: &BTreeMap<String, String>,
     function_nodes: &BTreeMap<String, String>,
     raw_functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
     builder: &mut GraphBuilder,
 ) {
     let mut previous = BTreeMap::<String, &ProgramRecord>::new();
@@ -1472,7 +1655,7 @@ fn add_control_and_call_edges(
             && let Some(callee) = record
                 .callee
                 .as_ref()
-                .and_then(|name| unique_function(name, raw_functions, &record.provenance))
+                .and_then(|name| unique_function(name, record, raw_functions, import_bindings))
             && let Some(target) = function_nodes.get(callee)
         {
             let _edge = builder.edge("calls", node, target, &record.location, &record.provenance);
@@ -1485,6 +1668,7 @@ fn unguarded_handler_traces(
     handlers: &BTreeSet<String>,
     records: &[&ProgramRecord],
     functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
     guards: &BTreeMap<String, Vec<&ProgramRecord>>,
     record_nodes: &BTreeMap<String, String>,
     function_nodes: &BTreeMap<String, String>,
@@ -1530,7 +1714,7 @@ fn unguarded_handler_traces(
             let Some(target) = record
                 .callee
                 .as_deref()
-                .and_then(|callee| unique_function(callee, functions, &record.provenance))
+                .and_then(|callee| unique_function(callee, record, functions, import_bindings))
             else {
                 continue;
             };
@@ -1579,6 +1763,8 @@ fn propagate_local_call(
     taints: &BTreeMap<(String, String), Trace>,
     updates: &mut BTreeMap<(String, String), Trace>,
     functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    helper_guard_policies: &BTreeMap<String, BTreeSet<String>>,
     parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
     record_nodes: &BTreeMap<String, String>,
     builder: &mut GraphBuilder,
@@ -1586,7 +1772,7 @@ fn propagate_local_call(
     let Some(callee_function) = record
         .callee
         .as_ref()
-        .and_then(|name| unique_function(name, functions, &record.provenance))
+        .and_then(|name| unique_function(name, record, functions, import_bindings))
     else {
         return;
     };
@@ -1594,9 +1780,9 @@ fn propagate_local_call(
         return;
     };
     let origin_context = record.function.clone().unwrap_or_default();
-    for (input, parameter) in record.inputs.iter().zip(arguments) {
-        let Some(trace) = trace_for_inputs(taints, &origin_context, std::slice::from_ref(input))
-        else {
+    let slots = argument_slots(&record.inputs);
+    for (inputs, parameter) in slots.iter().zip(arguments) {
+        let Some(trace) = trace_for_inputs(taints, &origin_context, inputs) else {
             continue;
         };
         let Some(parameter_node) = record_nodes.get(&parameter.record_id) else {
@@ -1642,6 +1828,13 @@ fn propagate_local_call(
             &record.provenance,
         );
         let mut caller_trace = extend_trace(return_trace, record_node, edge);
+        if let Some(policies) = helper_guard_policies.get(callee_function) {
+            for policy in policies {
+                if !crate::semantics::is_operation_authorization(policy) {
+                    caller_trace.sanitizers.insert(policy.clone());
+                }
+            }
+        }
         caller_trace.values.insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
@@ -1974,11 +2167,12 @@ fn trace_for_transformation<'a>(
     function: &str,
     record: &ProgramRecord,
     functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
 ) -> Option<&'a Trace> {
     if record
         .callee
         .as_deref()
-        .and_then(|callee| unique_function(callee, functions, &record.provenance))
+        .and_then(|callee| unique_function(callee, record, functions, import_bindings))
         .is_some()
         && let Some(marker) = record
             .inputs
@@ -2123,11 +2317,18 @@ fn trace_is_sanitized_for(
     let Some(policy) = required_sanitizer_policy(rule_id) else {
         return false;
     };
-    if trace.sanitizers.contains(policy) {
+    if trace.sanitizers.contains(policy)
+        || trace
+            .sanitizers
+            .contains(crate::semantics::POLICY_EXACT_ALLOWLIST)
+    {
         return true;
     }
     guards.iter().any(|guard| {
-        guard.name.as_deref() == Some(policy)
+        guard
+            .name
+            .as_deref()
+            .is_some_and(|name| name == policy || name == crate::semantics::POLICY_EXACT_ALLOWLIST)
             && guard_applies_to_trace(guard, trace)
             && (rule_id != "SE1003"
                 || (trace_has_path_normalization(trace, builder)
@@ -2290,16 +2491,94 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
 }
 
 fn unique_function<'a>(
-    callee: &str,
+    call_target: &str,
+    call_record: &ProgramRecord,
     functions: &'a BTreeMap<String, Vec<String>>,
-    provenance: &ParserProvenance,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
 ) -> Option<&'a String> {
-    let leaf = callee
+    let leaf = call_target
         .rsplit(['.', ':'])
         .find(|part| !part.is_empty())
-        .unwrap_or(callee);
-    let matches = functions.get(&function_resolution_key(leaf, provenance))?;
+        .unwrap_or(call_target);
+    let matches = functions.get(&function_resolution_key(leaf, &call_record.provenance))?;
+    let same_file = matches
+        .iter()
+        .filter(|qualified| qualified_function_path(qualified) == Some(&call_record.location.path))
+        .collect::<Vec<_>>();
+    if same_file.len() == 1 {
+        return Some(same_file[0]);
+    }
+    if call_record
+        .provenance
+        .grammar
+        .contains("tree-sitter-javascript")
+        || call_record
+            .provenance
+            .grammar
+            .contains("tree-sitter-typescript")
+    {
+        let bindings = import_bindings.get(&call_record.location.path)?;
+        let member_object = call_target.rsplit_once('.').map(|(object, _)| object);
+        let modules = bindings
+            .iter()
+            .filter(|binding| {
+                (binding.imported == leaf && member_object.is_none())
+                    || (binding.imported == "*" && member_object == Some(binding.local.as_str()))
+            })
+            .map(|binding| binding.module.as_str())
+            .collect::<BTreeSet<_>>();
+        let imported = matches
+            .iter()
+            .filter(|qualified| {
+                qualified_function_path(qualified).is_some_and(|candidate| {
+                    modules.iter().any(|module| {
+                        module_resolves_to(&call_record.location.path, module, candidate)
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        return (imported.len() == 1).then(|| imported[0]);
+    }
     (matches.len() == 1).then(|| &matches[0])
+}
+
+fn qualified_function_path(qualified: &str) -> Option<&str> {
+    qualified.rsplit_once("::").map(|(path, _)| path)
+}
+
+fn module_resolves_to(caller: &str, module: &str, candidate: &str) -> bool {
+    if !module.starts_with('.') {
+        return false;
+    }
+    let parent = Path::new(caller).parent().unwrap_or_else(|| Path::new(""));
+    let Some(normalized) = lexical_path(&parent.join(module)) else {
+        return false;
+    };
+    let candidate = strip_source_extension(candidate);
+    let normalized = strip_source_extension(&normalized);
+    candidate == normalized || candidate == format!("{normalized}/index")
+}
+
+fn lexical_path(path: &Path) -> Option<String> {
+    let mut components = Vec::<String>::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => components.push(value.to_string_lossy().into_owned()),
+            Component::ParentDir => {
+                components.pop()?;
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(components.join("/"))
+}
+
+fn strip_source_extension(path: &str) -> String {
+    [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]
+        .iter()
+        .find_map(|extension| path.strip_suffix(extension).map(str::to_owned))
+        .unwrap_or_else(|| path.to_owned())
 }
 
 fn function_resolution_key(name: &str, provenance: &ParserProvenance) -> String {
@@ -2475,7 +2754,7 @@ fn sink_kind(callee: &str) -> Option<&'static str> {
     None
 }
 
-fn fixed_executable_with_shell_disabled(call: Node<'_>, content: &[u8], callee: &str) -> bool {
+fn fixed_executable_without_shell(call: Node<'_>, content: &[u8], callee: &str) -> bool {
     let leaf = callee
         .to_ascii_lowercase()
         .rsplit('.')
@@ -2497,16 +2776,23 @@ fn fixed_executable_with_shell_disabled(call: Node<'_>, content: &[u8], callee: 
     let Some(argument_array) = arguments.named_child(1) else {
         return false;
     };
-    let Some(options) = arguments.named_child(2) else {
-        return false;
-    };
     let fixed = matches!(executable.kind(), "string" | "string_fragment");
     let array = matches!(argument_array.kind(), "array" | "array_expression");
-    fixed && array && object_has_false_property(options, content, "shell")
+    if !fixed || !array {
+        return false;
+    }
+    let Some(options) = arguments.named_child(2) else {
+        // Node's execFile/spawn APIs do not invoke a shell unless explicitly requested.
+        return true;
+    };
+    object_property_is_absent_or_false(options, content, "shell")
 }
 
-fn object_has_false_property(object: Node<'_>, content: &[u8], property: &str) -> bool {
-    (0..object.named_child_count()).any(|index| {
+fn object_property_is_absent_or_false(object: Node<'_>, content: &[u8], property: &str) -> bool {
+    if !matches!(object.kind(), "object" | "object_expression") {
+        return false;
+    }
+    (0..object.named_child_count()).all(|index| {
         let Some(pair) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
             return false;
         };
@@ -2516,11 +2802,17 @@ fn object_has_false_property(object: Node<'_>, content: &[u8], property: &str) -
         let Some(value) = pair.child_by_field_name("value") else {
             return false;
         };
+        if !matches!(key.kind(), "property_identifier" | "string") {
+            return false;
+        }
         let key_text = key
             .utf8_text(content)
             .unwrap_or_default()
             .trim_matches(['\'', '"']);
-        key_text == property && value.utf8_text(content).unwrap_or_default().trim() == "false"
+        if key_text != property {
+            return true;
+        }
+        value.utf8_text(content).unwrap_or_default().trim() == "false"
     })
 }
 
@@ -2550,10 +2842,7 @@ fn destination_has_safe_fallback(call: Node<'_>, content: &[u8]) -> bool {
         .utf8_text(content)
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let named_allowlist = condition_text.contains("allow")
-        || condition_text.contains("trusted")
-        || condition_text.contains("approved");
-    let membership = condition_text.contains(".has(") || condition_text.contains(".includes(");
+    let membership = condition_has_fixed_allowlist(condition, content);
     let unsafe_shape = [
         "blocked",
         "denied",
@@ -2567,7 +2856,7 @@ fn destination_has_safe_fallback(call: Node<'_>, content: &[u8]) -> bool {
     ]
     .iter()
     .any(|marker| condition_text.contains(marker));
-    if !named_allowlist || !membership || unsafe_shape {
+    if !membership || unsafe_shape {
         return false;
     }
     let consequence_name = expression_name(consequence, content);
@@ -2836,6 +3125,12 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         || ["hostname.includes(", ".host.includes(", "origin.includes("]
             .iter()
             .any(|marker| lower.contains(marker));
+    if !unsafe_destination_check
+        && (condition_has_fixed_allowlist(condition, content)
+            || condition_has_single_literal_allowlist(condition, content))
+    {
+        return Some(crate::semantics::POLICY_EXACT_ALLOWLIST);
+    }
     let allowlist = named_allowlist
         && (lower.contains(".has(") || lower.contains(".includes("))
         && !unsafe_destination_check;
@@ -2870,6 +3165,184 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         .iter()
         .find(|name| is_guard_name(name))
         .map(|name| authorization_policy_name(name))
+}
+
+fn condition_has_single_literal_allowlist(condition: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "binary_expression"
+            && let Some(operator) = node
+                .child_by_field_name("operator")
+                .and_then(|item| item.utf8_text(content).ok())
+            && matches!(operator, "==" | "===" | "!=" | "!==")
+            && let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            )
+            && (is_fixed_string_literal(left, content) ^ is_fixed_string_literal(right, content))
+        {
+            return true;
+        }
+        for index in 0..node.named_child_count() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn condition_has_fixed_allowlist(condition: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "call_expression"
+            && let Some(function) = node.child_by_field_name("function")
+            && matches!(
+                function.kind(),
+                "member_expression" | "subscript_expression"
+            )
+            && let Some(method) = function
+                .child_by_field_name("property")
+                .or_else(|| function.child_by_field_name("index"))
+                .and_then(|item| {
+                    expression_name(item, content).or_else(|| string_value(item, content))
+                })
+            && matches!(method.to_ascii_lowercase().as_str(), "has" | "includes")
+            && let Some(collection) = function.child_by_field_name("object")
+            && fixed_string_collection(collection, node.start_byte(), content)
+        {
+            return true;
+        }
+        for index in 0..node.named_child_count() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn fixed_string_collection(collection: Node<'_>, before: usize, content: &[u8]) -> bool {
+    if collection_is_fixed_strings(collection, content) {
+        return true;
+    }
+    let Some(name) = expression_name(collection, content) else {
+        return false;
+    };
+    let mut root = collection;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.start_byte() >= before {
+            continue;
+        }
+        if node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .and_then(|item| expression_name(item, content))
+                .as_deref()
+                == Some(name.as_str())
+            && node
+                .child_by_field_name("value")
+                .is_some_and(|value| collection_is_fixed_strings(value, content))
+        {
+            return !binding_mutated_between(root, &name, node.end_byte(), before, content);
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn binding_mutated_between(
+    root: Node<'_>,
+    binding: &str,
+    after: usize,
+    before: usize,
+    content: &[u8],
+) -> bool {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.start_byte() < after || node.start_byte() >= before {
+            for index in (0..node.named_child_count()).rev() {
+                if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                    stack.push(child);
+                }
+            }
+            continue;
+        }
+        if node.kind() == "assignment_expression"
+            && node
+                .child_by_field_name("left")
+                .and_then(|left| expression_name(left, content))
+                .is_some_and(|left| values_correspond(&left, binding))
+        {
+            return true;
+        }
+        if node.kind() == "call_expression"
+            && let Some(function) = node.child_by_field_name("function")
+            && let Some(object) = function.child_by_field_name("object")
+            && expression_name(object, content).as_deref() == Some(binding)
+            && function
+                .child_by_field_name("property")
+                .or_else(|| function.child_by_field_name("index"))
+                .and_then(|property| {
+                    expression_name(property, content).or_else(|| string_value(property, content))
+                })
+                .is_some_and(|method| {
+                    matches!(
+                        method.to_ascii_lowercase().as_str(),
+                        "add"
+                            | "clear"
+                            | "delete"
+                            | "pop"
+                            | "push"
+                            | "set"
+                            | "shift"
+                            | "splice"
+                            | "unshift"
+                    )
+                })
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn collection_is_fixed_strings(node: Node<'_>, content: &[u8]) -> bool {
+    let array = if matches!(node.kind(), "array" | "array_expression") {
+        Some(node)
+    } else if node.kind() == "new_expression"
+        && node
+            .child_by_field_name("constructor")
+            .and_then(|item| expression_name(item, content))
+            .is_some_and(|name| name.eq_ignore_ascii_case("set"))
+    {
+        node.child_by_field_name("arguments")
+            .and_then(|arguments| arguments.named_child(0))
+    } else {
+        None
+    };
+    let Some(array) = array else {
+        return false;
+    };
+    array.named_child_count() > 0
+        && (0..array.named_child_count()).all(|index| {
+            array
+                .named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                .is_some_and(|value| is_fixed_string_literal(value, content))
+        })
 }
 
 fn destination_components_compare_to_literals(condition: Node<'_>, content: &[u8]) -> bool {
@@ -3160,17 +3633,42 @@ fn argument_values(call: Node<'_>, content: &[u8]) -> Vec<String> {
         return Vec::new();
     };
     let count = u32::try_from(arguments.named_child_count()).unwrap_or(u32::MAX);
-    (0..count)
-        .filter_map(|index| arguments.named_child(index))
-        .flat_map(|argument| {
-            if argument.kind() == "call_expression" {
-                vec![call_output_key(argument)]
-            } else {
-                expression_name(argument, content)
-                    .map_or_else(|| value_names(argument, content), |name| vec![name])
-            }
-        })
-        .collect()
+    let mut values = Vec::new();
+    for index in 0..count {
+        let Some(argument) = arguments.named_child(index) else {
+            continue;
+        };
+        if count > 1 {
+            values.push(format!("@argument:{}:{index}", call.start_byte()));
+        }
+        if argument.kind() == "call_expression" {
+            values.push(call_output_key(argument));
+        } else if let Some(name) = expression_name(argument, content) {
+            values.push(name);
+        } else {
+            values.extend(value_names(argument, content));
+        }
+    }
+    values
+}
+
+fn argument_slots(inputs: &[String]) -> Vec<Vec<String>> {
+    if !inputs.iter().any(|input| input.starts_with("@argument:")) {
+        return if inputs.is_empty() {
+            Vec::new()
+        } else {
+            vec![inputs.to_vec()]
+        };
+    }
+    let mut slots = Vec::<Vec<String>>::new();
+    for input in inputs {
+        if input.starts_with("@argument:") {
+            slots.push(Vec::new());
+        } else if let Some(slot) = slots.last_mut() {
+            slot.push(input.clone());
+        }
+    }
+    slots
 }
 
 fn call_output_key(call: Node<'_>) -> String {

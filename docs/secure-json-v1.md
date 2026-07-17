@@ -85,6 +85,11 @@ Corrected source/path selection and removal of multiple paths to the same semant
 intentionally change affected legacy finding fingerprints; deterministic Phase 6.7 values are
 frozen by regression tests. See [evidence-contract-v2.md](./evidence-contract-v2.md).
 
+Phase 6.8 does not change the JSON or SARIF schema versions. It refines normalized source,
+module-resolution, positional-flow, and barrier proofs behind the same contract. Unaffected pinned
+finding fingerprints remain stable; findings with newly corrected endpoints or paths migrate
+through the existing deterministic fingerprint algorithm.
+
 ## Exit codes
 
 | Code | Meaning |

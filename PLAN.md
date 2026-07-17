@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–6.7 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2 and corrects systemic source, value, path, guard, and duplicate behavior with disclosed and independent regression suites. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
+Phases 0–6.8 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2. Phase 6.8 uses only retired public evidence to correct framework source extraction, module-scoped helper resolution, positional propagation, exact barriers, process shell defaults, and authorization distinctions with an independent regression corpus. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, complete runtime argument semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -364,6 +364,16 @@ Exit condition: release 0.1.2 preserves Phase 6 compatibility, passes every work
 - [Complete] Exercise 140 independent scenarios (10 vulnerable and 10 safe per family), metamorphic changes, guard removal, adversarial near misses, recursion/cycles, malformed input, bounds, cancellation, and privacy.
 
 Exit condition: release 0.1.3 passes the public synthetic contract vectors, all compatibility and Fedora gates, and two byte-identical RPM builds without Secure Bench execution or unseen holdout access.
+
+### Phase 6.8 - Retired-evidence precision and evidence remediation
+
+- [Complete] Analyze only the public retired Phase 7/8 reports and adjudication, preserving the distinction between the runner exit-code defect and analyzer evidence limitations.
+- [Complete] Recognize destructured and aliased framework inputs, preserve multiarity call positions, and resolve JavaScript/TypeScript helpers only through same-file or explicit relative-import ownership.
+- [Complete] Prove exact fixed allowlists and constant fallbacks structurally, retain unsafe suffix/blocklist/authentication-only near misses, and model fixed executable argument arrays as no-shell unless shell use is explicit.
+- [Complete] Exercise an independent 56-scenario matrix across seven families, four languages, four framework forms, four topologies, paired controls, and metamorphic/adversarial boundaries.
+- [Complete] Preserve public schemas, taxonomy, disabled-AI policy, unaffected fingerprints, CLI/desktop contracts, privacy, and deterministic cold/warm behavior while advancing the private cache envelope.
+
+Exit condition: release 0.1.4 passes all compatibility, security, schema, privacy, deterministic, and Fedora gates and produces two byte-identical RPM builds without executing Secure Bench or accessing undisclosed holdout material.
 
 ### Phase 7 - Distribution
 
