@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use crate::{ENGINE_VERSION, Finding, RuleMetadata, ScanReport, SourceLocation, rules};
+use crate::{
+    ENGINE_VERSION, EVIDENCE_CONTRACT_VERSION, EVIDENCE_SEMANTICS_VERSION, Finding, RuleMetadata,
+    ScanReport, SourceLocation, rules,
+};
 
 /// Canonical official SARIF 2.1.0 schema URI embedded in exported logs.
 pub const SARIF_SCHEMA_URI: &str =
@@ -45,7 +48,9 @@ pub fn sarif_report(report: &ScanReport) -> Value {
                 "secureReportFingerprint": report.report_fingerprint,
                 "repositoryName": report.repository.name,
                 "analysisComplete": report.scan.complete,
-                "secureTaxonomyCatalog": report.taxonomy_catalog
+                "secureTaxonomyCatalog": report.taxonomy_catalog,
+                "secureEvidenceContractVersion": EVIDENCE_CONTRACT_VERSION,
+                "secureEvidenceSemanticsVersion": EVIDENCE_SEMANTICS_VERSION
             }
         }]
     })
@@ -130,6 +135,12 @@ fn sarif_result(finding: &Finding, rule_index: Option<usize>) -> Value {
         result["partialFingerprints"]["secureSemanticFingerprint/v1"] = json!(semantic_fingerprint);
         result["fingerprints"]["secureSemanticFingerprint/v1"] = json!(semantic_fingerprint);
         result["properties"]["semanticFingerprint"] = json!(semantic_fingerprint);
+    }
+    if let Some(contract) = &finding.evidence_contract_v2 {
+        result["partialFingerprints"]["secureContractFingerprint/v2"] = json!(contract.fingerprint);
+        result["fingerprints"]["secureContractDuplicateFingerprint/v2"] =
+            json!(contract.duplicate_fingerprint);
+        result["properties"]["evidenceContractV2"] = json!(contract);
     }
     if let Some(index) = rule_index {
         result["ruleIndex"] = json!(index);

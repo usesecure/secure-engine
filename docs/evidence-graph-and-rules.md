@@ -12,6 +12,12 @@ Phase 6.5 propagates return taint, sanitizer policy, authorization guards, and h
 
 Phase 6.6 adds explicit semantic roles and stable identities to relevant nodes and path steps. Imports, destructuring, direct aliases, arguments, and returns are resolved conservatively; every candidate must have internally consistent edges and a realizable source-to-sink order. Guards protect only corresponding values and must establish the exact rule policy. Authentication is distinct from operation authorization. Candidate paths have a derived deterministic budget and report truncation when exhausted. See [evidence-semantics.md](./evidence-semantics.md).
 
+Phase 6.7 assigns every call expression a location-stable value key, preserves source-argument
+ordering, and selects the most specific proven source rather than the first lexicographic value.
+Only one best path is retained per rule and sink. Framework source classification is separated from
+tree-sitter syntax extraction. Contract projection removes only summarizable propagation nodes and
+always retains source and sink endpoints. See [evidence-contract-v2.md](./evidence-contract-v2.md).
+
 ## Findings and suppressions
 
 Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.

@@ -598,7 +598,7 @@ mod tests {
         );
 
         let all = filter_findings(&report, &FindingFilter::default(), FindingSort::Severity);
-        assert_eq!(all.len(), 13);
+        assert_eq!(all.len(), report.findings.len());
         assert_eq!(
             all.first().map(|finding| finding.severity.as_str()),
             Some("critical")

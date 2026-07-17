@@ -1,6 +1,9 @@
-# Phase 6.6 evidence semantics
+# Evidence semantics
 
 Secure Engine 0.1.2 attaches an optional `semantic` object to security-relevant graph nodes and ordered path steps. The object has a stable role and identity, an optional policy or authorization scope, and a certainty. These identifiers are Engine-owned abstractions, not source names, framework claims, benchmark aliases, or replacements for the frozen taxonomy.
+
+Secure Engine 0.1.3 adds `semantics_version: secure-evidence-semantics-v2` and projects proven paths
+into public evidence contract v2. The original Phase 6.6 fields remain additive and compatible.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 

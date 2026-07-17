@@ -68,6 +68,23 @@ Security-relevant graph nodes and evidence-path steps may add `semantic`, contai
 
 SARIF adds `secureSemanticFingerprint/v1` to both fingerprint maps and `secureEvidenceSemantic` to thread-flow location properties. Baseline findings and optional AI preview payloads carry the semantic fingerprint additively. See [evidence-semantics.md](./evidence-semantics.md).
 
+## Phase 6.7 additive evidence contract v2
+
+Security-relevant semantics add optional `semantics_version`. Findings add optional
+`evidence_contract_v2` with contract/semantics versions, an ordered canonical path, connectivity,
+effective barriers, uncertainty flags, a location-independent semantic fingerprint, and a
+span-aware duplicate fingerprint. Contract path elements expose only canonical source/sink kinds,
+semantic roles/effects, repository-relative spans, and compression eligibility. Earlier v1 reports
+remain valid and deserialize with no contract projection.
+
+SARIF run properties expose `secureEvidenceContractVersion` and
+`secureEvidenceSemanticsVersion`. Each result includes `evidenceContractV2`,
+`secureContractFingerprint/v2`, and `secureContractDuplicateFingerprint/v2`. The normal report,
+SARIF, history, baselines, suppressions, CLI, desktop, and AI-disabled execution remain compatible.
+Corrected source/path selection and removal of multiple paths to the same semantic sink
+intentionally change affected legacy finding fingerprints; deterministic Phase 6.7 values are
+frozen by regression tests. See [evidence-contract-v2.md](./evidence-contract-v2.md).
+
 ## Exit codes
 
 | Code | Meaning |

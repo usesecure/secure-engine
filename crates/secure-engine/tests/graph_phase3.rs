@@ -20,7 +20,7 @@ fn uncached_request() -> ScanRequest {
 }
 
 #[test]
-fn vulnerable_flows_cover_every_rule_and_safe_controls_remain_clean()
+fn vulnerable_flows_cover_injection_rules_without_unrelated_authorization_findings()
 -> Result<(), Box<dyn std::error::Error>> {
     let report = scan_repository(&uncached_request(), &CancellationToken::new(), |_| {})?;
     let rules = report
@@ -30,11 +30,9 @@ fn vulnerable_flows_cover_every_rule_and_safe_controls_remain_clean()
         .collect::<BTreeSet<_>>();
     assert_eq!(
         rules,
-        BTreeSet::from([
-            "SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006", "SE1007"
-        ])
+        BTreeSet::from(["SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006"])
     );
-    assert_eq!(report.findings.len(), 13);
+    assert_eq!(report.findings.len(), 6);
     assert_eq!(
         report
             .findings
@@ -50,13 +48,11 @@ fn vulnerable_flows_cover_every_rule_and_safe_controls_remain_clean()
             .as_ref()
             .is_some_and(|sink| sink.path == "vulnerable.ts")
     }));
-    assert_eq!(
-        report
+    assert!(
+        !report
             .findings
             .iter()
-            .filter(|finding| finding.rule_id == "SE1007")
-            .count(),
-        7
+            .any(|finding| finding.rule_id == "SE1007")
     );
     assert_eq!(report.parser_diagnostics.len(), 1);
     assert!(report.findings.iter().any(|finding| {

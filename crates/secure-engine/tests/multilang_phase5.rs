@@ -62,11 +62,9 @@ fn rust_python_and_go_reuse_the_shared_rules_with_language_provenance()
                     .is_some_and(|sink| sink.path.contains("vulnerable"))
         }));
         let expected_rules: &[&str] = if language == "python" {
-            &[
-                "SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006", "SE1007",
-            ]
+            &["SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006"]
         } else {
-            &["SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1007"]
+            &["SE1001", "SE1002", "SE1003", "SE1004", "SE1005"]
         };
         for rule in expected_rules {
             assert!(

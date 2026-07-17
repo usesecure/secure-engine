@@ -362,7 +362,8 @@
         "verification_state": { "type": "string", "minLength": 1 },
         "limitations": { "type": "array", "items": { "type": "string" } },
         "fingerprint": { "$ref": "#/$defs/fingerprint" },
-        "semantic_fingerprint": { "$ref": "#/$defs/fingerprint" }
+        "semantic_fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "evidence_contract_v2": { "$ref": "#/$defs/evidenceContractV2" }
       }
     },
     "evidenceSemantic": {
@@ -370,11 +371,41 @@
       "additionalProperties": false,
       "required": ["role", "identity", "certainty"],
       "properties": {
+        "semantics_version": { "type": "string", "minLength": 1 },
         "role": { "enum": ["untrusted-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink"] },
         "identity": { "type": "string", "pattern": "^(untrusted|transformation|guard|sanitizer|sink)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
         "policy": { "type": "string", "minLength": 1 },
         "authorization": { "enum": ["authentication", "role", "ownership", "tenant", "general"] },
         "certainty": { "enum": ["proven", "uncertain"] }
+      }
+    },
+    "evidenceContractPathStepV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "effect", "span", "summarizable"],
+      "properties": {
+        "role": { "enum": ["source", "propagation", "guard", "sanitizer", "authorization", "sink"] },
+        "effect": { "enum": ["preserves_influence", "blocks_influence", "restricts_value", "authorizes_operation", "uncertain"] },
+        "source_kind": { "enum": ["form_data_value", "http_body_field", "http_query_value", "protected_resource_id"] },
+        "sink_kind": { "enum": ["dynamic_code_evaluation", "filesystem_read", "os_command_execution", "outbound_request", "protected_record_mutation", "redirect_response", "sql_query_execution"] },
+        "span": { "$ref": "#/$defs/location" },
+        "summarizable": { "type": "boolean" }
+      }
+    },
+    "evidenceContractV2": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "semantics_version", "path", "connected_edges", "effective_barriers", "unresolved_call", "uncertain", "fingerprint", "duplicate_fingerprint"],
+      "properties": {
+        "contract_version": { "const": "2.0.0" },
+        "semantics_version": { "const": "secure-evidence-semantics-v2" },
+        "path": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/evidenceContractPathStepV2" } },
+        "connected_edges": { "type": "array", "minItems": 1, "items": { "type": "boolean" } },
+        "effective_barriers": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "unresolved_call": { "type": "boolean" },
+        "uncertain": { "type": "boolean" },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" },
+        "duplicate_fingerprint": { "$ref": "#/$defs/fingerprint" }
       }
     },
     "evidenceNode": {

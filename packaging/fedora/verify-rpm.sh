@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/phase66-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/phase67-rpm}"
 rpm_path="${1:-}"
 if test -z "$rpm_path"; then
   rpm_path="$(find "$target/rpmbuild/RPMS" -type f -name 'secure-engine-*.rpm' -print -quit)"

@@ -404,6 +404,10 @@ fn baseline_cli_creates_compares_and_rejects_malformed_input()
     let baseline: serde_json::Value = serde_json::from_slice(&fs::read(&baseline_path)?)?;
     assert_eq!(baseline["format"], "secure-baseline-v1");
     assert!(baseline.get("saved_at").is_none());
+    let baseline_count = baseline["findings"]
+        .as_array()
+        .map(Vec::len)
+        .ok_or("baseline findings missing")?;
 
     let unchanged = secure()
         .args(["baseline", "compare"])
@@ -421,7 +425,10 @@ fn baseline_cli_creates_compares_and_rejects_malformed_input()
         .output()?;
     assert_eq!(changed.status.code(), Some(1));
     let comparison: serde_json::Value = serde_json::from_slice(&changed.stdout)?;
-    assert_eq!(comparison["resolved"].as_array().map(Vec::len), Some(13));
+    assert_eq!(
+        comparison["resolved"].as_array().map(Vec::len),
+        Some(baseline_count)
+    );
 
     fs::write(&baseline_path, "{}")?;
     let malformed = secure()

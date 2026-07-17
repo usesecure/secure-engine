@@ -1,12 +1,5 @@
 [advisories]
 unmaintained = "workspace"
-ignore = [
-  # eframe 0.35.0 -> clipboard -> wayland-scanner proc-macro. It processes only
-  # dependency-owned protocol XML at build time, never repository scan input.
-  # Remove when the eframe chain accepts quick-xml >=0.41.
-  "RUSTSEC-2026-0194",
-  "RUSTSEC-2026-0195",
-]
 
 [licenses]
 confidence-threshold = 0.8

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://secure-bench.invalid/schemas/evidence-contract-v2.schema.json",
+  "title": "Secure Bench Evidence Contract v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "contract_version", "taxonomy", "source_semantic_kinds", "sink_semantic_kinds", "location_rules", "path_rules", "barrier_rules", "partial_rules", "duplicate_rules", "non_scoring_fields"],
+  "properties": {
+    "schema_version": { "const": "secure-bench-evidence-contract-v2" },
+    "contract_version": { "const": "2.0.0" },
+    "taxonomy": { "type": "object" },
+    "source_semantic_kinds": { "type": "array", "minItems": 4, "uniqueItems": true },
+    "sink_semantic_kinds": { "type": "array", "minItems": 7, "uniqueItems": true },
+    "location_rules": { "type": "object" },
+    "path_rules": { "type": "object" },
+    "barrier_rules": { "type": "object" },
+    "partial_rules": { "type": "object" },
+    "duplicate_rules": { "type": "object" },
+    "non_scoring_fields": { "type": "array", "minItems": 4, "uniqueItems": true }
+  }
+}

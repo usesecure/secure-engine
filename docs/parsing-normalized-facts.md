@@ -25,7 +25,7 @@ Malformed source may produce both useful facts and recoverable diagnostics. Inva
 
 ## Cache lifecycle
 
-The cache is enabled by default and repository-specific. CLI and desktop can disable it, clear it before a scan, choose a local base directory, and set its byte bound. Valid entries reproduce the exact same facts, graph, findings, and report fingerprint. Content, language/parser mode, grammar, parser adapter, extractor version, or relevant configuration changes produce a miss. Phase 6.5 advanced the cache envelope to `secure-parse-cache-v2` for structured dominance; Phase 6.6 advances it to `secure-parse-cache-v3` for explicit record semantics and alias resolution. Older entries become safe misses. Corrupt, cross-language, or incompatible entries are ignored without failing the scan.
+The cache is enabled by default and repository-specific. CLI and desktop can disable it, clear it before a scan, choose a local base directory, and set its byte bound. Valid entries reproduce the exact same facts, graph, findings, and report fingerprint. Content, language/parser mode, grammar, parser adapter, extractor version, or relevant configuration changes produce a miss. Phase 6.5 advanced the cache envelope to `secure-parse-cache-v2`, Phase 6.6 to `secure-parse-cache-v3`, and Phase 6.7 to `secure-parse-cache-v4` for corrected call-site identities and source semantics. Older entries become safe misses. Corrupt, cross-language, or incompatible entries are ignored without failing the scan.
 
 ## Language boundaries
 

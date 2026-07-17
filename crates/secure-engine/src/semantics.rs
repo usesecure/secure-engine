@@ -135,6 +135,7 @@ fn semantic(
     certainty: &str,
 ) -> EvidenceSemantic {
     EvidenceSemantic {
+        semantics_version: Some(crate::EVIDENCE_SEMANTICS_VERSION.into()),
         role,
         identity: identity.into(),
         policy: policy.map(str::to_owned),
@@ -145,7 +146,17 @@ fn semantic(
 
 fn source_identity(value: &str) -> &'static str {
     let lower = compact(value);
-    if lower.contains("serveraction") {
+    if lower.contains("formdata") {
+        "untrusted.form-data-value"
+    } else if lower.contains("httpbody") || lower.contains("requestbody") {
+        "untrusted.http-body-field"
+    } else if lower.contains("header") {
+        "untrusted.http-header-value"
+    } else if lower.contains("cookie") {
+        "untrusted.http-cookie-value"
+    } else if lower.contains("query") || lower.contains("requesturl") {
+        "untrusted.http-query-value"
+    } else if lower.contains("serveraction") {
         "untrusted.server-action-parameter"
     } else if lower.contains("environment") {
         "untrusted.environment-value"

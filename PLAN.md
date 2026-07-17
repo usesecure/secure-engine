@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–6.6 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics, value correspondence, realizable paths, and independent mutation/metamorphic precision coverage. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
+Phases 0–6.7 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2 and corrects systemic source, value, path, guard, and duplicate behavior with disclosed and independent regression suites. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, argument-level process semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -355,6 +355,15 @@ Exit condition: safe dominant controls suppress only their matching rule family,
 - [Complete] Exercise 102 independent scenarios, including six vulnerable and six safe cases per rule family plus multilingual and mutation/metamorphic coverage.
 
 Exit condition: release 0.1.2 preserves Phase 6 compatibility, passes every workspace and Fedora gate, and produces reproducible RPMs.
+
+### Phase 6.7 - Contract v2 conformance and generalized evidence remediation
+
+- [Complete] Implement canonical contract-v2 sources, sinks, paths, span containment, compression, barriers, uncertainty, duplicates, and semantic fingerprints additively.
+- [Complete] Correct source specificity, call-site identity, argument ordering, helper/import propagation, operation authorization, path confinement, exact outbound policy, constant fallback, and per-sink deduplication.
+- [Complete] Freeze the 56 disclosed retired diagnostics as development-only regression inputs and pass 28 exact vulnerable cases plus 28 clean controls.
+- [Complete] Exercise 140 independent scenarios (10 vulnerable and 10 safe per family), metamorphic changes, guard removal, adversarial near misses, recursion/cycles, malformed input, bounds, cancellation, and privacy.
+
+Exit condition: release 0.1.3 passes the public synthetic contract vectors, all compatibility and Fedora gates, and two byte-identical RPM builds without Secure Bench execution or unseen holdout access.
 
 ### Phase 7 - Distribution
 

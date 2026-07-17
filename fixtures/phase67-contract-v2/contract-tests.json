@@ -1,0 +1,1248 @@
+{
+  "schema_version": "secure-bench-phase5-contract-tests-v1",
+  "contract_version": "2.0.0",
+  "synthetic_reports_only": true,
+  "tests": [
+    {
+      "test_id": "canonical",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "exact"
+    },
+    {
+      "test_id": "equivalent-contained-span",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 4,
+              "end_line": 10,
+              "end_column": 17
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "exact"
+    },
+    {
+      "test_id": "permitted-compressed-path",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "exact"
+    },
+    {
+      "test_id": "wrong-source",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_query_value",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    },
+    {
+      "test_id": "wrong-sink",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "sql_query_execution",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    },
+    {
+      "test_id": "wrong-order",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    },
+    {
+      "test_id": "disconnected-path",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          false,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    },
+    {
+      "test_id": "taxonomy-mismatch",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance.different",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    },
+    {
+      "test_id": "unresolved-call",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": true,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "partial"
+    },
+    {
+      "test_id": "declared-uncertainty",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [],
+        "unresolved_call": false,
+        "uncertain": true,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "partial"
+    },
+    {
+      "test_id": "effective-barrier",
+      "expectation": {
+        "expectation_id": "synthetic-expectation",
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "primary_cwe": "CWE-862",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ]
+      },
+      "finding": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation",
+        "path": [
+          {
+            "role": "source",
+            "effect": "preserves_influence",
+            "source_kind": "http_body_field",
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 10,
+              "start_column": 3,
+              "end_line": 10,
+              "end_column": 18
+            },
+            "summarizable": false
+          },
+          {
+            "role": "propagation",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": null,
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 12,
+              "start_column": 3,
+              "end_line": 12,
+              "end_column": 16
+            },
+            "summarizable": true
+          },
+          {
+            "role": "sink",
+            "effect": "preserves_influence",
+            "source_kind": null,
+            "sink_kind": "protected_record_mutation",
+            "span": {
+              "file": "src/synthetic.ts",
+              "start_line": 14,
+              "start_column": 3,
+              "end_line": 14,
+              "end_column": 20
+            },
+            "summarizable": false
+          }
+        ],
+        "connected_edges": [
+          true,
+          true
+        ],
+        "effective_barriers": [
+          "rejects_and_terminates"
+        ],
+        "unresolved_call": false,
+        "uncertain": false,
+        "rule_id": "ignored-rule",
+        "tool_identity": "synthetic-tool",
+        "prose": "ignored prose"
+      },
+      "expected": "no_match"
+    }
+  ]
+}

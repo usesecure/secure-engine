@@ -1,0 +1,1934 @@
+{
+  "schema_version": "secure-bench-retired-holdout-regression-v1",
+  "package_version": "1.0.0",
+  "diagnostic_content_sha256": "4d3a312356f55f12f016ac233c0483ff2276b2fc004804b586e1749a2c09642d",
+  "status": "public_development_regression_corpus",
+  "unbiased_holdout_use_prohibited": true,
+  "cases": [
+    {
+      "case_id": "exam-case-01-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-01-a",
+      "fixture_sha256": "ef2995629b7fd12d648e0ccae5913af6b2fb135efeca14b2329a6297188893c0",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "607cdf4bb3af137108b3565a2c7fbde1e02628be72283e8d06c23ba85cdd0129"
+    },
+    {
+      "case_id": "exam-case-01-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-01-b",
+      "fixture_sha256": "2c3d8cea8bb0d5868d4ab3e71928db2dc07a1116ae43d05ad797ad6308f46f9e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A verified principal with the required resource scope dominates the sensitive operation.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "4e145684502b342f349da7aa5e5c314a4160adb2966b02fb3c2df9fb10d01f2d"
+    },
+    {
+      "case_id": "exam-case-02-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-02-a",
+      "fixture_sha256": "70e3d19cb5ecc21f1f312b968ca0306c97e0a88bcb90de25812fa0e283b8bdaa",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "6bef5fc2f29bd7ded82d30baa52b8d3c69d357d3635a7376347e626bacea8194"
+    },
+    {
+      "case_id": "exam-case-02-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-02-b",
+      "fixture_sha256": "b0a045afdab6e5b58db6cc855532de20a5d307462b49563234c4db052313e6bc",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A verified principal with the required resource scope dominates the sensitive operation.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a71109ab0e1312e1b78ff72e1e90a0881cd2361de373898ba2c091da01629832"
+    },
+    {
+      "case_id": "exam-case-03-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-03-a",
+      "fixture_sha256": "47558995bbb9621c9070710e09eddb8f7b1453297fd0fa7bbb41f0f3b04424d3",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a14fb1240a83fb595c8b87a5c80c656aa8358d9e9cb889a2722a401d3f739ea7"
+    },
+    {
+      "case_id": "exam-case-03-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-03-b",
+      "fixture_sha256": "0992d701141251819b82e05dacaa76532fa2705323570247f418ff78777711ac",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A verified principal with the required resource scope dominates the sensitive operation.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a2837cca4f3049a2acdc9237e1d2626191cabba778c8a6737ae869bf7fb60db5"
+    },
+    {
+      "case_id": "exam-case-04-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-04-a",
+      "fixture_sha256": "7e3e962d9afd4b6b494502e74613922e6a08cbe0c761416fb44ba985c973947f",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "662d6e2de8937bd46c56b7849d314d034523a754ae67d7bc622a455df2eb3af8"
+    },
+    {
+      "case_id": "exam-case-04-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-04-b",
+      "fixture_sha256": "870a64b87e30886f7b7ad1ae7aa6c771e63c340e859d5112ae7158215af6b455",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.authorization-dominance",
+        "invariant_id": "secure-bench.invariant.authorization-before-sensitive-operation"
+      },
+      "primary_cwe": "CWE-862",
+      "semantics": {
+        "source_semantic": "request_selected_operation_context",
+        "sink_semantic": "protected_sensitive_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A verified principal with the required resource scope dominates the sensitive operation.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "d57214bd8323cf11780302c86cfa1003112c963270b3f712dd5090146dd11ce6"
+    },
+    {
+      "case_id": "exam-case-05-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-05-a",
+      "fixture_sha256": "5d6be3c2aa3659c0244b214df0ed00f40b4025645bfc5d9042908c2f40b22ff6",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "384cb05d51589a04d30f0535515a4ae8fae991e1eabaab02792e55a89f01b2e1"
+    },
+    {
+      "case_id": "exam-case-05-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-05-b",
+      "fixture_sha256": "6eb6ae7c404882e96d24b25beedd3e59e3144053b5ea87d59f2e3e6e055f566e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The executable and argument structure are fixed while external input remains a distinct data argument.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "6b90155c9ffdbeee1feb089165a8f14859f14f02c773b13bc13a23e2893383ed"
+    },
+    {
+      "case_id": "exam-case-06-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-06-a",
+      "fixture_sha256": "0a12dd032883dc5610dfad9cf25cfd02fb5777c6fe09570525b698dc1d219cc2",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "7bf4cf281dea444f69275e20f29565e79bd547c4322d75e207dd854aea447846"
+    },
+    {
+      "case_id": "exam-case-06-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-06-b",
+      "fixture_sha256": "3f09034e4b55eb3230eb68586851f4d4789a5876505ee9dc23a25df9e95f98aa",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The executable and argument structure are fixed while external input remains a distinct data argument.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "8fe1fc4857efa855e4e2a433f584db7903ed88af45e1500e5ce49fc22e27a21a"
+    },
+    {
+      "case_id": "exam-case-07-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-07-a",
+      "fixture_sha256": "ec641f90800a7bc682322a8f25e2efcaf1b06f4a2211fc372188612206c29043",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "wrong_taxonomy_category_invariant_or_cwe",
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "41f96080b25b79b4c45812400ab1ae5597fd9181473a8714e8385fdbb8055c48"
+    },
+    {
+      "case_id": "exam-case-07-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-07-b",
+      "fixture_sha256": "08f28f8337529821e038a648152f857238cf347f014b6bf8fc191c356188bbd3",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The executable and argument structure are fixed while external input remains a distinct data argument.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a955e1b80ea59c311723c38dba3a2bb0e83203e8bc0660a7b7947e9450d16e79"
+    },
+    {
+      "case_id": "exam-case-08-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-08-a",
+      "fixture_sha256": "b0182e323b86a61e1541a46fbeef35495eafd2f939a294d4c06a50c72dcd703e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "d0414bc822c716e443c252b26431a7863d4588ace6b2123d05803d75acdbd823"
+    },
+    {
+      "case_id": "exam-case-08-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-08-b",
+      "fixture_sha256": "1324e985b3e78ff6476d5f99a07fce730c295f3ee2cea96cd772d8371a879308",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.command-execution",
+        "invariant_id": "secure-bench.invariant.command-control-data-separation"
+      },
+      "primary_cwe": "CWE-78",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "operating_system_command_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The executable and argument structure are fixed while external input remains a distinct data argument.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "0c45460902404d42b1dbd0654a2290e181ca8724d18f0f2f2d74d2084972dc08"
+    },
+    {
+      "case_id": "exam-case-09-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-09-a",
+      "fixture_sha256": "c05c41d703c2601c3c576cafc547ee772b506e4f381f5cd22dbdf26e63bcbd3c",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "dd63e4b883e96b2e5a108bfc455158ea6fb0d6b80b3fed23f98ea798813f6c1c"
+    },
+    {
+      "case_id": "exam-case-09-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-09-b",
+      "fixture_sha256": "c8c627e95f3f0d6581f728a4b6ec2674c1a7020d1e3953c4af214f523dacc36f",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects only a fixed operation and never becomes executable syntax.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "9e21485f4bb1fb5779ea41085aa62c86632cf53f563531c8d667b5a415a37307"
+    },
+    {
+      "case_id": "exam-case-10-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-10-a",
+      "fixture_sha256": "0c5ccbbc2ac28ff23bbdcfa30603c627d6ac9ea053b27f8c0cfa13d4fa22f5ac",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "e1b16d567ee6d45712d638bdb18d26a871b21a39750039fa67dcc05af2bed0ab"
+    },
+    {
+      "case_id": "exam-case-10-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-10-b",
+      "fixture_sha256": "94631497d88e0f7f2d8e017c809e34f1558e8e42a617c269c929eeb5a1112f90",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects only a fixed operation and never becomes executable syntax.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "4495325f8832a052ad159628e5dbb129c0d07416a33e0565215861295fe114e9"
+    },
+    {
+      "case_id": "exam-case-11-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-11-a",
+      "fixture_sha256": "ca37cae21e64dc54dd8bcaca4b310738979deac5f5e3aee3a61ea81f73c8013f",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "wrong_taxonomy_category_invariant_or_cwe",
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "da36dcd1416d7fe8d378975037b1d44da2987e3ee182e174e885ef2c9d40f10b"
+    },
+    {
+      "case_id": "exam-case-11-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-11-b",
+      "fixture_sha256": "a4b53e02b478f9652c986de904ea87bebdd733287cf12fb074aa947a9230cf71",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects only a fixed operation and never becomes executable syntax.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "6bc8d6f29ec7c4fbfc0ae9c374a1097b0fa0977f6440641905ca05d22e0d4f41"
+    },
+    {
+      "case_id": "exam-case-12-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-12-a",
+      "fixture_sha256": "c40feffb92ad47b7d8e1920ea790a0fd9bf242822819841db8340a364ff93681",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "ee90555c88bac5e9c15a4aab93523c51475bc4681c18191d7b742cb1b2258ee9"
+    },
+    {
+      "case_id": "exam-case-12-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-12-b",
+      "fixture_sha256": "a1ddc24706452a1529302139db54bd42034b52305883b21f44eec95c8d96b65e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.dynamic-code-execution",
+        "invariant_id": "secure-bench.invariant.dynamic-code-control-data-separation"
+      },
+      "primary_cwe": "CWE-95",
+      "semantics": {
+        "source_semantic": "externally_controlled_value",
+        "sink_semantic": "dynamic_code_evaluation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects only a fixed operation and never becomes executable syntax.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "45f177c692c0fe3b424974ef9e16528328a65a3ea55d548b8ea9809a147fdbe8"
+    },
+    {
+      "case_id": "exam-case-13-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-13-a",
+      "fixture_sha256": "99cd5cb4f8b5263f454638c3a8379d51bcf6b5a2f6f63851df7435f6f93f04c4",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 5,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "0b4490ef9e56680a3e60bd227bfcc5c6a4f8216f0edc9267e29c27ef71587183"
+    },
+    {
+      "case_id": "exam-case-13-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-13-b",
+      "fixture_sha256": "361b3df5a5fef8fc04c105c7c967d808eedf261f9f88dee3548d2897ac200293",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "Canonical resolution and a boundary-aware prefix check confine the selected path to the intended root.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "b20f9d6f188e0e209bf2731b82015dadb1c8ebbc9dec73a1be3ad152bd92d607"
+    },
+    {
+      "case_id": "exam-case-14-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-14-a",
+      "fixture_sha256": "19802af1cc161a8abd8bb974c749e8f11f127901eabcdc5d49162e2c5f8316db",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 7,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "e16ba45cc78c930d4f23a836c9123648c97147e4fb1d62a1e662be3e7a424746"
+    },
+    {
+      "case_id": "exam-case-14-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-14-b",
+      "fixture_sha256": "3e241ee7981bbd010293b3596504e289706d9fc225d499215cd77e8336d1acf9",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "Canonical resolution and a boundary-aware prefix check confine the selected path to the intended root.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "07a7261fd68489a9281c0f5d1d8a29917302771429a65627877eb5065816e251"
+    },
+    {
+      "case_id": "exam-case-15-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-15-a",
+      "fixture_sha256": "551071ba8af22ae62f77b01dfb6f27db92e9edb15ce864bc93f4a452952bc7a1",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "5ded21ee1614f15fd6c3af720a1e77b9096b6cc404a7194c1818deb503d7ca62"
+    },
+    {
+      "case_id": "exam-case-15-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-15-b",
+      "fixture_sha256": "241589d2886501c8daa440c95f66fcd22cbc6f19d43541c5551894740cd450c5",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "Canonical resolution and a boundary-aware prefix check confine the selected path to the intended root.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "9e19187b5fabfac3f0a3f516253462e729bb58b2e817ff7770731986f5f581e0"
+    },
+    {
+      "case_id": "exam-case-16-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-16-a",
+      "fixture_sha256": "2bc00a2c085b4ad9e48ba1a9740e07fc0155a6d45dd7e893c9eb7b168981de5f",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 5,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 7,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "80d438fc69e7133b9a65e3b26c35d569aff685c4ee5e9d245f2ceed4d7ca2be9"
+    },
+    {
+      "case_id": "exam-case-16-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-16-b",
+      "fixture_sha256": "c21fc85a8ca2aee040ee19430a38616055e6f6b1c1fcb9103fb22f6093dc50fe",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.filesystem-boundary",
+        "invariant_id": "secure-bench.invariant.filesystem-path-confinement"
+      },
+      "primary_cwe": "CWE-22",
+      "semantics": {
+        "source_semantic": "externally_controlled_path_component",
+        "sink_semantic": "filesystem_operation"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "Canonical resolution and a boundary-aware prefix check confine the selected path to the intended root.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "c66c20b8ba8d806c51ffe5b7f9fc49cda27963d26909b8d9de1a8f06d4a14194"
+    },
+    {
+      "case_id": "exam-case-17-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-17-a",
+      "fixture_sha256": "092a32de7f834e834f77bbbbc000a79e8a28ce2d2b9f98a28956879bad521277",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "fdf43d992be5c6f9c9168b4bc1047a9145490bdbf18a69960feee8905f016ffc"
+    },
+    {
+      "case_id": "exam-case-17-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-17-b",
+      "fixture_sha256": "92440e41a94e271fbd161701a871ae2fe2bde469ee54b69344f7d593a7b07c1e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A fixed HTTPS hostname policy constrains the complete outbound destination before dispatch.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "228791329c000a17dc0d3873c47f6aea34cea27670a7cbe8e87b8d811521eadc"
+    },
+    {
+      "case_id": "exam-case-18-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-18-a",
+      "fixture_sha256": "4c7454a5a3e2d2002a7250ea692a5ddaa96a0f415fb2fca9cdb872974d4fa284",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "97054a9a6d7ca180272d086bd918d76beeb465c12f97fccd711dc8c63a114fbc"
+    },
+    {
+      "case_id": "exam-case-18-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-18-b",
+      "fixture_sha256": "3782ad101018dbfe09ba0dce49b04547edd5e50b86917fcc11c832f4fa0c39b8",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A fixed HTTPS hostname policy constrains the complete outbound destination before dispatch.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "90a07d7f62ebbea67e1435dbcf991eac4370df6deb1a931416b1b6bfe586242d"
+    },
+    {
+      "case_id": "exam-case-19-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-19-a",
+      "fixture_sha256": "47ec5fe141d231a163fdb882ebb4b7754658f3f3020cf7d8342d3f79604a4c68",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "wrong_taxonomy_category_invariant_or_cwe",
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a304630c3924a412bfed124036794eaee71299b77913fe556cf72761185e6797"
+    },
+    {
+      "case_id": "exam-case-19-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-19-b",
+      "fixture_sha256": "0ef891eee75f03887cdcd42e68e09922ea1efbc2d66144270720d619bdbb32b6",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A fixed HTTPS hostname policy constrains the complete outbound destination before dispatch.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "edb55bceb6f3ea8c87d29561721d869edcdeda5fd8695cc2bf04bb07f19b2f65"
+    },
+    {
+      "case_id": "exam-case-20-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-20-a",
+      "fixture_sha256": "86203f7838f77f7121bd3bdcad75fffcaafd0487c212b89d96b31b2aec209803",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "cf1d252805cdfadc604ba114bfd46d704706ec078dfe35cbff767b5ddadf4aa8"
+    },
+    {
+      "case_id": "exam-case-20-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-20-b",
+      "fixture_sha256": "12988e981d5ce9e946d9ccc4397a79b899984245e14b1bbf3c2d978267095c83",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.outbound-request-boundary",
+        "invariant_id": "secure-bench.invariant.outbound-destination-policy"
+      },
+      "primary_cwe": "CWE-918",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "server_side_outbound_request"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "A fixed HTTPS hostname policy constrains the complete outbound destination before dispatch.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "ff8d48269110cd95051f52dc9bdc32febcedf8bdabe3c6fa63194134f011d6fd"
+    },
+    {
+      "case_id": "exam-case-21-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-21-a",
+      "fixture_sha256": "a66e2fe9d1d5dd0abdd9a9598cda263a6b35c1d87f34f6ebf6c6817e85805055",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "b7e319e35fb90051aa850fd793b0f41cae9613f500148a92b3e24ef0421b81c6"
+    },
+    {
+      "case_id": "exam-case-21-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-21-b",
+      "fixture_sha256": "d8d1499dd1d8a9791cc2fcbd0d90ec09b3ce6158c071ecd44e94f085736abe4c",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects from a fixed set of local redirect destinations.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "3b78f4bc906038d51dda7683bdf57633166117b05812629e9d670894245f48d3"
+    },
+    {
+      "case_id": "exam-case-22-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-22-a",
+      "fixture_sha256": "5564b72b2305c6d1f8f2b42980496d8e5538d1352dc3a54b2347121b9bd4c1b4",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "fc94a73c670b1d2ccbd33c3d8db16d305105a2b1c43700e3d54521ffe4ce5be9"
+    },
+    {
+      "case_id": "exam-case-22-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-22-b",
+      "fixture_sha256": "f5d75a43d14ae441a80bb1a1536f6753665a16b10afb08ae246e0e94e6969ea6",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects from a fixed set of local redirect destinations.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "0ea1d486d4d254ac9c6209191e1070346ff35f1094c9a5da225908c0dc55c8ff"
+    },
+    {
+      "case_id": "exam-case-23-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-23-a",
+      "fixture_sha256": "741f2732e61b9f94ad64a9ebe0d53b9f5955d1740307859ef500cd221d62cc00",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "wrong_taxonomy_category_invariant_or_cwe",
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "ccdf98ec0c685bf1d039f3d6cfddf97f49f3aaad43f7a38b4db8aee58ee10fc2"
+    },
+    {
+      "case_id": "exam-case-23-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-23-b",
+      "fixture_sha256": "29c78daee11163fa4b19bf006097b481321076b7cb51a67e06110e1003a0a6bb",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects from a fixed set of local redirect destinations.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "861d4855256580743a556919385b05ceac556d5fa177eaac8ecc906bbab42138"
+    },
+    {
+      "case_id": "exam-case-24-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-24-a",
+      "fixture_sha256": "d9b9a1b7076a8aacb633e4ce453e753d438d36b4949f504da39fe2123a078264",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "36f959ea715b3e6189a6c63fa32bdb54633ac5a213bc5954a1702a4688009e42"
+    },
+    {
+      "case_id": "exam-case-24-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-24-b",
+      "fixture_sha256": "1b642408319ee7a9e9cca316bf44050d1daa119ebc405fd3781f3f1f7873e3b3",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.redirect-boundary",
+        "invariant_id": "secure-bench.invariant.redirect-destination-policy"
+      },
+      "primary_cwe": "CWE-601",
+      "semantics": {
+        "source_semantic": "externally_controlled_destination",
+        "sink_semantic": "redirect_response"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "External input selects from a fixed set of local redirect destinations.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "a9aa4a591ac93489e42082f132f2970dc85b07874e7dbbb0f0e0d4eb6dd3fd1b"
+    },
+    {
+      "case_id": "exam-case-25-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-25-a",
+      "fixture_sha256": "1510474ded9801e8796e3beeaab549cfc49f31298417bce372c45fc03417232a",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": {
+        "path": "src/relay.js",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/relay.js",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 2,
+        "required_kinds": [
+          "source",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "c1f33d12dd46c2de994bf9b853ed9f55ff5c2bcabbfc5ad37ab2524f234f4e02"
+    },
+    {
+      "case_id": "exam-case-25-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-25-b",
+      "fixture_sha256": "33643962983a5d75f3783f4c0fdc4dc48b93f393a556dc3ec6d8bf65f915cf71",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The SQL statement remains fixed and the externally influenced value is bound as data.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "53e1f57898d6ce59668f62623dd8522c49af6aeafb2194a206ab9b089f7fd3e9"
+    },
+    {
+      "case_id": "exam-case-26-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-26-a",
+      "fixture_sha256": "81c05a256745b05986d604d0bad010659d6eb4c7e95bbd5d3ab807cbbd7eb92a",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": {
+        "path": "src/gateway.jsx",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "src/gateway.jsx",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "missed",
+      "mismatch_categories": [
+        "no_finding_emitted",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "df83aee72ea59bd69d9732752031199c44baef6c75a641a29139e2ae502e41b7"
+    },
+    {
+      "case_id": "exam-case-26-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-26-b",
+      "fixture_sha256": "f48b0c74b9bfbb127c30f82e54163d479d1a96632db105be0b9579141c9141d8",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The SQL statement remains fixed and the externally influenced value is bound as data.",
+      "historical_outcome": "safe_control_clean",
+      "mismatch_categories": [
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "dcad116433752934979f0f2caa0a87440963ab219d89dbe422aee502a61c7853"
+    },
+    {
+      "case_id": "exam-case-27-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-27-a",
+      "fixture_sha256": "3198ef14f2a33d71804a3f6a864295296e15b32c682a6d4422bef7b5c4d1b20a",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": {
+        "path": "app/api/channel/route.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/api/channel/service.ts",
+        "line": 3,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "propagation",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "wrong_taxonomy_category_invariant_or_cwe",
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "d9c7c9acb259e3d40b35ad4623c91ce563944200c16c6565d2768024931c7010"
+    },
+    {
+      "case_id": "exam-case-27-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-27-b",
+      "fixture_sha256": "d7ac983b88f2d435c829be30c3420631302d68a402adf130bc201b7121d821b0",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The SQL statement remains fixed and the externally influenced value is bound as data.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "654e83fd9799008b74c650e7f0d0c9f1887675c05eb425c628cce9feae961263"
+    },
+    {
+      "case_id": "exam-case-28-a",
+      "kind": "vulnerable",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-28-a",
+      "fixture_sha256": "2ccd1cfcdab29a36834dae2837f7cd69e97d470c4008605885c14b57eefc903e",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": {
+        "path": "app/workcell/operation.ts",
+        "line": 4,
+        "alternatives": []
+      },
+      "expected_sink": {
+        "path": "app/workcell/operation.ts",
+        "line": 6,
+        "alternatives": []
+      },
+      "expected_evidence": {
+        "minimum_hops": 3,
+        "required_kinds": [
+          "source",
+          "branch",
+          "sink"
+        ]
+      },
+      "security_property": null,
+      "historical_outcome": "partial_match",
+      "mismatch_categories": [
+        "missing_or_incorrect_source",
+        "evidence_path_mismatch",
+        "transformation_or_value_identity_mismatch",
+        "duplicate_or_unrelated_finding",
+        "adapter_or_evidence_contract_ambiguity",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "f548826527a28733d49c0ee835acc8789c4b5ce201fcc018707b0fb4ced76483"
+    },
+    {
+      "case_id": "exam-case-28-b",
+      "kind": "safe_control",
+      "fixture_path": "diagnostics/phase-6/fixtures/exam-case-28-b",
+      "fixture_sha256": "6971b625acac64ad3c848d972f4a7650b95f7dc948fae1d06ed2b6de04ee9a2d",
+      "taxonomy": {
+        "taxonomy_version": "1.0.0",
+        "category_id": "secure-bench.category.sql-construction",
+        "invariant_id": "secure-bench.invariant.sql-control-data-separation"
+      },
+      "primary_cwe": "CWE-89",
+      "semantics": {
+        "source_semantic": "externally_controlled_query_value",
+        "sink_semantic": "sql_query_execution"
+      },
+      "expected_source": null,
+      "expected_sink": null,
+      "expected_evidence": null,
+      "security_property": "The SQL statement remains fixed and the externally influenced value is bound as data.",
+      "historical_outcome": "safe_control_flagged",
+      "mismatch_categories": [
+        "guard_sanitizer_or_dominance_mismatch",
+        "safe_control_false_positive",
+        "duplicate_or_unrelated_finding",
+        "framework_language_topology_attribution_uncertainty"
+      ],
+      "retained_report_sha256": "d421c8abc76db2ca3ec343f4957a1c2fa9211ae76fde97901bccd2b103095ef8"
+    }
+  ],
+  "content_sha256": "c339cb162fc39de218a1ffda398380a4cc751315214d6f2ea91c29d6090cff2b"
+}

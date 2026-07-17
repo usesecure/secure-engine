@@ -1,0 +1,61 @@
+{
+  "schema_version": "secure-bench-evidence-contract-v2",
+  "contract_version": "2.0.0",
+  "taxonomy": {
+    "schema_version": "secure-bench-taxonomy-v1",
+    "taxonomy_version": "1.0.0",
+    "artifact_sha256": "059fe22d7707cf8d17f2c1621fdae9819787a1958ba2ef0421eca4e4ec858452",
+    "content_hash": "22852bd7401020b315af11dfa2b60c0b46f78eb19f95079e6400d7b3bea3272c"
+  },
+  "source_semantic_kinds": [
+    "form_data_value",
+    "http_body_field",
+    "http_query_value",
+    "protected_resource_id"
+  ],
+  "sink_semantic_kinds": [
+    "dynamic_code_evaluation",
+    "filesystem_read",
+    "os_command_execution",
+    "outbound_request",
+    "protected_record_mutation",
+    "redirect_response",
+    "sql_query_execution"
+  ],
+  "location_rules": {
+    "exact_normalized_file": true,
+    "exact_span": true,
+    "bidirectional_containment": true,
+    "maximum_containment_lines": 3
+  },
+  "path_rules": {
+    "source_before_sink": true,
+    "connected_hops": true,
+    "summarizable_nodes_only": true,
+    "helper_summary_preserves_endpoints": true
+  },
+  "barrier_rules": {
+    "guard_requires_terminating_failure": true,
+    "sanitizer_requires_semantic_effect": true,
+    "authorization_binds_operation": true,
+    "effective_barrier_blocks_match": true
+  },
+  "partial_rules": {
+    "taxonomy_and_endpoints_required": true,
+    "unresolved_call_is_partial": true,
+    "uncertainty_is_partial": true,
+    "detection_credit": false
+  },
+  "duplicate_rules": {
+    "semantic_fields_only": true,
+    "exclude_prose": true,
+    "exclude_tool_and_rule_identity": true,
+    "duplicate_credit": false
+  },
+  "non_scoring_fields": [
+    "human_prose",
+    "scanner_rule_id",
+    "tool_identity",
+    "variable_names"
+  ]
+}

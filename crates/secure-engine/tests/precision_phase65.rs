@@ -242,7 +242,7 @@ fn sarif_baseline_and_legacy_json_preserve_taxonomy_compatibly()
 }
 
 #[test]
-fn legacy_finding_fingerprints_survive_additive_taxonomy_and_precision_changes()
+fn phase67_fingerprint_migration_is_explicit_and_deterministic()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut request = ScanRequest::new(workspace_path("fixtures/phase3-rules"));
     request.configuration.parse_cache_enabled = false;
@@ -252,22 +252,15 @@ fn legacy_finding_fingerprints_survive_additive_taxonomy_and_precision_changes()
         .iter()
         .map(|finding| finding.fingerprint.as_str())
         .collect::<BTreeSet<_>>();
-    let phase_six = BTreeSet::from([
-        "01a75d5a82de10de82d07249f9e095a3668709cc1462229cd9d903095b4f7f90",
-        "15a11fc72e3430a6f42072fa4a979c1a6d127110c5b75708dc8b780f849372a5",
-        "40be312ff376240ea0d4aabd68440bd91f58f1ad0f9430cd0305b9059b95b332",
-        "44389a6dee3cf345a52ff12550a6a812d6159e19232eb8f234366cab5e1057ae",
-        "55d5b2f98610325c7577e03ebe1169de0d8182998242d464b1c6772719ecf2dc",
-        "5bde1f762888edbf75e03967e96ad252c6d89429154055d2cf28fb60ce21bcc0",
-        "6979ca531b6b78d3d0293a1ced3d1e8e26c3cfb485947d6c5806e29fd60e90f0",
-        "773e1af8ef9d021731ac6710a3164ad7020175094c8125460c34cc02256c21f3",
-        "b693c9a7441120b98bb2873373f2efd5a61e7c4ced6815e0adda33507ab25f55",
-        "b75de9007d07fcf02092b02cc6b0f78863557d87dfb2b5921e48b869eed87e92",
-        "bd46836217254d9e2f677e5df919f7745caaa79de466a4209e199521c9fabc2d",
-        "ca5b1427a20d4c466fef81f37d95c0eaf20a4152ffb38d121cce7ce63a71aff5",
+    let phase_67 = BTreeSet::from([
+        "074108a8f812332f7d13143ac2c83bc7726d5adc932ebc92722abc8a27914ee9",
+        "837b671f52fced544d81c9f9adfedea27895491122324b6fe654ef37b6076040",
+        "a78901ffe4752b0e7f57afcbc238db8f8eac40b934ccca1c7e25aa0ac4b4a80d",
+        "b8dabb7bcbaf7e7a6c5c671b64d74b4e286215dba16eb9fd671d00246efa87ae",
+        "cf4edf5e17aacc16ca6604aa96b4e01ba05a1e289f697f5ee4992eee1d73f07a",
+        "f14f8006f7ca5f102d107b416fa160136ab4c3f8156d4d0b36779baf5ec24aa5",
     ]);
-    assert!(phase_six.is_subset(&current));
-    assert_eq!(current.len(), phase_six.len().saturating_add(1));
+    assert_eq!(current, phase_67);
     Ok(())
 }
 

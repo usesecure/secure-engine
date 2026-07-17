@@ -2,7 +2,7 @@
 
 ## Current status
 
-Phases 0–6.6 are complete. Phase 6.6 releases Secure Engine 0.1.2 with explicit evidence semantics, stable semantic fingerprints, value-sensitive guards, bounded alias/import/helper resolution, realizable paths, and independent precision regressions. The exact frozen neutral taxonomy remains read-only, existing finding fingerprints remain compatible, and AI validation remains separate and disabled by default. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
+Phases 0–6.7 are complete. Phase 6.7 releases Secure Engine 0.1.3 with public evidence-contract-v2 projection, canonical source and sink kinds, exact span/path semantics, corrected call-site value identity, source specificity, conservative barrier reasoning, and semantic duplicate removal. The frozen neutral taxonomy remains read-only. Evidence corrections intentionally migrate affected finding fingerprints and are documented; AI validation remains separate and disabled by default. The foundation requirements below remain the historical contract and continue to be enforced by regression tests.
 
 Build Secure Engine as a local-first Rust security analyzer with one reusable core, a CLI, and a small native desktop interface. The first implementation must establish a reliable foundation and a stable integration contract with `usesecure/secure-skill`; it must not attempt broad vulnerability detection yet.
 

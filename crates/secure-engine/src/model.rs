@@ -499,6 +499,9 @@ pub enum AuthorizationKind {
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceSemantic {
+    /// Explicit version of the Engine-owned semantic vocabulary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantics_version: Option<String>,
     /// Stable semantic role.
     pub role: EvidenceSemanticRole,
     /// Stable, tool-owned semantic identity independent of source spelling.
@@ -511,6 +514,118 @@ pub struct EvidenceSemantic {
     pub authorization: Option<AuthorizationKind>,
     /// Whether semantics are proven or conservatively unresolved.
     pub certainty: String,
+}
+
+/// Canonical source kinds defined by the public tool-neutral evidence contract v2.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSourceKindV2 {
+    /// One value selected from submitted form data.
+    FormDataValue,
+    /// One field selected from an HTTP request body or request-field collection.
+    HttpBodyField,
+    /// One value selected from URL/query request metadata.
+    HttpQueryValue,
+    /// An attacker-selected identifier for a protected resource or operation.
+    ProtectedResourceId,
+}
+
+/// Canonical sink kinds defined by the public tool-neutral evidence contract v2.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSinkKindV2 {
+    /// Dynamic evaluation of attacker-influenced code.
+    DynamicCodeEvaluation,
+    /// Read from an attacker-influenced filesystem path.
+    FilesystemRead,
+    /// Operating-system command execution.
+    OsCommandExecution,
+    /// Server-side outbound network request.
+    OutboundRequest,
+    /// Mutation of a protected record or resource.
+    ProtectedRecordMutation,
+    /// Redirect response whose destination is attacker influenced.
+    RedirectResponse,
+    /// SQL query execution with attacker-influenced query construction.
+    SqlQueryExecution,
+}
+
+/// Canonical role of one contract-v2 path element.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceContractRoleV2 {
+    /// Attacker-controlled path endpoint.
+    Source,
+    /// Value-preserving or value-changing propagation.
+    Propagation,
+    /// Control-flow guard.
+    Guard,
+    /// Value sanitizer.
+    Sanitizer,
+    /// Operation-specific authorization proof.
+    Authorization,
+    /// Sensitive operation endpoint.
+    Sink,
+}
+
+/// Semantic effect of one contract-v2 path element.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceEffectV2 {
+    /// Attacker influence is preserved through this element.
+    PreservesInfluence,
+    /// A terminating barrier blocks the unsafe path.
+    BlocksInfluence,
+    /// A sanitizer restricts the value to a safe policy domain.
+    RestrictsValue,
+    /// A guard authorizes the selected operation.
+    AuthorizesOperation,
+    /// The static effect cannot be resolved soundly.
+    Uncertain,
+}
+
+/// One canonical, ordered evidence-contract-v2 path element.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceContractPathStepV2 {
+    /// Contract role.
+    pub role: EvidenceContractRoleV2,
+    /// Value/control effect.
+    pub effect: EvidenceEffectV2,
+    /// Canonical source kind on the source endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<EvidenceSourceKindV2>,
+    /// Canonical sink kind on the sink endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sink_kind: Option<EvidenceSinkKindV2>,
+    /// Exact repository-relative source span.
+    pub span: SourceLocation,
+    /// Whether contract path compression may omit this element.
+    pub summarizable: bool,
+}
+
+/// Additive evidence-contract-v2 projection for one deterministic finding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceContractV2 {
+    /// Frozen public contract version.
+    pub contract_version: String,
+    /// Versioned Engine-owned evidence semantics used for this projection.
+    pub semantics_version: String,
+    /// Ordered canonical path retaining required endpoints.
+    pub path: Vec<EvidenceContractPathStepV2>,
+    /// Connectivity assertion for each adjacent path pair.
+    pub connected_edges: Vec<bool>,
+    /// Effective barriers, empty for a demonstrated vulnerable path.
+    pub effective_barriers: Vec<String>,
+    /// Whether an unresolved call prevents exact conformance.
+    pub unresolved_call: bool,
+    /// Whether any required semantic element remains uncertain.
+    pub uncertain: bool,
+    /// Location/name-independent contract semantic fingerprint.
+    pub fingerprint: String,
+    /// Contract duplicate identity including canonical endpoint/path spans.
+    pub duplicate_fingerprint: String,
 }
 
 /// Descriptor for one frozen neutral taxonomy contract used by a report.
@@ -785,6 +900,9 @@ pub struct Finding {
     /// Location/name-independent fingerprint of the demonstrated semantic source/sink family.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub semantic_fingerprint: Option<String>,
+    /// Canonical public evidence-contract-v2 projection, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_contract_v2: Option<EvidenceContractV2>,
 }
 
 /// Declared analysis limitation.

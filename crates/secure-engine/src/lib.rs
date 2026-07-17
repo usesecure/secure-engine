@@ -4,7 +4,9 @@ mod ai;
 mod baseline;
 mod cache;
 mod classify;
+mod evidence_contract;
 mod export;
+mod framework_sources;
 mod graph;
 mod history;
 mod language;
@@ -17,6 +19,12 @@ mod source;
 mod storage;
 mod taxonomy;
 mod workspace;
+
+pub use evidence_contract::{
+    ContractExpectation, ContractFinding, ContractPathStep, ContractSpan,
+    EVIDENCE_CONTRACT_VERSION, EVIDENCE_SEMANTICS_VERSION, EvidenceContractOutcome,
+    EvidenceContractTest, EvidenceContractTestDocument, evaluate_contract_v2,
+};
 
 pub use ai::*;
 pub use baseline::*;
