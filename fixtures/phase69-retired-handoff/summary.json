@@ -1,0 +1,46 @@
+{
+  "schema_version": "secure-engine-phase69-retired-handoff-summary-v1",
+  "source": "retired-disclosed-phase15-diagnostic-handoff",
+  "inputs": {
+    "retired_phase13_diagnostic_v1": "25c20a941b1445d1ee38af304acb73f5b00a0062f65a58f9637896a8dad2af6b",
+    "finding_diagnostic_v1": "a7be8347fd2ff2577defc84373cf48505ae89477690b3fa45ca975d37cb08a3f",
+    "regression_manifest_v1": "01ea2a8abd0d532db8f79f280bb203435a135a8e25bcfcf345ab0cefe7a7297c",
+    "benchmark_defect_ledger_v1": "de6e98a949131b72f88f45ef88f8c02b8fc54290bbf9bdb3987be6e2d15fcbb5",
+    "evidence_contract_v2_conformance_v2": "3e6e5808186e0c3187c3a9e8534b30bc8cec37e5859e20448b16f82cc64f72e8",
+    "provenance_v1": "fdd009708838f60fafbacfe095d69b7d142277d91adddf802e0be8bd090fd77a",
+    "phase15_postmortem": "70bbd43bb43575a005b981cb364693a78cc633f615eb71349c19f3ce919a8870"
+  },
+  "population": {
+    "retired_cases": 112,
+    "vulnerable_cases": 56,
+    "safe_controls": 56,
+    "retained_findings": 96,
+    "vulnerable_findings": 56,
+    "flagged_controls": 40,
+    "clean_controls": 16
+  },
+  "primary_causes": {
+    "adapter_authoritative_projection_loss": 10,
+    "scanner_source_identity": 30,
+    "scanner_source_span": 16,
+    "scanner_overbroad_false_positive": 40
+  },
+  "contributing_causes": {
+    "scanner_source_identity": 21,
+    "scanner_source_span": 32,
+    "scanner_guard_recognition": 32,
+    "scanner_sanitizer_recognition": 8,
+    "scanner_dominance_reasoning": 40
+  },
+  "authoritative_v2_vulnerable_outcomes": {
+    "exact": 10,
+    "partial": 0,
+    "no_match": 46
+  },
+  "scope": {
+    "adapter_defect_is_engine_work": false,
+    "phase14_score_changed": false,
+    "source_code_exported": false,
+    "future_holdout_claim_permitted": false
+  }
+}

@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–6.8 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2. Phase 6.8 uses only retired public evidence to correct framework source extraction, module-scoped helper resolution, positional propagation, exact barriers, process shell defaults, and authorization distinctions with an independent regression corpus. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, complete runtime argument semantics, and additional package formats remain future work.
+Phases 0–6.9 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2. Phase 6.8 uses only retired public evidence to correct framework source extraction, module-scoped helper resolution, positional propagation, exact barriers, process shell defaults, and authorization distinctions. Phase 6.9 uses only the permitted retired Phase 15 aggregate handoff to correct source identity, exact spans, property/position connectivity, value-associated barriers, and overbroad sink inputs, then proves those changes with independent regressions. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, complete runtime argument semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -374,6 +374,17 @@ Exit condition: release 0.1.3 passes the public synthetic contract vectors, all 
 - [Complete] Preserve public schemas, taxonomy, disabled-AI policy, unaffected fingerprints, CLI/desktop contracts, privacy, and deterministic cold/warm behavior while advancing the private cache envelope.
 
 Exit condition: release 0.1.4 passes all compatibility, security, schema, privacy, deterministic, and Fedora gates and produces two byte-identical RPM builds without executing Secure Bench or accessing undisclosed holdout material.
+
+### Phase 6.9 - Retired Phase 15 evidence and false-positive remediation
+
+- [Complete] Pin only the seven permitted retired Phase 15 handoff hashes and retain aggregate reproduction accounting without importing benchmark source, case identifiers, evaluator behavior, or expected spans.
+- [Complete] Preserve exact source identity and spans across scoped aliases, destructuring, wrappers, supported helpers, and explicit relative imports while preventing sibling fields, unrelated parameters, reassigned aliases, and ambiguous resolution from inheriting identity.
+- [Complete] Preserve argument positions, destructured property correspondence, return flow, and stable source tie-breaking; select only semantically sensitive sink arguments.
+- [Complete] Require structurally effective guards and sanitizers to dominate the sink and protect the same propagated value, while keeping role authorization distinct from ownership and rejecting weak, late, or wrong-value barriers.
+- [Complete] Exercise independent cause pairs across JavaScript, JSX, TypeScript, TSX, Node.js, Express, Next.js App Router, Server Actions, direct, helper-mediated, inter-file aliased, and control-flow-sensitive paths, plus adversarial, mutation, and metamorphic variants.
+- [Complete] Preserve taxonomy 1.0.0, evidence contract v2, secure-json-v1, SARIF, baselines, history, suppressions, CLI/desktop parity, privacy, bounds, cancellation, symlink protections, and disabled-by-default AI while advancing only the private parse-cache envelope.
+
+Exit condition: release 0.1.5 passes every compatibility, quality, security, schema, privacy, determinism, performance, and Fedora packaging gate and produces two byte-identical RPMs without executing Secure Bench, changing the benchmark adapter, pushing, or accessing undisclosed material.
 
 ### Phase 7 - Distribution
 

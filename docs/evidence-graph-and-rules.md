@@ -25,6 +25,14 @@ and constant fallback branches can establish a matching barrier; suffix checks, 
 ambiguous aliases, and authentication-only checks cannot. The private cache format advances while
 the public extractor identity remains stable for unaffected finding fingerprints.
 
+Phase 6.9 scopes aliases by qualified function, rejects ambiguous alias chains, preserves immutable
+source origin and deterministic tie-breaking, groups object properties as well as call positions,
+and kills stale identity only after an unconditional clean reassignment. Supported sink APIs select
+only security-relevant argument positions. Guards and sanitizers must dominate and associate with
+the selected trace; provisional candidates are removed only after fixed-point evidence proves the
+path safe. The public graph extractor identity remains stable and the private cache envelope
+advances independently.
+
 ## Findings and suppressions
 
 Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.

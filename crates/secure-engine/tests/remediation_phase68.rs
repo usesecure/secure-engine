@@ -405,10 +405,15 @@ fn structural_barriers_are_precise_and_authentication_is_not_authorization()
         "import { execFile } from 'node:child_process'; export function handle(request) { return execFile('/usr/bin/lookup', ['--value', request.query.value], { cwd: '/var/empty', shell: false }); }",
         "const DESTINATIONS = new Set(['api.example.test']); function choose(value) { const parsed = new URL(value); if (parsed.protocol !== 'https:' || !DESTINATIONS.has(parsed.hostname)) throw new Error('reject'); return parsed; } export function handle(request) { return fetch(choose(request.query.value)); }",
         "const DESTINATIONS = new Set(['/account']); export function handle(request) { const value = request.query.value; return redirect(DESTINATIONS.has(value) ? value : '/account'); }",
-        "'use server'; function currentUser() { return identity.current(); } export async function change(request) { const principal = currentUser(); if (principal.subject !== request.body.owner) throw new Error('reject'); return recordStore.update(request.body.change); }",
+        "'use server'; function currentUser() { return identity.current(); } export async function change(request) { const principal = currentUser(); const resourceOwnerId = request.body.change; if (principal.subject !== resourceOwnerId) throw new Error('reject'); return recordStore.update(resourceOwnerId); }",
     ];
     for source in safe_cases {
-        assert!(scan(&single_source(source))?.findings.is_empty());
+        let report = scan(&single_source(source))?;
+        assert!(
+            report.findings.is_empty(),
+            "safe barrier regressed: {source}\nfindings={:#?}",
+            report.findings,
+        );
     }
 
     let unsafe_cases = [
@@ -443,7 +448,7 @@ fn structural_barriers_are_precise_and_authentication_is_not_authorization()
                 .findings
                 .iter()
                 .any(|finding| finding.rule_id == rule),
-            "unsafe near miss suppressed {rule}"
+            "unsafe near miss suppressed {rule}: {source}"
         );
     }
     Ok(())

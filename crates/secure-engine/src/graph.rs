@@ -66,10 +66,18 @@ struct FunctionInfo {
     name: String,
     qualified_name: String,
     location: SourceLocation,
-    parameters: Vec<(String, SourceLocation)>,
+    parameters: Vec<ParameterInfo>,
     handler: bool,
     server_action: bool,
     exported: bool,
+}
+
+#[derive(Clone)]
+struct ParameterInfo {
+    name: String,
+    location: SourceLocation,
+    argument_index: usize,
+    property_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -77,6 +85,12 @@ struct Trace {
     nodes: Vec<String>,
     edges: Vec<String>,
     source_function: Option<String>,
+    source_node: String,
+    source_path: String,
+    source_start: u64,
+    source_end: u64,
+    value_identity: String,
+    field_sensitive: bool,
     sanitizers: BTreeSet<String>,
     values: BTreeSet<String>,
     source_specificity: u8,
@@ -102,6 +116,8 @@ struct ImportBinding {
     local: String,
     module: String,
 }
+
+type AliasMap = BTreeMap<(String, String), BTreeSet<String>>;
 
 struct GraphBuilder {
     nodes: BTreeMap<String, EvidenceNode>,
@@ -219,7 +235,7 @@ pub(crate) fn extract_program(
         &handler_names,
         maximum_records,
     );
-    let aliases = collect_aliases(root, content, maximum_records);
+    let aliases = collect_aliases(root, content, &functions, maximum_records);
     let mut records = Vec::new();
     let mut truncated = false;
     for function in &functions {
@@ -241,12 +257,12 @@ pub(crate) fn extract_program(
             function.location.clone(),
             &graph_provenance,
         ));
-        for (index, (parameter, location)) in function.parameters.iter().enumerate() {
+        for parameter in &function.parameters {
             if records.len() >= maximum_records {
                 truncated = true;
                 break;
             }
-            let is_source = function.handler && (function.server_action || index == 0);
+            let is_source = function.handler && function.server_action;
             records.push(record(
                 if is_source { "source" } else { "argument" },
                 Some(if is_source {
@@ -256,13 +272,13 @@ pub(crate) fn extract_program(
                         "request-parameter"
                     }
                 } else {
-                    parameter
+                    &parameter.name
                 }),
                 Some(&function.qualified_name),
-                Vec::new(),
-                Some(parameter),
+                parameter_markers(parameter),
+                Some(&parameter.name),
                 None,
-                location.clone(),
+                parameter.location.clone(),
                 &graph_provenance,
             ));
         }
@@ -601,7 +617,7 @@ pub(crate) fn analyze(
     let mut candidate_limit_reached = false;
     let passes = configuration.max_interprocedural_depth.saturating_add(2);
     for _pass in 0..passes {
-        let before = taints.len();
+        let before = taints.clone();
         let snapshot = taints.clone();
         for record in &all_records {
             check_cancelled(cancellation)?;
@@ -619,6 +635,12 @@ pub(crate) fn analyze(
                                 nodes: vec![record_node.clone()],
                                 edges: Vec::new(),
                                 source_function: record.function.clone(),
+                                source_node: record_node.clone(),
+                                source_path: record.location.path.clone(),
+                                source_start: record.location.span.start_byte,
+                                source_end: record.location.span.end_byte,
+                                value_identity: String::new(),
+                                field_sensitive: source_is_field_container(record),
                                 sanitizers: BTreeSet::new(),
                                 values: BTreeSet::from([output.clone()]),
                                 source_specificity: if matches!(
@@ -641,25 +663,42 @@ pub(crate) fn analyze(
                         &raw_functions,
                         &import_bindings,
                     );
-                    if let (Some(output), Some(trace)) = (&record.output, trace) {
-                        let edge_kind = if matches!(record.kind.as_str(), "assignment" | "alias") {
-                            "assignment"
-                        } else {
-                            "source-to-sink-propagation"
-                        };
-                        let mut trace = extend_trace(
-                            trace,
-                            record_node,
-                            builder.edge(
-                                edge_kind,
-                                trace.nodes.last().map_or(record_node, String::as_str),
+                    if let Some(output) = &record.output {
+                        if let Some(trace) = trace {
+                            let edge_kind =
+                                if matches!(record.kind.as_str(), "assignment" | "alias") {
+                                    "assignment"
+                                } else {
+                                    "source-to-sink-propagation"
+                                };
+                            let mut trace = extend_trace(
+                                &trace,
                                 record_node,
-                                &record.location,
-                                &record.provenance,
-                            ),
-                        );
-                        trace.values.insert(output.clone());
-                        insert_trace(&mut taints, (function.clone(), output.clone()), trace);
+                                builder.edge(
+                                    edge_kind,
+                                    trace.nodes.last().map_or(record_node, String::as_str),
+                                    record_node,
+                                    &record.location,
+                                    &record.provenance,
+                                ),
+                            );
+                            if record.kind == "transformation"
+                                && !record.callee.as_deref().is_some_and(source_container_call)
+                            {
+                                trace.field_sensitive = false;
+                            }
+                            trace.values.insert(output.clone());
+                            insert_trace(&mut taints, (function.clone(), output.clone()), trace);
+                        } else if record.kind == "assignment"
+                            && record.dominance_start.is_some()
+                            && record.dominance_end.is_some()
+                            && !record
+                                .inputs
+                                .iter()
+                                .any(|input| values_correspond(input, output))
+                        {
+                            taints.remove(&(function.clone(), output.clone()));
+                        }
                     }
                 }
                 "sanitizer" => {
@@ -675,7 +714,8 @@ pub(crate) fn analyze(
                         if let Some(output) = &record.output
                             && !policies.is_empty()
                         {
-                            let mut sanitized = extend_trace(trace, record_node, edge);
+                            let mut sanitized = extend_trace(&trace, record_node, edge);
+                            sanitized.field_sensitive = false;
                             sanitized.values.insert(output.clone());
                             for policy in policies {
                                 sanitized.sanitizers.insert(policy.into());
@@ -695,7 +735,8 @@ pub(crate) fn analyze(
                     &mut taints,
                     &raw_functions,
                     &import_bindings,
-                    &helper_guard_policies,
+                    &guards,
+                    &all_records,
                     &parameter_records,
                     &record_nodes,
                     &mut builder,
@@ -703,7 +744,7 @@ pub(crate) fn analyze(
                 "return" => {
                     if let Some(trace) = trace_for_inputs(&snapshot, &function, &record.inputs) {
                         let mut trace = extend_trace(
-                            trace,
+                            &trace,
                             record_node,
                             builder.edge(
                                 "returns",
@@ -719,8 +760,9 @@ pub(crate) fn analyze(
                             let Some(policy) = guard.name.as_deref() else {
                                 continue;
                             };
-                            if guard_applies_to_trace(guard, &trace)
-                                && (required_sanitizer_policy("SE1001") == Some(policy)
+                            if guard_applies_to_trace(guard, &trace, &snapshot)
+                                && (policy == crate::semantics::POLICY_EXACT_ALLOWLIST
+                                    || required_sanitizer_policy("SE1001") == Some(policy)
                                     || required_sanitizer_policy("SE1002") == Some(policy)
                                     || required_sanitizer_policy("SE1004") == Some(policy)
                                     || required_sanitizer_policy("SE1005") == Some(policy)
@@ -736,18 +778,22 @@ pub(crate) fn analyze(
                     }
                 }
                 "sink" => {
-                    let tainted_trace = trace_for_inputs(&snapshot, &function, &record.inputs);
-                    if let Some(trace) = tainted_trace
+                    let sink_inputs = sensitive_sink_inputs(record);
+                    let tainted_trace = trace_for_inputs(&snapshot, &function, &sink_inputs);
+                    if let Some(trace) = tainted_trace.as_ref()
                         && let Some(rule_id) = rule_for_sink(record)
                     {
                         let dominant = dominating_guard_records(record, &guards);
-                        if !trace_is_sanitized_for(
+                        if trace_is_sanitized_for(
                             rule_id,
                             trace,
                             &dominant,
                             &builder,
                             &all_records,
+                            &snapshot,
                         ) {
+                            candidates.remove(&format!("{rule_id}:{record_node}"));
+                        } else {
                             let guard_nodes = dominant
                                 .iter()
                                 .filter_map(|guard| record_nodes.get(&guard.record_id).cloned())
@@ -766,12 +812,23 @@ pub(crate) fn analyze(
                             );
                         }
                     }
-                    if record.name.as_deref() == Some("sensitive-mutation")
-                        && !dominating_guard_records(record, &guards)
+                    let has_effective_authorization = tainted_trace.as_ref().is_some_and(|trace| {
+                        trace
+                            .sanitizers
                             .iter()
-                            .any(|guard| guard_is_authorization(guard, &all_records))
-                        && let Some(handler_trace) =
-                            tainted_trace.or_else(|| handler_traces.get(&function))
+                            .any(|policy| crate::semantics::is_operation_authorization(policy))
+                            || dominating_guard_records(record, &guards)
+                                .iter()
+                                .any(|guard| {
+                                    guard_is_authorization(guard, &all_records)
+                                        && authorization_applies_to_trace(guard, trace, &snapshot)
+                                })
+                    });
+                    if record.name.as_deref() == Some("sensitive-mutation")
+                        && !has_effective_authorization
+                        && let Some(handler_trace) = tainted_trace
+                            .as_ref()
+                            .or_else(|| handler_traces.get(&function))
                     {
                         candidate_limit_reached |= add_candidate(
                             "SE1007",
@@ -785,12 +842,14 @@ pub(crate) fn analyze(
                             &mut candidates,
                             candidate_budget,
                         );
+                    } else if record.name.as_deref() == Some("sensitive-mutation") {
+                        candidates.remove(&format!("SE1007:{record_node}"));
                     }
                 }
                 _ => {}
             }
         }
-        if taints.len() == before {
+        if taints == before {
             break;
         }
     }
@@ -1059,8 +1118,13 @@ fn route_handler_names(root: Node<'_>, content: &[u8], maximum: usize) -> BTreeS
     handlers
 }
 
-fn collect_aliases(root: Node<'_>, content: &[u8], maximum: usize) -> BTreeMap<String, String> {
-    let mut aliases = BTreeMap::new();
+fn collect_aliases(
+    root: Node<'_>,
+    content: &[u8],
+    functions: &[FunctionInfo],
+    maximum: usize,
+) -> AliasMap {
+    let mut aliases = AliasMap::new();
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
         if aliases.len() >= maximum {
@@ -1075,7 +1139,7 @@ fn collect_aliases(root: Node<'_>, content: &[u8], maximum: usize) -> BTreeMap<S
                 .and_then(|child| expression_name(child, content))
                 .or_else(|| imported.clone());
             if let (Some(local), Some(imported)) = (local, imported) {
-                aliases.insert(local, imported);
+                insert_alias(&mut aliases, "", &local, &imported);
             }
         }
         if node.kind() == "variable_declarator"
@@ -1085,13 +1149,30 @@ fn collect_aliases(root: Node<'_>, content: &[u8], maximum: usize) -> BTreeMap<S
             )
             && let Some(target) = expression_name(value, content)
         {
+            let scope = containing_function(node, functions)
+                .map(|function| function.qualified_name.as_str())
+                .unwrap_or_default();
             if let Some(local) = expression_name(name, content) {
                 if local != target {
-                    aliases.insert(local, target.clone());
+                    insert_alias(&mut aliases, scope, &local, &target);
                 }
             } else if matches!(name.kind(), "object_pattern" | "object") {
-                collect_destructured_aliases(name, content, &target, &mut aliases, maximum);
+                collect_destructured_aliases(name, content, &target, scope, &mut aliases, maximum);
             }
+        }
+        if matches!(
+            node.kind(),
+            "assignment_expression" | "augmented_assignment_expression"
+        ) && let (Some(local), Some(target)) = (
+            node.child_by_field_name("left")
+                .and_then(|value| expression_name(value, content)),
+            node.child_by_field_name("right")
+                .and_then(|value| expression_name(value, content)),
+        ) {
+            let scope = containing_function(node, functions)
+                .map(|function| function.qualified_name.as_str())
+                .unwrap_or_default();
+            insert_alias(&mut aliases, scope, &local, &target);
         }
         for index in (0..node.named_child_count()).rev() {
             if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
@@ -1106,7 +1187,8 @@ fn collect_destructured_aliases(
     pattern: Node<'_>,
     content: &[u8],
     target: &str,
-    aliases: &mut BTreeMap<String, String>,
+    scope: &str,
+    aliases: &mut AliasMap,
     maximum: usize,
 ) {
     for index in 0..pattern.named_child_count() {
@@ -1123,20 +1205,37 @@ fn collect_destructured_aliases(
             .child_by_field_name("value")
             .and_then(|child| expression_name(child, content));
         if let (Some(key), Some(local)) = (key, local) {
-            aliases.insert(local, format!("{target}.{key}"));
+            insert_alias(aliases, scope, &local, &format!("{target}.{key}"));
         } else if let Some(local) = expression_name(item, content) {
-            aliases.insert(local.clone(), format!("{target}.{local}"));
+            insert_alias(aliases, scope, &local, &format!("{target}.{local}"));
         }
     }
 }
 
-fn resolve_alias(name: &str, aliases: &BTreeMap<String, String>) -> String {
+fn insert_alias(aliases: &mut AliasMap, scope: &str, local: &str, target: &str) {
+    aliases
+        .entry((scope.to_owned(), local.to_owned()))
+        .or_default()
+        .insert(target.to_owned());
+}
+
+fn resolve_alias(name: &str, function: Option<&FunctionInfo>, aliases: &AliasMap) -> String {
     let mut resolved = name.to_owned();
+    let scope = function
+        .map(|function| function.qualified_name.as_str())
+        .unwrap_or_default();
     for _ in 0..8 {
         let (head, suffix) = resolved
             .split_once('.')
             .map_or((resolved.as_str(), ""), |(head, suffix)| (head, suffix));
-        let Some(target) = aliases.get(head) else {
+        let targets = aliases
+            .get(&(scope.to_owned(), head.to_owned()))
+            .or_else(|| aliases.get(&(String::new(), head.to_owned())));
+        let Some(target) = targets.and_then(|targets| {
+            (targets.len() == 1)
+                .then(|| targets.iter().next())
+                .flatten()
+        }) else {
             break;
         };
         let next = if suffix.is_empty() {
@@ -1159,7 +1258,7 @@ fn extract_record_for_node(
     node: Node<'_>,
     function: Option<&FunctionInfo>,
     provenance: &ParserProvenance,
-    aliases: &BTreeMap<String, String>,
+    aliases: &AliasMap,
     records: &mut Vec<ProgramRecord>,
 ) {
     let function_name = function.map(|item| item.qualified_name.as_str());
@@ -1167,7 +1266,7 @@ fn extract_record_for_node(
         "member_expression" | "subscript_expression" => {
             if let Some(name) = expression_name(node, content)
                 && let Some(source_kind) =
-                    framework_member_source(function, &resolve_alias(&name, aliases))
+                    framework_member_source(function, &resolve_alias(&name, function, aliases))
                 && !nested_in_more_specific_source(node, content, function)
             {
                 records.push(record(
@@ -1195,8 +1294,8 @@ fn extract_record_for_node(
                 return;
             }
             if let (Some(output), Some(value)) = (output, value) {
-                let callee =
-                    call_callee(value, content).map(|callee| resolve_alias(&callee, aliases));
+                let callee = call_callee(value, content)
+                    .map(|callee| resolve_alias(&callee, function, aliases));
                 let mut inputs = value_names(value, content);
                 if callee.is_some() {
                     inputs.push(call_output_key(value));
@@ -1210,7 +1309,7 @@ fn extract_record_for_node(
                     } else {
                         "assignment"
                     };
-                records.push(record(
+                records.push(record_with_dominance(
                     kind,
                     if constant_destination {
                         Some("safe-redirect-destination")
@@ -1223,6 +1322,7 @@ fn extract_record_for_node(
                     callee.as_deref(),
                     location_for_node(path, content, node),
                     provenance,
+                    direct_call_dominance(node, function),
                 ));
             }
         }
@@ -1232,7 +1332,7 @@ fn extract_record_for_node(
                 .and_then(|item| expression_name(item, content));
             let value = node.child_by_field_name("right");
             if let (Some(output), Some(value)) = (output, value) {
-                records.push(record(
+                records.push(record_with_dominance(
                     "assignment",
                     None,
                     function_name,
@@ -1241,6 +1341,7 @@ fn extract_record_for_node(
                     call_callee(value, content).as_deref(),
                     location_for_node(path, content, node),
                     provenance,
+                    direct_call_dominance(node, function),
                 ));
             }
         }
@@ -1252,7 +1353,7 @@ fn extract_record_for_node(
             let source_inputs = value_names(node, content);
             let resolved_callee = raw_callee
                 .as_deref()
-                .map(|callee| resolve_alias(callee, aliases))
+                .map(|callee| resolve_alias(callee, function, aliases))
                 .unwrap_or_default();
             let source_kind =
                 framework_call_source(function, &resolved_callee, expression, &source_inputs);
@@ -1274,7 +1375,7 @@ fn extract_record_for_node(
                 return;
             }
             let raw_callee = raw_callee.unwrap_or_default();
-            let callee = resolve_alias(&raw_callee, aliases);
+            let callee = resolve_alias(&raw_callee, function, aliases);
             let inputs = argument_values(node, content);
             let mut sink = sink_kind(&callee);
             if sink == Some("process-execution")
@@ -1424,13 +1525,13 @@ fn append_destructuring_records(
     value: Node<'_>,
     function: Option<&FunctionInfo>,
     provenance: &ParserProvenance,
-    aliases: &BTreeMap<String, String>,
+    aliases: &AliasMap,
     records: &mut Vec<ProgramRecord>,
 ) {
     let Some(base) = expression_name(value, content) else {
         return;
     };
-    let resolved_base = resolve_alias(&base, aliases);
+    let resolved_base = resolve_alias(&base, function, aliases);
     for index in 0..pattern.named_child_count() {
         let Some(item) = pattern.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
             continue;
@@ -1561,7 +1662,7 @@ pub(crate) fn record_with_dominance(
     if inputs.iter().any(|input| input.starts_with("@argument:")) {
         let mut seen_in_slot = BTreeSet::new();
         inputs.retain(|input| {
-            if input.starts_with("@argument:") {
+            if input.starts_with("@argument:") || input.starts_with("@property:") {
                 seen_in_slot.clear();
                 true
             } else {
@@ -1685,6 +1786,12 @@ fn unguarded_handler_traces(
                     nodes: vec![node.clone()],
                     edges: Vec::new(),
                     source_function: Some(handler.clone()),
+                    source_node: node.clone(),
+                    source_path: String::new(),
+                    source_start: 0,
+                    source_end: 0,
+                    value_identity: String::new(),
+                    field_sensitive: false,
                     sanitizers: BTreeSet::new(),
                     values: BTreeSet::new(),
                     source_specificity: 0,
@@ -1764,7 +1871,8 @@ fn propagate_local_call(
     updates: &mut BTreeMap<(String, String), Trace>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
-    helper_guard_policies: &BTreeMap<String, BTreeSet<String>>,
+    guards: &BTreeMap<String, Vec<&ProgramRecord>>,
+    records: &[&ProgramRecord],
     parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
     record_nodes: &BTreeMap<String, String>,
     builder: &mut GraphBuilder,
@@ -1781,8 +1889,23 @@ fn propagate_local_call(
     };
     let origin_context = record.function.clone().unwrap_or_default();
     let slots = argument_slots(&record.inputs);
-    for (inputs, parameter) in slots.iter().zip(arguments) {
-        let Some(trace) = trace_for_inputs(taints, &origin_context, inputs) else {
+    for (fallback_index, parameter) in arguments.iter().enumerate() {
+        let argument_index = parameter
+            .inputs
+            .iter()
+            .find_map(|input| input.strip_prefix("@parameter:"))
+            .and_then(|index| index.parse::<usize>().ok())
+            .unwrap_or(fallback_index);
+        let Some(slot) = slots.get(argument_index) else {
+            continue;
+        };
+        let property_path = parameter
+            .inputs
+            .iter()
+            .find_map(|input| input.strip_prefix("@property:"));
+        let inputs =
+            property_path.map_or_else(|| slot_values(slot), |path| property_values(slot, path));
+        let Some(trace) = trace_for_inputs(taints, &origin_context, &inputs) else {
             continue;
         };
         let Some(parameter_node) = record_nodes.get(&parameter.record_id) else {
@@ -1795,7 +1918,7 @@ fn propagate_local_call(
             &record.location,
             &record.provenance,
         );
-        let via_call = extend_trace(trace, record_node, call_edge);
+        let via_call = extend_trace(&trace, record_node, call_edge);
         let parameter_edge = builder.edge(
             "argument-flow",
             record_node,
@@ -1804,6 +1927,20 @@ fn propagate_local_call(
             &parameter.provenance,
         );
         let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
+        for guard in dominating_guard_records(record, guards) {
+            let Some(policy) = guard.name.as_deref() else {
+                continue;
+            };
+            let applies = if crate::semantics::is_operation_authorization(policy) {
+                guard_is_authorization(guard, records)
+                    && authorization_applies_to_trace(guard, &trace, taints)
+            } else {
+                guard_applies_to_trace(guard, &trace, taints)
+            };
+            if applies {
+                parameter_trace.sanitizers.insert(policy.to_owned());
+            }
+        }
         if let Some(output) = &parameter.output {
             parameter_trace.values.insert(output.clone());
             insert_trace(
@@ -1828,13 +1965,6 @@ fn propagate_local_call(
             &record.provenance,
         );
         let mut caller_trace = extend_trace(return_trace, record_node, edge);
-        if let Some(policies) = helper_guard_policies.get(callee_function) {
-            for policy in policies {
-                if !crate::semantics::is_operation_authorization(policy) {
-                    caller_trace.sanitizers.insert(policy.clone());
-                }
-            }
-        }
         caller_trace.values.insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
@@ -1869,11 +1999,10 @@ fn add_candidate(
         sink_node: target.node.into(),
         guards: target.guards,
     };
-    if candidates.get(&key).is_none_or(|existing| {
-        candidate.trace.source_specificity > existing.trace.source_specificity
-            || (candidate.trace.source_specificity == existing.trace.source_specificity
-                && candidate.trace < existing.trace)
-    }) {
+    if candidates
+        .get(&key)
+        .is_none_or(|existing| trace_is_preferred(&candidate.trace, &existing.trace))
+    {
         candidates.insert(key, candidate);
     }
     candidates.len() >= maximum_candidates
@@ -2134,22 +2263,34 @@ fn analysis_limitations(
     limitations
 }
 
-fn trace_for_inputs<'a>(
-    taints: &'a BTreeMap<(String, String), Trace>,
+fn trace_for_inputs(
+    taints: &BTreeMap<(String, String), Trace>,
     function: &str,
     inputs: &[String],
-) -> Option<&'a Trace> {
-    let mut best = None;
+) -> Option<Trace> {
+    let mut best = None::<Trace>;
     for input in inputs {
         let mut candidate = input.as_str();
         loop {
             if let Some(trace) = taints.get(&(function.to_owned(), candidate.to_owned())) {
-                if best.is_none_or(|existing: &Trace| {
-                    trace.source_specificity > existing.source_specificity
-                        || (trace.source_specificity == existing.source_specificity
-                            && trace < existing)
-                }) {
-                    best = Some(trace);
+                let mut derived = trace.clone();
+                if derived.field_sensitive
+                    && candidate != input
+                    && let Some(suffix) = input.strip_prefix(candidate)
+                {
+                    let suffix = suffix.trim_start_matches('.');
+                    if !suffix.is_empty() {
+                        derived.value_identity = append_value_identity(
+                            &derived.value_identity,
+                            &suffix.replace('[', ".").replace(']', ""),
+                        );
+                    }
+                }
+                if best
+                    .as_ref()
+                    .is_none_or(|existing| trace_is_preferred(&derived, existing))
+                {
+                    best = Some(derived);
                 }
                 break;
             }
@@ -2162,13 +2303,44 @@ fn trace_for_inputs<'a>(
     best
 }
 
-fn trace_for_transformation<'a>(
-    taints: &'a BTreeMap<(String, String), Trace>,
+fn source_is_field_container(record: &ProgramRecord) -> bool {
+    if matches!(
+        record.name.as_deref(),
+        Some("request-parameter" | "server-action-parameter")
+    ) || record.callee.as_deref().is_some_and(source_container_call)
+    {
+        return true;
+    }
+    record.output.as_deref().is_some_and(|output| {
+        matches!(
+            terminal_identifier(&output.to_ascii_lowercase()),
+            "body" | "query" | "params" | "headers" | "cookies" | "form"
+        )
+    })
+}
+
+fn source_container_call(callee: &str) -> bool {
+    matches!(
+        terminal_identifier(&callee.to_ascii_lowercase()),
+        "json" | "formdata" | "cookies" | "headers"
+    )
+}
+
+fn append_value_identity(prefix: &str, suffix: &str) -> String {
+    if prefix.is_empty() {
+        suffix.to_owned()
+    } else {
+        format!("{prefix}.{suffix}")
+    }
+}
+
+fn trace_for_transformation(
+    taints: &BTreeMap<(String, String), Trace>,
     function: &str,
     record: &ProgramRecord,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
-) -> Option<&'a Trace> {
+) -> Option<Trace> {
     if record
         .callee
         .as_deref()
@@ -2179,7 +2351,7 @@ fn trace_for_transformation<'a>(
             .iter()
             .find(|input| input.starts_with("@call:"))
     {
-        return taints.get(&(function.to_owned(), marker.clone()));
+        return taints.get(&(function.to_owned(), marker.clone())).cloned();
     }
     trace_for_inputs(taints, function, &record.inputs)
 }
@@ -2189,12 +2361,44 @@ fn insert_trace(
     key: (String, String),
     trace: Trace,
 ) {
-    if taints.get(&key).is_none_or(|existing| {
-        trace.source_specificity > existing.source_specificity
-            || (trace.source_specificity == existing.source_specificity && trace < *existing)
-    }) {
+    if taints
+        .get(&key)
+        .is_none_or(|existing| trace_is_preferred(&trace, existing))
+    {
         taints.insert(key, trace);
     }
+}
+
+fn trace_is_preferred(candidate: &Trace, existing: &Trace) -> bool {
+    if candidate.source_specificity != existing.source_specificity {
+        return candidate.source_specificity > existing.source_specificity;
+    }
+    let candidate_source = (
+        &candidate.source_path,
+        candidate.source_start,
+        candidate.source_end,
+        &candidate.source_node,
+    );
+    let existing_source = (
+        &existing.source_path,
+        existing.source_start,
+        existing.source_end,
+        &existing.source_node,
+    );
+    if candidate_source != existing_source {
+        return candidate_source < existing_source;
+    }
+    if candidate.value_identity != existing.value_identity {
+        return candidate.value_identity < existing.value_identity;
+    }
+    let same_path = candidate.nodes == existing.nodes && candidate.edges == existing.edges;
+    if same_path && candidate.sanitizers != existing.sanitizers {
+        return candidate.sanitizers.is_superset(&existing.sanitizers);
+    }
+    if !same_path && candidate.sanitizers.len() != existing.sanitizers.len() {
+        return candidate.sanitizers.len() < existing.sanitizers.len();
+    }
+    candidate < existing
 }
 
 fn extend_trace(trace: &Trace, node: &str, edge: Option<String>) -> Trace {
@@ -2313,6 +2517,7 @@ fn trace_is_sanitized_for(
     guards: &[&ProgramRecord],
     builder: &GraphBuilder,
     records: &[&ProgramRecord],
+    taints: &BTreeMap<(String, String), Trace>,
 ) -> bool {
     let Some(policy) = required_sanitizer_policy(rule_id) else {
         return false;
@@ -2329,7 +2534,7 @@ fn trace_is_sanitized_for(
             .name
             .as_deref()
             .is_some_and(|name| name == policy || name == crate::semantics::POLICY_EXACT_ALLOWLIST)
-            && guard_applies_to_trace(guard, trace)
+            && guard_applies_to_trace(guard, trace, taints)
             && (rule_id != "SE1003"
                 || (trace_has_path_normalization(trace, builder)
                     && guard_has_separator_boundary(guard, records)))
@@ -2435,14 +2640,27 @@ fn guard_has_separator_boundary(guard: &ProgramRecord, records: &[&ProgramRecord
     })
 }
 
-fn guard_applies_to_trace(guard: &ProgramRecord, trace: &Trace) -> bool {
-    guard.inputs.is_empty()
-        || guard.inputs.iter().any(|guard_value| {
-            trace
-                .values
-                .iter()
-                .any(|trace_value| values_correspond(guard_value, trace_value))
+fn guard_applies_to_trace(
+    guard: &ProgramRecord,
+    trace: &Trace,
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    let function = guard.function.as_deref().unwrap_or_default();
+    guard.inputs.iter().any(|input| {
+        trace_for_inputs(taints, function, std::slice::from_ref(input)).is_some_and(|guard_trace| {
+            guard_trace.source_node == trace.source_node
+                && guard_trace.value_identity == trace.value_identity
         })
+    })
+}
+
+fn authorization_applies_to_trace(
+    guard: &ProgramRecord,
+    trace: &Trace,
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    guard.name.as_deref() == Some("role-authorization-before-sensitive-operation")
+        || guard_applies_to_trace(guard, trace, taints)
 }
 
 fn values_correspond(left: &str, right: &str) -> bool {
@@ -3464,7 +3682,7 @@ fn framework_member_source(
     let parameters = function
         .parameters
         .iter()
-        .map(|(name, _)| name.clone())
+        .map(|parameter| parameter.name.clone())
         .collect::<Vec<_>>();
     crate::framework_sources::classify_member_access(
         name,
@@ -3483,7 +3701,7 @@ fn framework_call_source(
     let parameters = function
         .parameters
         .iter()
-        .map(|(name, _)| name.clone())
+        .map(|parameter| parameter.name.clone())
         .collect::<Vec<_>>();
     crate::framework_sources::classify_call(
         callee,
@@ -3574,28 +3792,121 @@ fn function_name(node: Node<'_>, content: &[u8]) -> Option<String> {
         })
 }
 
-fn parameter_names(
-    path: &str,
-    content: &[u8],
-    parameters: Node<'_>,
-) -> Vec<(String, SourceLocation)> {
+fn parameter_names(path: &str, content: &[u8], parameters: Node<'_>) -> Vec<ParameterInfo> {
     let mut result = Vec::new();
-    let mut stack = vec![parameters];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "identifier"
-            && let Some(name) = expression_name(node, content)
-        {
-            result.push((name, location_for_node(path, content, node)));
+    let count = u32::try_from(parameters.named_child_count()).unwrap_or(u32::MAX);
+    for argument_index in 0..count {
+        let Some(parameter) = parameters.named_child(argument_index) else {
             continue;
-        }
-        let count = u32::try_from(node.named_child_count()).unwrap_or(u32::MAX);
-        for index in (0..count).rev() {
-            if let Some(child) = node.named_child(index) {
-                stack.push(child);
-            }
-        }
+        };
+        collect_parameter_bindings(
+            path,
+            content,
+            parameter,
+            usize::try_from(argument_index).unwrap_or(usize::MAX),
+            None,
+            &mut result,
+        );
     }
     result
+}
+
+fn collect_parameter_bindings(
+    path: &str,
+    content: &[u8],
+    node: Node<'_>,
+    argument_index: usize,
+    property_path: Option<String>,
+    result: &mut Vec<ParameterInfo>,
+) {
+    if matches!(
+        node.kind(),
+        "identifier" | "shorthand_property_identifier_pattern"
+    ) {
+        if let Some(name) = expression_name(node, content) {
+            let property_path = property_path.or_else(|| {
+                (node.kind() == "shorthand_property_identifier_pattern").then(|| name.clone())
+            });
+            result.push(ParameterInfo {
+                name,
+                location: location_for_node(path, content, node),
+                argument_index,
+                property_path,
+            });
+        }
+        return;
+    }
+    if matches!(node.kind(), "pair_pattern" | "pair") {
+        let key = node
+            .child_by_field_name("key")
+            .and_then(|key| expression_name(key, content).or_else(|| string_value(key, content)));
+        let value = node
+            .child_by_field_name("value")
+            .or_else(|| node.named_child(1));
+        if let Some(value) = value {
+            let nested = key.map(|key| append_property_path(property_path.as_deref(), &key));
+            collect_parameter_bindings(
+                path,
+                content,
+                value,
+                argument_index,
+                nested.or(property_path),
+                result,
+            );
+        }
+        return;
+    }
+    if matches!(
+        node.kind(),
+        "assignment_pattern" | "required_parameter" | "optional_parameter"
+    ) && let Some(binding) = node
+        .child_by_field_name("left")
+        .or_else(|| node.child_by_field_name("pattern"))
+        .or_else(|| node.named_child(0))
+    {
+        collect_parameter_bindings(
+            path,
+            content,
+            binding,
+            argument_index,
+            property_path,
+            result,
+        );
+        return;
+    }
+    let count = u32::try_from(node.named_child_count()).unwrap_or(u32::MAX);
+    for index in 0..count {
+        let Some(child) = node.named_child(index) else {
+            continue;
+        };
+        if child.kind().contains("type") {
+            continue;
+        }
+        let nested_path = if matches!(node.kind(), "array_pattern" | "array") {
+            Some(append_property_path(
+                property_path.as_deref(),
+                &index.to_string(),
+            ))
+        } else {
+            property_path.clone()
+        };
+        collect_parameter_bindings(path, content, child, argument_index, nested_path, result);
+    }
+}
+
+fn append_property_path(prefix: Option<&str>, property: &str) -> String {
+    prefix.map_or_else(
+        || property.to_owned(),
+        |prefix| format!("{prefix}.{property}"),
+    )
+}
+
+fn parameter_markers(parameter: &ParameterInfo) -> Vec<String> {
+    let mut markers = vec![format!("@parameter:{}", parameter.argument_index)];
+    if let Some(path) = &parameter.property_path {
+        markers.push(format!("@property:{path}"));
+    }
+    markers
 }
 
 fn value_names(node: Node<'_>, content: &[u8]) -> Vec<String> {
@@ -3638,15 +3949,68 @@ fn argument_values(call: Node<'_>, content: &[u8]) -> Vec<String> {
         let Some(argument) = arguments.named_child(index) else {
             continue;
         };
-        if count > 1 {
+        let object_argument = matches!(argument.kind(), "object" | "object_expression");
+        if count > 1 || object_argument {
             values.push(format!("@argument:{}:{index}", call.start_byte()));
         }
-        if argument.kind() == "call_expression" {
+        if object_argument {
+            values.extend(object_argument_values(argument, content, None));
+        } else if argument.kind() == "call_expression" {
             values.push(call_output_key(argument));
         } else if let Some(name) = expression_name(argument, content) {
             values.push(name);
         } else {
             values.extend(value_names(argument, content));
+        }
+    }
+    values
+}
+
+fn object_argument_values(object: Node<'_>, content: &[u8], prefix: Option<&str>) -> Vec<String> {
+    let mut values = Vec::new();
+    let count = u32::try_from(object.named_child_count()).unwrap_or(u32::MAX);
+    for index in 0..count {
+        let Some(property) = object.named_child(index) else {
+            continue;
+        };
+        if matches!(property.kind(), "spread_element" | "spread_property") {
+            values.push("@ambiguous-property".into());
+            continue;
+        }
+        if matches!(
+            property.kind(),
+            "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+        ) && let Some(name) = expression_name(property, content)
+        {
+            let path = append_property_path(prefix, &name);
+            values.push(format!("@property:{path}"));
+            values.push(name);
+            continue;
+        }
+        let Some(key) = property
+            .child_by_field_name("key")
+            .and_then(|key| expression_name(key, content).or_else(|| string_value(key, content)))
+        else {
+            continue;
+        };
+        let Some(value) = property
+            .child_by_field_name("value")
+            .or_else(|| property.named_child(1))
+        else {
+            continue;
+        };
+        let path = append_property_path(prefix, &key);
+        if matches!(value.kind(), "object" | "object_expression") {
+            values.extend(object_argument_values(value, content, Some(&path)));
+            continue;
+        }
+        values.push(format!("@property:{path}"));
+        if value.kind() == "call_expression" {
+            values.push(call_output_key(value));
+        } else if let Some(name) = expression_name(value, content) {
+            values.push(name);
+        } else {
+            values.extend(value_names(value, content));
         }
     }
     values
@@ -3671,6 +4035,58 @@ fn argument_slots(inputs: &[String]) -> Vec<Vec<String>> {
     slots
 }
 
+fn slot_values(slot: &[String]) -> Vec<String> {
+    slot.iter()
+        .filter(|input| !input.starts_with('@'))
+        .cloned()
+        .collect()
+}
+
+fn property_values(slot: &[String], requested: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut selected = false;
+    for input in slot {
+        if let Some(path) = input.strip_prefix("@property:") {
+            selected = path == requested;
+            continue;
+        }
+        if input.starts_with('@') {
+            selected = false;
+            continue;
+        }
+        if selected {
+            values.push(input.clone());
+        }
+    }
+    values
+}
+
+fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
+    let mut slots = argument_slots(&record.inputs);
+    let leaf = record
+        .callee
+        .as_deref()
+        .map(|callee| terminal_identifier(&callee.to_ascii_lowercase()).to_owned())
+        .unwrap_or_default();
+    let all_arguments_are_sensitive = (record.name.as_deref() == Some("dynamic-code-execution")
+        && leaf == "function")
+        || (record.name.as_deref() == Some("filesystem-operation") && leaf == "rename");
+    if all_arguments_are_sensitive {
+        return slots.into_iter().flatten().collect();
+    }
+    let mut slots = slots.drain(..);
+    let mut sensitive = slots.next().unwrap_or_default();
+    let shell_array_api = record.name.as_deref() == Some("process-execution")
+        && matches!(
+            leaf.as_str(),
+            "spawn" | "spawnsync" | "execfile" | "execfilesync"
+        );
+    if shell_array_api && let Some(arguments) = slots.next() {
+        sensitive.extend(arguments);
+    }
+    sensitive
+}
+
 fn call_output_key(call: Node<'_>) -> String {
     format!("@call:{}", call.start_byte())
 }
@@ -3691,9 +4107,12 @@ fn call_callee(node: Node<'_>, content: &[u8]) -> Option<String> {
 
 fn expression_name(node: Node<'_>, content: &[u8]) -> Option<String> {
     match node.kind() {
-        "identifier" | "property_identifier" | "private_property_identifier" | "this" => {
-            normalize(node.utf8_text(content).ok()?)
-        }
+        "identifier"
+        | "property_identifier"
+        | "private_property_identifier"
+        | "shorthand_property_identifier"
+        | "shorthand_property_identifier_pattern"
+        | "this" => normalize(node.utf8_text(content).ok()?),
         "member_expression" => {
             let object = node
                 .child_by_field_name("object")

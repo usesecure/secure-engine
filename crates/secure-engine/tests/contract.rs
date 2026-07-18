@@ -114,6 +114,20 @@ fn repeated_json_differs_only_in_documented_volatile_fields()
         {
             analysis.remove("duration_ms");
         }
+        if let Some(parsing) = report
+            .get_mut("parsing")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for volatile in [
+                "duration_ms",
+                "cache_hits",
+                "cache_misses",
+                "cache_writes",
+                "cache_entries_ignored",
+            ] {
+                parsing.remove(volatile);
+            }
+        }
     }
     assert_eq!(first_json, second_json);
     Ok(())

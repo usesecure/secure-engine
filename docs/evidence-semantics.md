@@ -5,6 +5,11 @@ Secure Engine 0.1.2 attaches an optional `semantic` object to security-relevant 
 Secure Engine 0.1.3 adds `semantics_version: secure-evidence-semantics-v2` and projects proven paths
 into public evidence contract v2. The original Phase 6.6 fields remain additive and compatible.
 Secure Engine 0.1.4 retains those public versions and refines only the internal proof construction.
+Secure Engine 0.1.5 retains the same public versions and binds immutable source identity, argument
+position, object property, sanitizer output, and dominating barrier evidence to one propagated
+trace. Role authorization remains an operation-level policy; ownership, tenant, general
+authorization, guards, and sanitizers are associated with the protected value when a target trace
+is available.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 

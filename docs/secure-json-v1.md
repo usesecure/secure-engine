@@ -90,6 +90,13 @@ module-resolution, positional-flow, and barrier proofs behind the same contract.
 finding fingerprints remain stable; findings with newly corrected endpoints or paths migrate
 through the existing deterministic fingerprint algorithm.
 
+Phase 6.9 likewise keeps `secure-json-v1`, SARIF 2.1.0, taxonomy 1.0.0, evidence semantics v2,
+and evidence contract v2 unchanged. It refines scoped source identity, exact source selection,
+argument/property connectivity, value-associated barriers, and semantic sink-input selection.
+Semantic fingerprints remain stable under harmless rename, insertion, reordering, and helper
+extraction. A finding whose selected source, path, sink input, or effective barrier is corrected can
+receive a deterministic new evidence/report fingerprint because its evidence changed.
+
 ## Exit codes
 
 | Code | Meaning |
