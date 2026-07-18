@@ -1,5 +1,5 @@
 Name:           secure-engine
-Version:        0.1.5
+Version:        0.1.6
 Release:        1%{?dist}
 Summary:        Local deterministic security analysis CLI and native desktop
 License:        MIT
@@ -45,6 +45,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 %{_datadir}/icons/hicolor/scalable/apps/dev.usesecure.SecureEngine.svg
 
 %changelog
+* Sat Jul 18 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.6-1
+- Phase 6.10 authorization-wrapper and fail-closed control-flow generalization
+
 * Fri Jul 17 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.5-1
 - Phase 6.9 retired Phase 15 evidence and false-positive remediation
 

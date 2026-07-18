@@ -10,6 +10,13 @@ position, object property, sanitizer output, and dominating barrier evidence to 
 trace. Role authorization remains an operation-level policy; ownership, tenant, general
 authorization, guards, and sanitizers are associated with the protected value when a target trace
 is available.
+Secure Engine 0.1.6 retains the same public versions and adds private function summaries for
+authenticated-principal returns, filtered-principal returns, boolean role/permission decisions,
+and fail-closed enforcement. A summary is usable only when its implementation proves a trusted
+principal lineage and its caller validates the same unreassigned result before the operation.
+Identity equality additionally requires one authenticated side and one non-request-derived,
+server-selected identity. Policy strings keep permission and identity distinct while projecting
+through the compatible public authorization vocabulary.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 

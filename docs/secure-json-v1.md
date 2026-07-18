@@ -97,6 +97,9 @@ Semantic fingerprints remain stable under harmless rename, insertion, reordering
 extraction. A finding whose selected source, path, sink input, or effective barrier is corrected can
 receive a deterministic new evidence/report fingerprint because its evidence changed.
 
+Phase 6.10 keeps those public versions unchanged. Authorization-wrapper candidates and summaries
+remain private analysis records and introduce no secure-json-v1 or SARIF field.
+
 ## Exit codes
 
 | Code | Meaning |

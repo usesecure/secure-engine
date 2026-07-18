@@ -1,0 +1,27 @@
+{
+  "schema_version": "secure-engine-phase610-cms-nova-handoff-summary-v1",
+  "source": "frozen-cms-nova-v0.1.5-dogfood-evaluation",
+  "inputs": {
+    "secure_json_v1_report": "31fbf91e6ebf4bbc758b6f35f672f19351b11f39a362c1c6d2227689c952fc22",
+    "independent_classification": "ed6524b6cbc3f0ba7c8a2171fea29c26b0107d8f1a8ae10240bc876f2197567b",
+    "checksum_index": "b9052ac57e0cdc1c29d7a6ae6ccf0c6d6a7a1cee764c6f7a37a3a42961a0a75d"
+  },
+  "source_commit": "4c3de58838c595afb06fbea4e5bac2abc90bab01",
+  "population": {
+    "raw_findings": 56,
+    "se1007_findings": 56,
+    "false_positives": 56,
+    "validated_vulnerabilities": 0,
+    "uncertain": 0
+  },
+  "root_causes": {
+    "fail_closed_principal_role_wrapper": 53,
+    "request_bound_boolean_authorization": 2,
+    "authenticated_primary_identity_equality": 1
+  },
+  "scope": {
+    "source_exported": false,
+    "project_specific_logic_permitted": false,
+    "benchmark_claim_permitted": false
+  }
+}

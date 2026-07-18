@@ -110,6 +110,22 @@ struct CandidateTarget<'a> {
     record: &'a ProgramRecord,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum AuthorizationSummaryMode {
+    Principal,
+    FilteredPrincipal,
+    Boolean,
+    Enforced,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct AuthorizationSummary {
+    function: String,
+    policy: String,
+    mode: AuthorizationSummaryMode,
+    parameter_bindings: BTreeSet<usize>,
+}
+
 #[derive(Clone, Debug)]
 struct ImportBinding {
     imported: String,
@@ -215,6 +231,7 @@ impl GraphBuilder {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn extract_program(
     path: &str,
     content: &[u8],
@@ -312,6 +329,15 @@ pub(crate) fn extract_program(
             }
         }
     }
+    append_authorization_candidates(
+        path,
+        content,
+        root,
+        &functions,
+        &graph_provenance,
+        &mut records,
+        maximum_records,
+    );
     records.sort();
     records.dedup_by(|left, right| left.record_id == right.record_id);
     Ok(ProgramUnit {
@@ -456,6 +482,12 @@ pub(crate) fn analyze(
             },
         );
     for record in &all_records {
+        if matches!(
+            record.kind.as_str(),
+            "authorization-candidate" | "control-gate"
+        ) {
+            continue;
+        }
         let node = builder.node_with_semantic(
             graph_kind_for_record(&record.kind, record.name.as_deref()),
             record
@@ -522,6 +554,13 @@ pub(crate) fn analyze(
                 .map(|function| (function.clone(), record.location.span.end_byte))
         })
         .collect::<BTreeMap<_, _>>();
+    let authorization_summaries = authorization_summaries(
+        &all_records,
+        &raw_functions,
+        &import_bindings,
+        &parameter_records,
+        configuration.max_interprocedural_depth,
+    );
     let helper_guard_policies = all_records
         .iter()
         .filter(|record| {
@@ -547,7 +586,7 @@ pub(crate) fn analyze(
                 policies
             },
         );
-    let propagated_guards = all_records
+    let mut propagated_guards = all_records
         .iter()
         .filter(|record| matches!(record.kind.as_str(), "call" | "guard"))
         .filter_map(|record| {
@@ -563,6 +602,13 @@ pub(crate) fn analyze(
         })
         .flatten()
         .collect::<Vec<_>>();
+    propagated_guards.extend(summary_authorization_guards(
+        &all_records,
+        &authorization_summaries,
+        &raw_functions,
+        &import_bindings,
+        &parameter_records,
+    ));
     let mut guards = BTreeMap::<String, Vec<&ProgramRecord>>::new();
     for record in all_records.iter().filter(|record| record.kind == "guard") {
         let resolves_locally = record
@@ -812,7 +858,10 @@ pub(crate) fn analyze(
                             );
                         }
                     }
-                    let has_effective_authorization = tainted_trace.as_ref().is_some_and(|trace| {
+                    let authorization_trace = tainted_trace
+                        .as_ref()
+                        .or_else(|| handler_traces.get(&function));
+                    let has_effective_authorization = authorization_trace.is_some_and(|trace| {
                         trace
                             .sanitizers
                             .iter()
@@ -1496,20 +1545,35 @@ fn extract_record_for_node(
         "if_statement" => {
             if let Some(condition) = node.child_by_field_name("condition") {
                 let inputs = value_names(condition, content);
-                if let Some(policy) = guard_policy(condition, content, &inputs)
-                    && let Some(dominance) = if_guard_dominance(node, condition, content, function)
+                if let Some(dominance) = if_guard_dominance(node, condition, content, function)
+                    && function.is_some_and(|function| {
+                        authorization_guard_survives_try_context(node, function, content)
+                    })
                 {
                     records.push(record_with_dominance(
-                        "guard",
-                        Some(policy),
+                        "control-gate",
+                        None,
                         function_name,
-                        inputs,
+                        inputs.clone(),
                         None,
                         None,
                         location_for_node(path, content, condition),
                         provenance,
                         Some(dominance),
                     ));
+                    if let Some(policy) = guard_policy(condition, content, &inputs) {
+                        records.push(record_with_dominance(
+                            "guard",
+                            Some(policy),
+                            function_name,
+                            inputs,
+                            None,
+                            None,
+                            location_for_node(path, content, condition),
+                            provenance,
+                            Some(dominance),
+                        ));
+                    }
                 }
             }
         }
@@ -1528,7 +1592,9 @@ fn append_destructuring_records(
     aliases: &AliasMap,
     records: &mut Vec<ProgramRecord>,
 ) {
-    let Some(base) = expression_name(value, content) else {
+    let Some(base) = expression_name(value, content)
+        .or_else(|| nested_call_expression(value).map(call_output_key))
+    else {
         return;
     };
     let resolved_base = resolve_alias(&base, function, aliases);
@@ -1568,6 +1634,21 @@ fn append_destructuring_records(
             location_for_node(path, content, item),
             provenance,
         ));
+    }
+}
+
+fn nested_call_expression(mut node: Node<'_>) -> Option<Node<'_>> {
+    loop {
+        if node.kind() == "call_expression" {
+            return Some(node);
+        }
+        if !matches!(
+            node.kind(),
+            "parenthesized_expression" | "await_expression" | "as_expression"
+        ) {
+            return None;
+        }
+        node = node.named_child(0)?;
     }
 }
 
@@ -1659,7 +1740,17 @@ pub(crate) fn record_with_dominance(
     provenance: &ParserProvenance,
     dominance: Option<(u64, u64)>,
 ) -> ProgramRecord {
-    if inputs.iter().any(|input| input.starts_with("@argument:")) {
+    if inputs.iter().any(|input| input.starts_with("@summary:")) {
+        let mut seen_in_segment = BTreeSet::new();
+        inputs.retain(|input| {
+            if input.starts_with('@') {
+                seen_in_segment.clear();
+                true
+            } else {
+                seen_in_segment.insert(input.clone())
+            }
+        });
+    } else if inputs.iter().any(|input| input.starts_with("@argument:")) {
         let mut seen_in_slot = BTreeSet::new();
         inputs.retain(|input| {
             if input.starts_with("@argument:") || input.starts_with("@property:") {
@@ -2472,6 +2563,702 @@ fn required_sanitizer_policy(rule_id: &str) -> Option<&'static str> {
     }
 }
 
+fn authorization_summaries(
+    records: &[&ProgramRecord],
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+    maximum_depth: usize,
+) -> Vec<AuthorizationSummary> {
+    let mut summaries = BTreeSet::new();
+    for _ in 0..maximum_depth.saturating_add(2) {
+        let before = summaries.clone();
+        for candidate in records
+            .iter()
+            .filter(|record| record.kind == "authorization-candidate")
+        {
+            let Some(function) = candidate.function.as_deref() else {
+                continue;
+            };
+            let Some(mode) = summary_mode(candidate) else {
+                continue;
+            };
+            let checked = candidate_segment(&candidate.inputs, None, Some("@accepted"));
+            let accepted = candidate_segment(&candidate.inputs, Some("@accepted"), None);
+            let trusted = checked.iter().find_map(|value| {
+                trusted_principal_bindings(
+                    function,
+                    value,
+                    candidate.location.span.end_byte,
+                    records,
+                    &summaries,
+                    functions,
+                    import_bindings,
+                    parameters,
+                    maximum_depth.saturating_add(2),
+                )
+            });
+            let Some(mut bindings) = trusted else {
+                continue;
+            };
+            if matches!(
+                mode,
+                AuthorizationSummaryMode::FilteredPrincipal | AuthorizationSummaryMode::Enforced
+            ) {
+                let Some(returned_bindings) = accepted.iter().find_map(|value| {
+                    trusted_principal_bindings(
+                        function,
+                        value,
+                        candidate.location.span.end_byte,
+                        records,
+                        &summaries,
+                        functions,
+                        import_bindings,
+                        parameters,
+                        maximum_depth.saturating_add(2),
+                    )
+                }) else {
+                    continue;
+                };
+                bindings.extend(returned_bindings);
+            }
+            if mode == AuthorizationSummaryMode::Principal {
+                bindings.extend(parameter_bindings_for_values(
+                    function, &checked, parameters,
+                ));
+            }
+            summaries.insert(AuthorizationSummary {
+                function: function.to_owned(),
+                policy: candidate.name.clone().unwrap_or_default(),
+                mode,
+                parameter_bindings: bindings,
+            });
+        }
+        if summaries == before {
+            break;
+        }
+    }
+    summaries.into_iter().collect()
+}
+
+fn summary_mode(candidate: &ProgramRecord) -> Option<AuthorizationSummaryMode> {
+    if candidate
+        .inputs
+        .iter()
+        .any(|input| input == "@summary:principal")
+    {
+        Some(AuthorizationSummaryMode::Principal)
+    } else if candidate
+        .inputs
+        .iter()
+        .any(|input| input == "@summary:filtered")
+    {
+        Some(AuthorizationSummaryMode::FilteredPrincipal)
+    } else if candidate
+        .inputs
+        .iter()
+        .any(|input| input == "@summary:boolean")
+    {
+        Some(AuthorizationSummaryMode::Boolean)
+    } else if candidate
+        .inputs
+        .iter()
+        .any(|input| input == "@summary:enforced")
+    {
+        Some(AuthorizationSummaryMode::Enforced)
+    } else {
+        None
+    }
+}
+
+fn candidate_segment(inputs: &[String], after: Option<&str>, before: Option<&str>) -> Vec<String> {
+    let mut selected = after.is_none();
+    let mut values = Vec::new();
+    for input in inputs {
+        if after == Some(input.as_str()) {
+            selected = true;
+            continue;
+        }
+        if before == Some(input.as_str()) {
+            break;
+        }
+        if selected && (!input.starts_with('@') || input.starts_with("@call:")) {
+            values.push(input.clone());
+        }
+    }
+    values
+}
+
+#[allow(clippy::too_many_arguments)]
+fn trusted_principal_bindings(
+    function: &str,
+    value: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+    summaries: &BTreeSet<AuthorizationSummary>,
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+    depth: usize,
+) -> Option<BTreeSet<usize>> {
+    if depth == 0 || value.starts_with("@argument:") || value.starts_with("@property:") {
+        return None;
+    }
+    let lookup = if value.starts_with("@call:") && !value.contains('.') {
+        value
+    } else {
+        value.split(['.', '[']).next().unwrap_or(value)
+    };
+    let origin = records
+        .iter()
+        .filter(|record| {
+            record.function.as_deref() == Some(function)
+                && (record.location.span.end_byte <= before || lookup.starts_with("@call:"))
+                && record.output.as_deref() == Some(lookup)
+                && !matches!(
+                    record.kind.as_str(),
+                    "argument" | "source" | "authorization-candidate" | "control-gate"
+                )
+        })
+        .max_by_key(|record| record.location.span.start_byte)?;
+    if let Some(callee) = origin.callee.as_deref() {
+        if let Some(target) = unique_function(callee, origin, functions, import_bindings) {
+            if let Some(summary) = summaries.iter().find(|summary| {
+                summary.function.as_str() == target
+                    && matches!(
+                        summary.mode,
+                        AuthorizationSummaryMode::Principal
+                            | AuthorizationSummaryMode::FilteredPrincipal
+                            | AuthorizationSummaryMode::Enforced
+                    )
+            }) {
+                return map_summary_bindings(summary, origin, function, records, parameters);
+            }
+            return None;
+        }
+        if trusted_external_principal_resolver(callee, origin, import_bindings) {
+            return Some(parameter_bindings_for_values(
+                function,
+                &origin.inputs,
+                parameters,
+            ));
+        }
+    }
+    origin.inputs.iter().find_map(|input| {
+        trusted_principal_bindings(
+            function,
+            input,
+            origin.location.span.start_byte,
+            records,
+            summaries,
+            functions,
+            import_bindings,
+            parameters,
+            depth.saturating_sub(1),
+        )
+    })
+}
+
+fn trusted_external_principal_resolver(
+    callee: &str,
+    record: &ProgramRecord,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+) -> bool {
+    let normalized = callee.to_ascii_lowercase().replace("::", ".");
+    let recognized = matches!(
+        normalized.as_str(),
+        "identity.current" | "auth.api.getsession" | "auth.session.current" | "session.current"
+    ) || normalized.ends_with(".auth.api.getsession");
+    if !recognized {
+        return false;
+    }
+    let leaf = terminal_identifier(&normalized);
+    !import_bindings
+        .get(&record.location.path)
+        .into_iter()
+        .flatten()
+        .any(|binding| {
+            binding.module.starts_with('.')
+                && (binding.local.eq_ignore_ascii_case(leaf)
+                    || binding.imported.eq_ignore_ascii_case(leaf))
+        })
+}
+
+fn parameter_bindings_for_values(
+    function: &str,
+    values: &[String],
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> BTreeSet<usize> {
+    let Some(function_parameters) = parameters.get(function) else {
+        return BTreeSet::new();
+    };
+    function_parameters
+        .iter()
+        .filter_map(|parameter| {
+            let output = parameter.output.as_deref()?;
+            values
+                .iter()
+                .any(|value| {
+                    value == output
+                        || value
+                            .strip_prefix(output)
+                            .is_some_and(|suffix| suffix == ".headers" || suffix == "[headers]")
+                })
+                .then(|| parameter_index(parameter))
+                .flatten()
+        })
+        .collect()
+}
+
+fn parameter_index(record: &ProgramRecord) -> Option<usize> {
+    record
+        .inputs
+        .iter()
+        .find_map(|input| input.strip_prefix("@parameter:"))
+        .and_then(|index| index.parse().ok())
+}
+
+fn map_summary_bindings(
+    summary: &AuthorizationSummary,
+    origin: &ProgramRecord,
+    function: &str,
+    records: &[&ProgramRecord],
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> Option<BTreeSet<usize>> {
+    if summary.parameter_bindings.is_empty() {
+        return Some(BTreeSet::new());
+    }
+    let call = matching_call_record(origin, records).unwrap_or(origin);
+    let slots = argument_slots(&call.inputs);
+    let mut mapped = BTreeSet::new();
+    for binding in &summary.parameter_bindings {
+        let values = slots
+            .get(*binding)
+            .map_or_else(Vec::new, |slot| slot_values(slot));
+        let current = parameter_bindings_for_values(function, &values, parameters);
+        if current.is_empty() {
+            return None;
+        }
+        mapped.extend(current);
+    }
+    Some(mapped)
+}
+
+fn matching_call_record<'a>(
+    origin: &ProgramRecord,
+    records: &'a [&ProgramRecord],
+) -> Option<&'a ProgramRecord> {
+    records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function == origin.function
+                && record.callee == origin.callee
+                && matches!(record.kind.as_str(), "call" | "guard")
+                && record.location.span.start_byte >= origin.location.span.start_byte
+                && record.location.span.end_byte <= origin.location.span.end_byte
+        })
+        .max_by_key(|record| record.location.span.start_byte)
+}
+
+fn summary_authorization_guards(
+    records: &[&ProgramRecord],
+    summaries: &[AuthorizationSummary],
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> Vec<ProgramRecord> {
+    let summary_set = summaries.iter().cloned().collect::<BTreeSet<_>>();
+    let mut guards = direct_structural_authorization_guards(
+        records,
+        &summary_set,
+        functions,
+        import_bindings,
+        parameters,
+    );
+    guards.extend(summarized_call_authorization_guards(
+        records,
+        summaries,
+        functions,
+        import_bindings,
+        parameters,
+    ));
+    guards.sort();
+    guards.dedup_by(|left, right| {
+        left.record_id == right.record_id
+            && left.name == right.name
+            && left.function == right.function
+    });
+    guards
+}
+
+fn direct_structural_authorization_guards(
+    records: &[&ProgramRecord],
+    summaries: &BTreeSet<AuthorizationSummary>,
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> Vec<ProgramRecord> {
+    let mut guards = Vec::new();
+    for candidate in records
+        .iter()
+        .filter(|record| record.kind == "authorization-candidate")
+    {
+        if candidate
+            .inputs
+            .iter()
+            .any(|input| input == "@summary:identity-gate")
+        {
+            if identity_candidate_is_trusted(
+                candidate,
+                records,
+                summaries,
+                functions,
+                import_bindings,
+                parameters,
+            ) {
+                guards.push(synthetic_guard(candidate));
+            }
+        } else if candidate
+            .inputs
+            .iter()
+            .any(|input| input == "@summary:gate")
+            && candidate
+                .name
+                .as_deref()
+                .is_some_and(crate::semantics::is_operation_authorization)
+            && candidate_segment(&candidate.inputs, None, None)
+                .iter()
+                .any(|value| {
+                    candidate.function.as_deref().is_some_and(|function| {
+                        trusted_principal_bindings(
+                            function,
+                            value,
+                            candidate.location.span.end_byte,
+                            records,
+                            summaries,
+                            functions,
+                            import_bindings,
+                            parameters,
+                            10,
+                        )
+                        .is_some()
+                    })
+                })
+        {
+            guards.push(synthetic_guard(candidate));
+        }
+    }
+    guards
+}
+
+fn summarized_call_authorization_guards(
+    records: &[&ProgramRecord],
+    summaries: &[AuthorizationSummary],
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> Vec<ProgramRecord> {
+    let mut guards = Vec::new();
+    for call in records
+        .iter()
+        .filter(|record| matches!(record.kind.as_str(), "call" | "guard"))
+    {
+        let Some(callee) = call.callee.as_deref() else {
+            continue;
+        };
+        let Some(target) = unique_function(callee, call, functions, import_bindings) else {
+            continue;
+        };
+        for summary in summaries.iter().filter(|summary| {
+            summary.function.as_str() == target
+                && crate::semantics::is_operation_authorization(&summary.policy)
+        }) {
+            if !call_satisfies_summary_bindings(call, summary, parameters, records) {
+                continue;
+            }
+            if summary.mode == AuthorizationSummaryMode::Enforced
+                && call.dominance_start.is_some()
+                && call.dominance_end.is_some()
+            {
+                let mut guard = synthetic_guard(call);
+                guard.name = Some(summary.policy.clone());
+                guards.push(guard);
+                continue;
+            }
+            if !matches!(
+                summary.mode,
+                AuthorizationSummaryMode::Boolean | AuthorizationSummaryMode::FilteredPrincipal
+            ) {
+                continue;
+            }
+            for gate in records.iter().filter(|record| {
+                record.kind == "control-gate"
+                    && record.function == call.function
+                    && record.location.span.start_byte >= call.location.span.end_byte
+                    && record.dominance_start.is_some()
+                    && record.dominance_end.is_some()
+            }) {
+                if gate.inputs.iter().any(|value| {
+                    value_originates_from_call(
+                        call,
+                        value,
+                        gate.location.span.start_byte,
+                        records,
+                        10,
+                    )
+                }) {
+                    let mut guard = synthetic_guard(gate);
+                    guard.name = Some(summary.policy.clone());
+                    guards.push(guard);
+                }
+            }
+        }
+    }
+    guards
+}
+
+fn synthetic_guard(record: &ProgramRecord) -> ProgramRecord {
+    let mut guard = record.clone();
+    guard.kind = "guard".into();
+    guard.callee = Some("@structural-authorization-proof".into());
+    guard
+}
+
+fn call_satisfies_summary_bindings(
+    call: &ProgramRecord,
+    summary: &AuthorizationSummary,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+    records: &[&ProgramRecord],
+) -> bool {
+    if summary.parameter_bindings.is_empty() {
+        return true;
+    }
+    let Some(function) = call.function.as_deref() else {
+        return false;
+    };
+    let slots = argument_slots(&call.inputs);
+    summary.parameter_bindings.iter().all(|binding| {
+        slots.get(*binding).is_some_and(|slot| {
+            let values = slot_values(slot);
+            !parameter_bindings_for_values(function, &values, parameters).is_empty()
+                || values.iter().any(|value| {
+                    trusted_request_context(
+                        function,
+                        value,
+                        call.location.span.start_byte,
+                        records,
+                        8,
+                    )
+                })
+        })
+    })
+}
+
+fn trusted_request_context(
+    function: &str,
+    value: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let lookup = if value.starts_with("@call:") && !value.contains('.') {
+        value
+    } else {
+        value.split(['.', '[']).next().unwrap_or(value)
+    };
+    let Some(origin) = records
+        .iter()
+        .filter(|record| {
+            record.function.as_deref() == Some(function)
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(lookup)
+        })
+        .max_by_key(|record| record.location.span.start_byte)
+    else {
+        return false;
+    };
+    if origin
+        .callee
+        .as_deref()
+        .is_some_and(|callee| terminal_identifier(&callee.to_ascii_lowercase()) == "headers")
+    {
+        return true;
+    }
+    origin.inputs.iter().any(|input| {
+        trusted_request_context(
+            function,
+            input,
+            origin.location.span.start_byte,
+            records,
+            depth.saturating_sub(1),
+        )
+    })
+}
+
+fn value_originates_from_call(
+    call: &ProgramRecord,
+    value: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    if call.output.as_deref() == Some(value) {
+        return true;
+    }
+    let lookup = if value.starts_with("@call:") {
+        value
+    } else {
+        value.split(['.', '[']).next().unwrap_or(value)
+    };
+    let Some(origin) = records
+        .iter()
+        .filter(|record| {
+            record.function == call.function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(lookup)
+                && !matches!(record.kind.as_str(), "argument" | "source")
+        })
+        .max_by_key(|record| record.location.span.start_byte)
+    else {
+        return false;
+    };
+    if origin.record_id == call.record_id {
+        return true;
+    }
+    origin.inputs.iter().any(|input| {
+        value_originates_from_call(
+            call,
+            input,
+            origin.location.span.start_byte,
+            records,
+            depth.saturating_sub(1),
+        )
+    })
+}
+
+fn identity_candidate_is_trusted(
+    candidate: &ProgramRecord,
+    records: &[&ProgramRecord],
+    summaries: &BTreeSet<AuthorizationSummary>,
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> bool {
+    let Some(function) = candidate.function.as_deref() else {
+        return false;
+    };
+    let left = candidate_segment(&candidate.inputs, Some("@left"), Some("@right"));
+    let right = candidate_segment(&candidate.inputs, Some("@right"), None);
+    let left_principal = left.iter().any(|value| {
+        trusted_principal_bindings(
+            function,
+            value,
+            candidate.location.span.end_byte,
+            records,
+            summaries,
+            functions,
+            import_bindings,
+            parameters,
+            10,
+        )
+        .is_some()
+    });
+    let right_principal = right.iter().any(|value| {
+        trusted_principal_bindings(
+            function,
+            value,
+            candidate.location.span.end_byte,
+            records,
+            summaries,
+            functions,
+            import_bindings,
+            parameters,
+            10,
+        )
+        .is_some()
+    });
+    (left_principal
+        && right.iter().any(|value| {
+            trusted_server_identity(
+                function,
+                value,
+                candidate.location.span.end_byte,
+                records,
+                parameters,
+                8,
+            )
+        }))
+        || (right_principal
+            && left.iter().any(|value| {
+                trusted_server_identity(
+                    function,
+                    value,
+                    candidate.location.span.end_byte,
+                    records,
+                    parameters,
+                    8,
+                )
+            }))
+}
+
+fn trusted_server_identity(
+    function: &str,
+    value: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    let lookup = value.split(['.', '[']).next().unwrap_or(value);
+    let Some(origin) = records
+        .iter()
+        .filter(|record| {
+            record.function.as_deref() == Some(function)
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(lookup)
+                && !matches!(record.kind.as_str(), "argument" | "source")
+        })
+        .max_by_key(|record| record.location.span.start_byte)
+    else {
+        return false;
+    };
+    if origin
+        .callee
+        .as_deref()
+        .is_some_and(is_trusted_identity_selection)
+        && parameter_bindings_for_values(function, &origin.inputs, parameters).is_empty()
+    {
+        return true;
+    }
+    origin.inputs.iter().any(|input| {
+        trusted_server_identity(
+            function,
+            input,
+            origin.location.span.start_byte,
+            records,
+            parameters,
+            depth.saturating_sub(1),
+        )
+    })
+}
+
+fn is_trusted_identity_selection(callee: &str) -> bool {
+    matches!(
+        terminal_identifier(&callee.to_ascii_lowercase()),
+        "findfirst" | "first" | "findone"
+    )
+}
+
 fn dominating_guards(
     record: &ProgramRecord,
     guards: &BTreeMap<String, Vec<&ProgramRecord>>,
@@ -2659,8 +3446,10 @@ fn authorization_applies_to_trace(
     trace: &Trace,
     taints: &BTreeMap<(String, String), Trace>,
 ) -> bool {
-    guard.name.as_deref() == Some("role-authorization-before-sensitive-operation")
-        || guard_applies_to_trace(guard, trace, taints)
+    guard.name.as_deref().is_some_and(|policy| {
+        crate::semantics::authorization_kind(policy) == Some(crate::AuthorizationKind::Role)
+            || policy == IDENTITY_POLICY
+    }) || guard_applies_to_trace(guard, trace, taints)
 }
 
 fn values_correspond(left: &str, right: &str) -> bool {
@@ -2766,7 +3555,7 @@ fn qualified_function_path(qualified: &str) -> Option<&str> {
 
 fn module_resolves_to(caller: &str, module: &str, candidate: &str) -> bool {
     if !module.starts_with('.') {
-        return false;
+        return aliased_module_resolves_to(module, candidate);
     }
     let parent = Path::new(caller).parent().unwrap_or_else(|| Path::new(""));
     let Some(normalized) = lexical_path(&parent.join(module)) else {
@@ -2775,6 +3564,23 @@ fn module_resolves_to(caller: &str, module: &str, candidate: &str) -> bool {
     let candidate = strip_source_extension(candidate);
     let normalized = strip_source_extension(&normalized);
     candidate == normalized || candidate == format!("{normalized}/index")
+}
+
+fn aliased_module_resolves_to(module: &str, candidate: &str) -> bool {
+    let Some(suffix) = module
+        .strip_prefix("@/")
+        .or_else(|| module.strip_prefix("~/"))
+        .map(strip_source_extension)
+    else {
+        return false;
+    };
+    if suffix.is_empty() || suffix.split('/').any(|component| component == "..") {
+        return false;
+    }
+    let candidate = strip_source_extension(candidate);
+    candidate == suffix
+        || candidate.ends_with(&format!("/{suffix}"))
+        || candidate.ends_with(&format!("/{suffix}/index"))
 }
 
 fn lexical_path(path: &Path) -> Option<String> {
@@ -3385,6 +4191,756 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         .map(|name| authorization_policy_name(name))
 }
 
+const AUTHENTICATION_POLICY: &str = "authentication-before-sensitive-operation";
+const ROLE_POLICY: &str = "role-authorization-before-sensitive-operation";
+const PERMISSION_POLICY: &str = "permission-authorization-before-sensitive-operation";
+const OWNERSHIP_POLICY: &str = "ownership-authorization-before-sensitive-operation";
+const TENANT_POLICY: &str = "tenant-authorization-before-sensitive-operation";
+const IDENTITY_POLICY: &str = "identity-authorization-before-sensitive-operation";
+
+fn append_authorization_candidates(
+    path: &str,
+    content: &[u8],
+    root: Node<'_>,
+    functions: &[FunctionInfo],
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+    maximum: usize,
+) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if records.len() >= maximum {
+            return;
+        }
+        let function = containing_function(node, functions);
+        if let Some(function) = function {
+            if node.kind() == "return_statement"
+                && let Some(value) = node.named_child(0)
+            {
+                append_return_authorization_candidate(
+                    path, content, value, function, provenance, records,
+                );
+            } else if node.kind() == "if_statement"
+                && let Some(condition) = node.child_by_field_name("condition")
+                && let Some(dominance) =
+                    if_guard_dominance(node, condition, content, Some(function))
+                && authorization_guard_survives_try_context(node, function, content)
+            {
+                if let Some(policy) = structural_policy(condition, content) {
+                    let mut inputs = vec!["@summary:gate".into()];
+                    inputs.extend(value_names(condition, content));
+                    records.push(record_with_dominance(
+                        "authorization-candidate",
+                        Some(policy),
+                        Some(&function.qualified_name),
+                        inputs,
+                        None,
+                        None,
+                        location_for_node(path, content, condition),
+                        provenance,
+                        Some(dominance),
+                    ));
+                    if let Some(returned) = following_simple_return(node, content, function) {
+                        let failure = node.child_by_field_name("consequence");
+                        let mode = if failure
+                            .is_some_and(|branch| branch_returns_nullish(branch, content))
+                        {
+                            Some("@summary:filtered")
+                        } else if failure.is_some_and(|branch| branch_fails_closed(branch, content))
+                        {
+                            Some("@summary:enforced")
+                        } else {
+                            None
+                        };
+                        if let Some(mode) = mode {
+                            let mut inputs = vec![mode.into()];
+                            inputs.extend(value_names(condition, content));
+                            inputs.push("@accepted".into());
+                            inputs.extend(value_names(returned, content));
+                            records.push(record(
+                                "authorization-candidate",
+                                Some(policy),
+                                Some(&function.qualified_name),
+                                inputs,
+                                Some("@return"),
+                                None,
+                                location_for_node(path, content, node),
+                                provenance,
+                            ));
+                        }
+                    }
+                }
+                if let Some((left, right)) = identity_comparison(condition, content) {
+                    let mut inputs = vec!["@summary:identity-gate".into(), "@left".into()];
+                    inputs.extend(value_names(left, content));
+                    inputs.push("@right".into());
+                    inputs.extend(value_names(right, content));
+                    records.push(record_with_dominance(
+                        "authorization-candidate",
+                        Some(IDENTITY_POLICY),
+                        Some(&function.qualified_name),
+                        inputs,
+                        None,
+                        None,
+                        location_for_node(path, content, condition),
+                        provenance,
+                        Some(dominance),
+                    ));
+                }
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+}
+
+fn append_return_authorization_candidate(
+    path: &str,
+    content: &[u8],
+    value: Node<'_>,
+    function: &FunctionInfo,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    if !return_survives_try_context(value, function, content) {
+        return;
+    }
+    let value = unwrap_expression(value);
+    if matches!(
+        value.kind(),
+        "identifier" | "member_expression" | "subscript_expression" | "call_expression"
+    ) {
+        let mut inputs = vec!["@summary:principal".into()];
+        inputs.extend(value_names(value, content));
+        records.push(record(
+            "authorization-candidate",
+            Some(AUTHENTICATION_POLICY),
+            Some(&function.qualified_name),
+            inputs,
+            Some("@return"),
+            None,
+            location_for_node(path, content, value),
+            provenance,
+        ));
+    }
+    if let Some(policy) = structural_policy(value, content) {
+        let mut inputs = vec!["@summary:boolean".into()];
+        inputs.extend(value_names(value, content));
+        records.push(record(
+            "authorization-candidate",
+            Some(policy),
+            Some(&function.qualified_name),
+            inputs,
+            Some("@return"),
+            None,
+            location_for_node(path, content, value),
+            provenance,
+        ));
+    }
+    if matches!(
+        value.kind(),
+        "ternary_expression" | "conditional_expression"
+    ) && let (Some(condition), Some(consequence), Some(alternative)) = (
+        value.child_by_field_name("condition"),
+        value.child_by_field_name("consequence"),
+        value.child_by_field_name("alternative"),
+    ) && let Some(policy) = structural_policy(condition, content)
+    {
+        let accepted = if is_nullish(consequence, content) {
+            Some(alternative)
+        } else if is_nullish(alternative, content) {
+            Some(consequence)
+        } else {
+            None
+        };
+        if let Some(accepted) = accepted.filter(|accepted| simple_principal_value(*accepted)) {
+            let mut inputs = vec!["@summary:filtered".into()];
+            inputs.extend(value_names(condition, content));
+            inputs.push("@accepted".into());
+            inputs.extend(value_names(accepted, content));
+            records.push(record(
+                "authorization-candidate",
+                Some(policy),
+                Some(&function.qualified_name),
+                inputs,
+                Some("@return"),
+                None,
+                location_for_node(path, content, value),
+                provenance,
+            ));
+        }
+    }
+}
+
+fn structural_policy(node: Node<'_>, content: &[u8]) -> Option<&'static str> {
+    let node = unwrap_expression(node);
+    if matches!(node.kind(), "binary_expression" | "logical_expression") {
+        let operator = node
+            .child_by_field_name("operator")
+            .and_then(|operator| operator.utf8_text(content).ok())
+            .unwrap_or_default();
+        let left = node.child_by_field_name("left")?;
+        let right = node.child_by_field_name("right")?;
+        if matches!(operator, "&&" | "||") {
+            let left_policy = structural_policy(left, content);
+            let right_policy = structural_policy(right, content);
+            if left_policy == right_policy {
+                return left_policy;
+            }
+            if left_policy.is_none() && existence_check(left, content) {
+                return right_policy;
+            }
+            if right_policy.is_none() && existence_check(right, content) {
+                return left_policy;
+            }
+            return None;
+        }
+        if matches!(operator, "==" | "===" | "!=" | "!==") {
+            if is_boolean_true(right, content) {
+                return structural_policy(left, content);
+            }
+            if is_boolean_true(left, content) {
+                return structural_policy(right, content);
+            }
+            let dynamic = if is_fixed_policy_literal(left, content) {
+                Some(right)
+            } else if is_fixed_policy_literal(right, content) {
+                Some(left)
+            } else {
+                None
+            };
+            if let Some(dynamic) = dynamic {
+                return policy_for_expression(dynamic, content);
+            }
+        }
+    }
+    if node.kind() == "call_expression"
+        && let Some(callee) = node
+            .child_by_field_name("function")
+            .and_then(|callee| expression_name(callee, content))
+        && matches!(
+            terminal_identifier(&callee.to_ascii_lowercase()),
+            "includes" | "has"
+        )
+        && node
+            .child_by_field_name("arguments")
+            .and_then(|arguments| arguments.named_child(0))
+            .is_some_and(|argument| is_fixed_policy_literal(argument, content))
+    {
+        return policy_for_expression(node.child_by_field_name("function")?, content);
+    }
+    None
+}
+
+fn existence_check(node: Node<'_>, content: &[u8]) -> bool {
+    let text = node
+        .utf8_text(content)
+        .unwrap_or_default()
+        .replace(char::is_whitespace, "");
+    text.starts_with('!')
+        || text.ends_with("==null")
+        || text.ends_with("===null")
+        || text.ends_with("==undefined")
+        || text.ends_with("===undefined")
+}
+
+fn policy_for_expression(node: Node<'_>, content: &[u8]) -> Option<&'static str> {
+    let lower = node.utf8_text(content).ok()?.to_ascii_lowercase();
+    if lower.contains("permission") || lower.contains("scope") || lower.contains("capability") {
+        Some(PERMISSION_POLICY)
+    } else if lower.contains("role") {
+        Some(ROLE_POLICY)
+    } else if lower.contains("tenant")
+        || lower.contains("organization")
+        || lower.contains("workspace")
+    {
+        Some(TENANT_POLICY)
+    } else if lower.contains("owner") || lower.contains("membership") || lower.contains("member") {
+        Some(OWNERSHIP_POLICY)
+    } else {
+        None
+    }
+}
+
+fn identity_comparison<'a>(node: Node<'a>, content: &[u8]) -> Option<(Node<'a>, Node<'a>)> {
+    let node = unwrap_expression(node);
+    if matches!(node.kind(), "binary_expression" | "logical_expression") {
+        let operator = node
+            .child_by_field_name("operator")
+            .and_then(|operator| operator.utf8_text(content).ok())
+            .unwrap_or_default();
+        let left = node.child_by_field_name("left")?;
+        let right = node.child_by_field_name("right")?;
+        if matches!(operator, "==" | "===" | "!=" | "!==")
+            && !is_fixed_policy_literal(left, content)
+            && !is_fixed_policy_literal(right, content)
+            && identity_expression(left, content)
+            && identity_expression(right, content)
+        {
+            return Some((left, right));
+        }
+        return identity_comparison(left, content).or_else(|| identity_comparison(right, content));
+    }
+    None
+}
+
+fn identity_expression(node: Node<'_>, content: &[u8]) -> bool {
+    expression_name(node, content).is_some_and(|name| {
+        matches!(
+            terminal_identifier(&name.to_ascii_lowercase()),
+            "id" | "subject" | "sub" | "principalid" | "accountid" | "userid"
+        )
+    })
+}
+
+fn unwrap_expression(mut node: Node<'_>) -> Node<'_> {
+    while matches!(
+        node.kind(),
+        "parenthesized_expression" | "await_expression" | "as_expression" | "satisfies_expression"
+    ) {
+        let Some(child) = node.named_child(0) else {
+            break;
+        };
+        node = child;
+    }
+    node
+}
+
+fn is_fixed_policy_literal(node: Node<'_>, content: &[u8]) -> bool {
+    is_fixed_string_literal(node, content) || is_boolean_true(node, content)
+}
+
+fn is_boolean_true(node: Node<'_>, content: &[u8]) -> bool {
+    node.utf8_text(content)
+        .is_ok_and(|text| text.trim() == "true")
+}
+
+fn is_nullish(node: Node<'_>, content: &[u8]) -> bool {
+    node.utf8_text(content)
+        .is_ok_and(|text| matches!(text.trim(), "null" | "undefined"))
+}
+
+fn simple_principal_value(node: Node<'_>) -> bool {
+    matches!(
+        unwrap_expression(node).kind(),
+        "identifier" | "member_expression" | "subscript_expression"
+    )
+}
+
+fn authorization_guard_survives_try_context(
+    node: Node<'_>,
+    function: &FunctionInfo,
+    content: &[u8],
+) -> bool {
+    let root = syntax_root(node);
+    let exits = node
+        .child_by_field_name("consequence")
+        .and_then(|branch| branch_exit_kinds(branch, content, root, &mut Vec::new(), true));
+    try_context_preserves_exit(node, function, content, exits)
+}
+
+fn return_survives_try_context(node: Node<'_>, function: &FunctionInfo, content: &[u8]) -> bool {
+    try_context_preserves_exit(node, function, content, Some(ExitKinds::returning()))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExitKinds {
+    returns: bool,
+    throws: bool,
+}
+
+impl ExitKinds {
+    const fn returning() -> Self {
+        Self {
+            returns: true,
+            throws: false,
+        }
+    }
+
+    const fn throwing() -> Self {
+        Self {
+            returns: false,
+            throws: true,
+        }
+    }
+
+    const fn union(self, other: Self) -> Self {
+        Self {
+            returns: self.returns || other.returns,
+            throws: self.throws || other.throws,
+        }
+    }
+}
+
+fn try_context_preserves_exit(
+    node: Node<'_>,
+    function: &FunctionInfo,
+    content: &[u8],
+    exits: Option<ExitKinds>,
+) -> bool {
+    let Some(mut exits) = exits else {
+        return false;
+    };
+    let root = syntax_root(node);
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if ancestor.start_byte() <= usize::try_from(function.location.span.start_byte).unwrap_or(0)
+            && ancestor.end_byte()
+                >= usize::try_from(function.location.span.end_byte).unwrap_or(usize::MAX)
+        {
+            break;
+        }
+        if ancestor.kind() == "try_statement" {
+            let Some(body) = ancestor.child_by_field_name("body") else {
+                return false;
+            };
+            if !node_within(node, body) {
+                return false;
+            }
+            if exits.throws
+                && let Some(handler) = ancestor.child_by_field_name("handler")
+            {
+                let Some(handler_exits) = catch_handler_exit_kinds(handler, content, root) else {
+                    return false;
+                };
+                exits = ExitKinds {
+                    returns: exits.returns,
+                    throws: false,
+                }
+                .union(handler_exits);
+            }
+            if ancestor
+                .child_by_field_name("finalizer")
+                .is_some_and(|finalizer| !finally_preserves_pending_exit(finalizer, content))
+            {
+                return false;
+            }
+        }
+        current = ancestor.parent();
+    }
+    true
+}
+
+fn syntax_root(mut node: Node<'_>) -> Node<'_> {
+    while let Some(parent) = node.parent() {
+        node = parent;
+    }
+    node
+}
+
+fn node_within(node: Node<'_>, container: Node<'_>) -> bool {
+    container.start_byte() <= node.start_byte() && container.end_byte() >= node.end_byte()
+}
+
+fn finally_preserves_pending_exit(finalizer: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![finalizer];
+    while let Some(node) = stack.pop() {
+        if node != finalizer && is_function(node) {
+            continue;
+        }
+        if matches!(
+            node.kind(),
+            "return_statement"
+                | "throw_statement"
+                | "break_statement"
+                | "continue_statement"
+                | "assignment_expression"
+                | "augmented_assignment_expression"
+                | "update_expression"
+                | "call_expression"
+                | "new_expression"
+                | "await_expression"
+                | "yield_expression"
+                | "delete_expression"
+                | "for_statement"
+                | "for_in_statement"
+                | "while_statement"
+                | "do_statement"
+        ) {
+            return false;
+        }
+        if node.kind() == "unary_expression"
+            && node
+                .child_by_field_name("operator")
+                .and_then(|operator| operator.utf8_text(content).ok())
+                .is_some_and(|operator| operator.trim() == "delete")
+        {
+            return false;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    true
+}
+
+fn catch_handler_exit_kinds(
+    handler: Node<'_>,
+    content: &[u8],
+    root: Node<'_>,
+) -> Option<ExitKinds> {
+    if contains_sensitive_mutation(handler, content) {
+        return None;
+    }
+    branch_exit_kinds(handler, content, root, &mut Vec::new(), true)
+}
+
+fn contains_sensitive_mutation(node: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![node];
+    while let Some(current) = stack.pop() {
+        if current != node && is_function(current) {
+            continue;
+        }
+        if current.kind() == "call_expression"
+            && current
+                .child_by_field_name("function")
+                .and_then(|callee| expression_name(callee, content))
+                .and_then(|callee| sink_kind(&callee))
+                == Some("sensitive-mutation")
+        {
+            return true;
+        }
+        for index in (0..current.named_child_count()).rev() {
+            if let Some(child) = current.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn branch_exit_kinds(
+    node: Node<'_>,
+    content: &[u8],
+    root: Node<'_>,
+    resolving_helpers: &mut Vec<String>,
+    return_exits_scope: bool,
+) -> Option<ExitKinds> {
+    match node.kind() {
+        "return_statement" => return_exits_scope.then_some(ExitKinds::returning()),
+        "throw_statement" => Some(ExitKinds::throwing()),
+        "catch_clause" | "finally_clause" => node.child_by_field_name("body").and_then(|body| {
+            branch_exit_kinds(body, content, root, resolving_helpers, return_exits_scope)
+        }),
+        "statement_block" => node
+            .named_child_count()
+            .checked_sub(1)
+            .and_then(|index| node.named_child(u32::try_from(index).ok()?))
+            .and_then(|last| {
+                branch_exit_kinds(last, content, root, resolving_helpers, return_exits_scope)
+            }),
+        "if_statement" => {
+            let consequence = node.child_by_field_name("consequence").and_then(|branch| {
+                branch_exit_kinds(branch, content, root, resolving_helpers, return_exits_scope)
+            })?;
+            let alternative = node.child_by_field_name("alternative").and_then(|branch| {
+                branch_exit_kinds(branch, content, root, resolving_helpers, return_exits_scope)
+            })?;
+            Some(consequence.union(alternative))
+        }
+        "expression_statement" => {
+            let call = node.named_child(0).map(unwrap_expression)?;
+            if call.kind() != "call_expression" {
+                return None;
+            }
+            match local_terminating_helper(call, content, root, resolving_helpers) {
+                LocalHelperResolution::Terminates => Some(ExitKinds::throwing()),
+                LocalHelperResolution::NonTerminating => None,
+                LocalHelperResolution::Absent => {
+                    named_framework_terminator(call, content).then_some(ExitKinds::throwing())
+                }
+            }
+        }
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalHelperResolution {
+    Absent,
+    NonTerminating,
+    Terminates,
+}
+
+fn local_terminating_helper(
+    call: Node<'_>,
+    content: &[u8],
+    root: Node<'_>,
+    resolving_helpers: &mut Vec<String>,
+) -> LocalHelperResolution {
+    let Some(callee) = call
+        .child_by_field_name("function")
+        .and_then(|callee| expression_name(callee, content))
+    else {
+        return LocalHelperResolution::Absent;
+    };
+    if callee.contains('.') {
+        return LocalHelperResolution::Absent;
+    }
+
+    let bodies = local_function_bodies(root, content, &callee);
+    if bodies.is_empty() {
+        return LocalHelperResolution::Absent;
+    }
+    if bodies.len() != 1
+        || resolving_helpers.len() >= 8
+        || resolving_helpers
+            .iter()
+            .any(|resolving| resolving == &callee)
+    {
+        return LocalHelperResolution::NonTerminating;
+    }
+
+    resolving_helpers.push(callee);
+    let exits = branch_exit_kinds(bodies[0], content, root, resolving_helpers, false);
+    resolving_helpers.pop();
+    if exits == Some(ExitKinds::throwing()) {
+        LocalHelperResolution::Terminates
+    } else {
+        LocalHelperResolution::NonTerminating
+    }
+}
+
+fn local_function_bodies<'tree>(root: Node<'tree>, content: &[u8], name: &str) -> Vec<Node<'tree>> {
+    let mut bodies = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if matches!(
+            node.kind(),
+            "function_declaration" | "generator_function_declaration"
+        ) && node
+            .child_by_field_name("name")
+            .and_then(|candidate| expression_name(candidate, content))
+            .as_deref()
+            == Some(name)
+            && let Some(body) = node.child_by_field_name("body")
+        {
+            bodies.push(body);
+        } else if node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .and_then(|candidate| expression_name(candidate, content))
+                .as_deref()
+                == Some(name)
+            && let Some(value) = node.child_by_field_name("value")
+            && is_function(value)
+            && let Some(body) = value.child_by_field_name("body")
+        {
+            bodies.push(body);
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    bodies
+}
+
+fn named_framework_terminator(call: Node<'_>, content: &[u8]) -> bool {
+    call.child_by_field_name("function")
+        .and_then(|callee| expression_name(callee, content))
+        .is_some_and(|callee| {
+            matches!(
+                terminal_identifier(&callee.to_ascii_lowercase()),
+                "redirect" | "permanentredirect" | "notfound"
+            )
+        })
+}
+
+fn following_simple_return<'a>(
+    statement: Node<'a>,
+    content: &[u8],
+    function: &FunctionInfo,
+) -> Option<Node<'a>> {
+    let function_node = function_ancestor(statement)?;
+    let mut stack = vec![function_node.child_by_field_name("body")?];
+    let mut selected = None;
+    while let Some(node) = stack.pop() {
+        if node.start_byte() > statement.end_byte()
+            && node.end_byte()
+                <= usize::try_from(function.location.span.end_byte).unwrap_or(usize::MAX)
+            && node.kind() == "return_statement"
+            && let Some(value) = node.named_child(0)
+            && simple_principal_value(value)
+            && !value.utf8_text(content).unwrap_or_default().contains("??")
+        {
+            selected = Some(value);
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    selected
+}
+
+fn function_ancestor(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        if is_function(parent) {
+            return Some(parent);
+        }
+        node = parent;
+    }
+    None
+}
+
+fn branch_returns_nullish(node: Node<'_>, content: &[u8]) -> bool {
+    if node.kind() == "return_statement" {
+        return node
+            .named_child(0)
+            .is_some_and(|value| is_nullish(value, content));
+    }
+    if node.kind() == "statement_block" {
+        return node
+            .named_child_count()
+            .checked_sub(1)
+            .and_then(|index| node.named_child(u32::try_from(index).ok()?))
+            .is_some_and(|last| branch_returns_nullish(last, content));
+    }
+    false
+}
+
+fn branch_fails_closed(node: Node<'_>, content: &[u8]) -> bool {
+    if matches!(node.kind(), "return_statement" | "throw_statement") {
+        return true;
+    }
+    if node.kind() == "expression_statement"
+        && let Some(call) = node.named_child(0).map(unwrap_expression)
+        && call.kind() == "call_expression"
+        && let Some(callee) = call
+            .child_by_field_name("function")
+            .and_then(|callee| expression_name(callee, content))
+    {
+        return matches!(
+            terminal_identifier(&callee.to_ascii_lowercase()),
+            "redirect" | "permanentredirect" | "notfound"
+        );
+    }
+    if node.kind() == "statement_block" {
+        return node
+            .named_child_count()
+            .checked_sub(1)
+            .and_then(|index| node.named_child(u32::try_from(index).ok()?))
+            .is_some_and(|last| branch_fails_closed(last, content));
+    }
+    if node.kind() == "if_statement" {
+        return node
+            .child_by_field_name("consequence")
+            .is_some_and(|branch| branch_fails_closed(branch, content))
+            && node
+                .child_by_field_name("alternative")
+                .is_some_and(|branch| branch_fails_closed(branch, content));
+    }
+    false
+}
+
 fn condition_has_single_literal_allowlist(condition: Node<'_>, content: &[u8]) -> bool {
     let mut stack = vec![condition];
     while let Some(node) = stack.pop() {
@@ -3624,7 +5180,7 @@ fn if_guard_dominance(
     let function = function?;
     let consequence = statement.child_by_field_name("consequence")?;
     let condition_text = condition.utf8_text(content).ok()?;
-    if condition_rejects_invalid(condition_text) && branch_terminates(consequence) {
+    if condition_rejects_invalid(condition_text) && branch_fails_closed(consequence, content) {
         return Some((
             u64::try_from(statement.end_byte()).ok()?,
             function.location.span.end_byte,
@@ -3650,28 +5206,6 @@ fn condition_rejects_invalid(condition: &str) -> bool {
         || compact.contains("===false")
         || compact.contains("==undefined")
         || compact.contains("===undefined")
-}
-
-fn branch_terminates(node: Node<'_>) -> bool {
-    if matches!(node.kind(), "return_statement" | "throw_statement") {
-        return true;
-    }
-    if node.kind() == "statement_block" {
-        return node
-            .named_child_count()
-            .checked_sub(1)
-            .and_then(|index| node.named_child(u32::try_from(index).ok()?))
-            .is_some_and(branch_terminates);
-    }
-    if node.kind() == "if_statement" {
-        return node
-            .child_by_field_name("consequence")
-            .is_some_and(branch_terminates)
-            && node
-                .child_by_field_name("alternative")
-                .is_some_and(branch_terminates);
-    }
-    false
 }
 
 fn framework_member_source(

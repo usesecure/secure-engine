@@ -19,7 +19,7 @@ The goal is not to claim that Secure Engine detects every vulnerability. The goa
 
 ## Current implementation status
 
-Phases 0–6.9 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2. Phase 6.8 uses only retired public evidence to correct framework source extraction, module-scoped helper resolution, positional propagation, exact barriers, process shell defaults, and authorization distinctions. Phase 6.9 uses only the permitted retired Phase 15 aggregate handoff to correct source identity, exact spans, property/position connectivity, value-associated barriers, and overbroad sink inputs, then proves those changes with independent regressions. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, complete runtime argument semantics, and additional package formats remain future work.
+Phases 0–6.10 are integrated. Phase 6.5 adds the frozen `secure-bench-taxonomy-v1` 1.0.0 contract to every deterministic rule family. Phase 6.6 adds explicit bounded evidence semantics. Phase 6.7 implements public evidence contract v2. Phase 6.8 corrects framework inputs, module resolution, positional propagation, exact barriers, process shell defaults, and authorization distinctions. Phase 6.9 corrects source identity, exact spans, property/position connectivity, value-associated barriers, and overbroad sink inputs. Phase 6.10 adds implementation-derived, fail-closed authorization summaries across uniquely resolved wrappers and callers, while retaining conservative dynamic and ambiguous boundaries. Phase 6 remains a provider-neutral, disabled-by-default validation boundary with exact preview and consent. Java/Kotlin, C#, hosted services, automatic fixes, telemetry, complete runtime argument semantics, and additional package formats remain future work.
 
 ## Product boundaries
 
@@ -385,6 +385,23 @@ Exit condition: release 0.1.4 passes all compatibility, security, schema, privac
 - [Complete] Preserve taxonomy 1.0.0, evidence contract v2, secure-json-v1, SARIF, baselines, history, suppressions, CLI/desktop parity, privacy, bounds, cancellation, symlink protections, and disabled-by-default AI while advancing only the private parse-cache envelope.
 
 Exit condition: release 0.1.5 passes every compatibility, quality, security, schema, privacy, determinism, performance, and Fedora packaging gate and produces two byte-identical RPMs without executing Secure Bench, changing the benchmark adapter, pushing, or accessing undisclosed material.
+
+### Phase 6.10 - Authorization-wrapper generalization
+
+Status: complete. The fourth and final authorized iterative dogfood pass resolved all 56 exact
+original fingerprints, retained none, changed none, and introduced none. Independent exceptional-
+control-flow fixtures, complete quality gates, reproducible Fedora packaging, and compatibility
+checks pass without executing Secure Bench or changing public contracts.
+
+- [Complete] Pin only the three permitted frozen aggregate artifacts and the clean CMS Nova source commit without importing application source or finding-specific paths.
+- [Complete] Derive principal, role, permission, and identity summaries from exact predicates, trusted identity resolution, return shape, terminating failure control flow, and current value origin rather than helper names or comments.
+- [Complete] Propagate summaries through local helpers, aliases, destructuring, explicit relative imports, uniquely resolved conventional source-root aliases, caller-side truthiness guards, and framework request-context providers only when resolution and bindings are unambiguous.
+- [Complete] Reject unconditional success, user-controlled policy values, catch-and-continue, nullable fallback, late/non-terminating checks, reassignment, wrong-value identity comparisons, ambiguous imports, and dynamic boundaries.
+- [Complete] Propagate return and throw reachability through nested handlers, accept a caught rejection only when every catch path returns, rethrows, or invokes a uniquely resolved always-throwing local helper, and invalidate proofs across effectful or abrupt `finally` blocks.
+- [Complete] Exercise paired JavaScript, JSX, TypeScript, and TSX fixtures across Node.js, Express, Next.js App Router, and Server Actions, including direct, helper, inter-file, control-flow, adversarial, and metamorphic variants.
+- [Complete] Preserve taxonomy 1.0.0, evidence contract v2, secure-json-v1, SARIF, unaffected semantic fingerprints, privacy, bounds, cancellation, CLI/desktop parity, and disabled-by-default AI while advancing the private parse-cache envelope to v7.
+
+Exit condition: release 0.1.6 passes every compatibility, quality, security, schema, privacy, determinism, performance, and Fedora packaging gate, retires only structurally proven false positives in the single permitted post-remediation application scan, and produces two byte-identical RPMs without executing Secure Bench, pushing, or making a benchmark claim.
 
 ### Phase 7 - Distribution
 

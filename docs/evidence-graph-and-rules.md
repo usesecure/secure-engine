@@ -33,6 +33,14 @@ the selected trace; provisional candidates are removed only after fixed-point ev
 path safe. The public graph extractor identity remains stable and the private cache envelope
 advances independently.
 
+Phase 6.10 constructs bounded private authorization summaries from exact implementation predicates,
+trusted principal origins, return shapes, and terminating failure branches. Filtered and boolean
+summaries become effective only when a uniquely resolved caller guard dominates the sink and tests
+the same unreassigned call result. Compound identity proof requires an authenticated value and a
+server-selected identity on opposite sides of an exact equality check. These private records do not
+change the public graph vocabulary or extractor identity; cache v7 prevents reuse of older program
+units.
+
 ## Findings and suppressions
 
 Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.

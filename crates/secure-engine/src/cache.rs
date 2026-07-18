@@ -14,7 +14,7 @@ use crate::parser::{
 use crate::workspace::{ReadOutcome, read_file_no_follow};
 use crate::{CacheControl, CancellationToken, ScanConfiguration, ScanError};
 
-const CACHE_FORMAT: &str = "secure-parse-cache-v6";
+const CACHE_FORMAT: &str = "secure-parse-cache-v7";
 const MAX_CACHE_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_CACHE_DIRECTORY_ENTRIES: usize = 100_000;
 static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
