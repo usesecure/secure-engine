@@ -38,7 +38,7 @@ trusted principal origins, return shapes, and terminating failure branches. Filt
 summaries become effective only when a uniquely resolved caller guard dominates the sink and tests
 the same unreassigned call result. Compound identity proof requires an authenticated value and a
 server-selected identity on opposite sides of an exact equality check. These private records do not
-change the public graph vocabulary or extractor identity; cache v7 prevents reuse of older program
+change the public graph vocabulary or extractor identity; cache v8 prevents reuse of older program
 units.
 
 ## Findings and suppressions

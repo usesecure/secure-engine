@@ -13,6 +13,7 @@ use crate::{
 
 pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v1";
 const MAX_RECORD_NAME_BYTES: usize = 512;
+const MAX_FIXED_POINT_PASSES: usize = 8;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ProgramUnit {
@@ -94,6 +95,7 @@ struct Trace {
     sanitizers: BTreeSet<String>,
     values: BTreeSet<String>,
     source_specificity: u8,
+    interprocedural_depth: usize,
 }
 
 #[derive(Clone)]
@@ -461,6 +463,15 @@ pub(crate) fn analyze(
                 &right.record_id,
             ))
     });
+    let mut records_by_function = BTreeMap::<String, Vec<&ProgramRecord>>::new();
+    for record in &all_records {
+        if let Some(function) = &record.function {
+            records_by_function
+                .entry(function.clone())
+                .or_default()
+                .push(record);
+        }
+    }
     let import_bindings = all_records
         .iter()
         .filter(|record| record.kind == "import-binding")
@@ -640,6 +651,26 @@ pub(crate) fn analyze(
         &mut builder,
         configuration.max_interprocedural_depth,
     );
+    let resource_authorized_sinks = all_records
+        .iter()
+        .copied()
+        .filter(|record| record.kind == "sink")
+        .filter(|record| record.name.as_deref() == Some("sensitive-mutation"))
+        .filter(|record| {
+            dominating_guard_records(record, &guards)
+                .iter()
+                .any(|guard| {
+                    guard
+                        .function
+                        .as_ref()
+                        .and_then(|function| records_by_function.get(function))
+                        .is_some_and(|function_records| {
+                            resource_authorization_applies_to_sink(guard, record, function_records)
+                        })
+                })
+        })
+        .map(|record| record.record_id.clone())
+        .collect::<BTreeSet<_>>();
     for sink in all_records.iter().filter(|record| record.kind == "sink") {
         let Some(sink_node) = record_nodes.get(&sink.record_id) else {
             continue;
@@ -661,8 +692,9 @@ pub(crate) fn analyze(
         .saturating_mul(configuration.max_interprocedural_depth.saturating_add(1))
         .min(configuration.max_graph_edges);
     let mut candidate_limit_reached = false;
-    let passes = configuration.max_interprocedural_depth.saturating_add(2);
-    for _pass in 0..passes {
+    let legacy_passes = configuration.max_interprocedural_depth.saturating_add(2);
+    let passes = legacy_passes.max(MAX_FIXED_POINT_PASSES);
+    for pass in 0..passes {
         let before = taints.clone();
         let snapshot = taints.clone();
         for record in &all_records {
@@ -697,6 +729,7 @@ pub(crate) fn analyze(
                                 } else {
                                     2
                                 },
+                                interprocedural_depth: 0,
                             },
                         );
                     }
@@ -786,6 +819,7 @@ pub(crate) fn analyze(
                     &parameter_records,
                     &record_nodes,
                     &mut builder,
+                    configuration.max_interprocedural_depth,
                 ),
                 "return" => {
                     if let Some(trace) = trace_for_inputs(&snapshot, &function, &record.inputs) {
@@ -839,7 +873,12 @@ pub(crate) fn analyze(
                             &snapshot,
                         ) {
                             candidates.remove(&format!("{rule_id}:{record_node}"));
-                        } else {
+                        } else if extended_round_candidate_allowed(
+                            rule_id,
+                            pass,
+                            legacy_passes,
+                            candidates.contains_key(&format!("{rule_id}:{record_node}")),
+                        ) {
                             let guard_nodes = dominant
                                 .iter()
                                 .filter_map(|guard| record_nodes.get(&guard.record_id).cloned())
@@ -866,6 +905,7 @@ pub(crate) fn analyze(
                             .sanitizers
                             .iter()
                             .any(|policy| crate::semantics::is_operation_authorization(policy))
+                            || resource_authorized_sinks.contains(&record.record_id)
                             || dominating_guard_records(record, &guards)
                                 .iter()
                                 .any(|guard| {
@@ -1544,7 +1584,10 @@ fn extract_record_for_node(
         }
         "if_statement" => {
             if let Some(condition) = node.child_by_field_name("condition") {
-                let inputs = value_names(condition, content);
+                let mut inputs = value_names(condition, content);
+                if condition_contains_conjunction(condition, content) {
+                    inputs.push("@conditional-conjunction".into());
+                }
                 if let Some(dominance) = if_guard_dominance(node, condition, content, function)
                     && function.is_some_and(|function| {
                         authorization_guard_survives_try_context(node, function, content)
@@ -1886,6 +1929,7 @@ fn unguarded_handler_traces(
                     sanitizers: BTreeSet::new(),
                     values: BTreeSet::new(),
                     source_specificity: 0,
+                    interprocedural_depth: 0,
                 },
             ))
         })
@@ -1967,6 +2011,7 @@ fn propagate_local_call(
     parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
     record_nodes: &BTreeMap<String, String>,
     builder: &mut GraphBuilder,
+    max_interprocedural_depth: usize,
 ) {
     let Some(callee_function) = record
         .callee
@@ -1999,6 +2044,9 @@ fn propagate_local_call(
         let Some(trace) = trace_for_inputs(taints, &origin_context, &inputs) else {
             continue;
         };
+        if trace.interprocedural_depth >= max_interprocedural_depth {
+            continue;
+        }
         let Some(parameter_node) = record_nodes.get(&parameter.record_id) else {
             continue;
         };
@@ -2018,6 +2066,8 @@ fn propagate_local_call(
             &parameter.provenance,
         );
         let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
+        parameter_trace.interprocedural_depth =
+            parameter_trace.interprocedural_depth.saturating_add(1);
         for guard in dominating_guard_records(record, guards) {
             let Some(policy) = guard.name.as_deref() else {
                 continue;
@@ -3329,6 +3379,13 @@ fn trace_is_sanitized_for(
 }
 
 fn guard_is_authorization(guard: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
+    if guard
+        .inputs
+        .iter()
+        .any(|input| input == "@conditional-conjunction")
+    {
+        return false;
+    }
     if !guard
         .name
         .as_deref()
@@ -3452,6 +3509,127 @@ fn authorization_applies_to_trace(
     }) || guard_applies_to_trace(guard, trace, taints)
 }
 
+fn resource_authorization_applies_to_sink(
+    guard: &ProgramRecord,
+    sink: &ProgramRecord,
+    records: &[&ProgramRecord],
+) -> bool {
+    if sink.name.as_deref() != Some("sensitive-mutation")
+        || guard
+            .inputs
+            .iter()
+            .any(|input| input == "@conditional-conjunction")
+        || !guard
+            .name
+            .as_deref()
+            .is_some_and(crate::semantics::is_operation_authorization)
+    {
+        return false;
+    }
+    let sink_values = sensitive_sink_inputs(sink);
+    if sink_values.is_empty() {
+        return false;
+    }
+    records.iter().copied().any(|call| {
+        call.function == guard.function
+            && call.callee.is_some()
+            && call.location.path == guard.location.path
+            && call.location.span.start_byte >= guard.location.span.start_byte
+            && call.location.span.end_byte <= guard.location.span.end_byte
+            && resource_authorization_call_binds_sink(call, sink, &sink_values, records)
+    })
+}
+
+fn resource_authorization_call_binds_sink(
+    call: &ProgramRecord,
+    sink: &ProgramRecord,
+    sink_values: &[String],
+    records: &[&ProgramRecord],
+) -> bool {
+    let slots = argument_slots(&call.inputs);
+    if slots.len() < 3 || !slots.iter().any(Vec::is_empty) {
+        return false;
+    }
+    let meaningful = slots
+        .iter()
+        .map(|slot| slot_values(slot))
+        .collect::<Vec<_>>();
+    let resource_slots = meaningful
+        .iter()
+        .enumerate()
+        .filter(|(_, slot)| {
+            slot.iter().any(|candidate| {
+                sink_values.iter().any(|sink_value| {
+                    local_values_share_identity(
+                        candidate,
+                        sink_value,
+                        sink.location.span.start_byte,
+                        records,
+                    )
+                })
+            })
+        })
+        .map(|(index, _)| index)
+        .collect::<BTreeSet<_>>();
+    !resource_slots.is_empty()
+        && meaningful.iter().enumerate().any(|(index, slot)| {
+            !resource_slots.contains(&index)
+                && slot.iter().any(|value| {
+                    !value.starts_with('@')
+                        && !call.callee.as_deref().is_some_and(|callee| {
+                            values_correspond(value, callee)
+                                || values_correspond(value, terminal_identifier(callee))
+                        })
+                })
+        })
+}
+
+fn local_values_share_identity(
+    left: &str,
+    right: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+) -> bool {
+    if left == right {
+        return true;
+    }
+    let aliases = |start: &str| {
+        let mut values = BTreeSet::from([start.to_owned()]);
+        for _ in 0..8 {
+            let previous = values.clone();
+            for record in records.iter().copied().filter(|record| {
+                record.location.span.end_byte <= before
+                    && matches!(record.kind.as_str(), "assignment" | "alias")
+                    && record.callee.is_none()
+            }) {
+                let Some(output) = record.output.as_deref() else {
+                    continue;
+                };
+                let inputs = record
+                    .inputs
+                    .iter()
+                    .filter(|input| !input.starts_with('@'))
+                    .collect::<Vec<_>>();
+                if inputs.len() != 1 {
+                    continue;
+                }
+                let input = inputs[0];
+                if previous.contains(output) {
+                    values.insert(input.clone());
+                }
+                if previous.contains(input) {
+                    values.insert(output.to_owned());
+                }
+            }
+            if values == previous {
+                break;
+            }
+        }
+        values
+    };
+    !aliases(left).is_disjoint(&aliases(right))
+}
+
 fn values_correspond(left: &str, right: &str) -> bool {
     left == right
         || left
@@ -3495,6 +3673,15 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
         "dynamic-code-execution" => Some("SE1006"),
         _ => None,
     }
+}
+
+fn extended_round_candidate_allowed(
+    rule_id: &str,
+    pass: usize,
+    legacy_passes: usize,
+    already_present: bool,
+) -> bool {
+    pass < legacy_passes || already_present || !matches!(rule_id, "SE1003" | "SE1005")
 }
 
 fn unique_function<'a>(
@@ -5193,6 +5380,27 @@ fn if_guard_dominance(
         ));
     }
     None
+}
+
+fn condition_contains_conjunction(condition: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if matches!(node.kind(), "binary_expression" | "logical_expression")
+            && node
+                .child_by_field_name("operator")
+                .and_then(|operator| operator.utf8_text(content).ok())
+                == Some("&&")
+        {
+            return true;
+        }
+        let count = u32::try_from(node.named_child_count()).unwrap_or(u32::MAX);
+        for index in 0..count {
+            if let Some(child) = node.named_child(index) {
+                stack.push(child);
+            }
+        }
+    }
+    false
 }
 
 fn condition_rejects_invalid(condition: &str) -> bool {
