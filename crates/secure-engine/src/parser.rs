@@ -661,7 +661,10 @@ fn extract_call_facts(
     let Some(callee_node) = node.child_by_field_name("function") else {
         return;
     };
-    let Some(callee) = expression_name(callee_node, content) else {
+    let unshadowed_eval = unshadowed_builtin_eval_call(node, content);
+    let Some(callee) =
+        expression_name(callee_node, content).or_else(|| unshadowed_eval.then(|| "eval".into()))
+    else {
         return;
     };
     push_fact(
@@ -709,6 +712,21 @@ fn extract_call_facts(
                 node,
                 Some(callee.clone()),
                 vec![relationship("invokes", &callee)],
+                parser_provenance,
+            ),
+        );
+    }
+    if unshadowed_eval {
+        push_fact(
+            facts,
+            maximum,
+            make_fact(
+                "dynamic-code-execution",
+                path,
+                content,
+                node,
+                Some("eval".into()),
+                vec![relationship("invokes", "eval")],
                 parser_provenance,
             ),
         );
@@ -790,9 +808,6 @@ fn operation_kinds(callee: &str) -> Vec<&'static str> {
     {
         kinds.push("deserialization");
     }
-    if matches!(leaf, "eval") {
-        kinds.push("dynamic-code-execution");
-    }
     kinds
 }
 
@@ -866,6 +881,182 @@ fn exported_clause_name(node: Node<'_>, content: &[u8]) -> Option<String> {
             .then(|| identifier_names(child, content).into_iter().next())
             .flatten()
     })
+}
+
+fn unshadowed_builtin_eval_call(call: Node<'_>, content: &[u8]) -> bool {
+    call.child_by_field_name("function")
+        .and_then(parser_final_sequence_value)
+        .and_then(|callee| expression_name(callee, content))
+        .as_deref()
+        == Some("eval")
+        && !parser_binding_shadows_eval(call, content)
+}
+
+fn parser_final_sequence_value(mut node: Node<'_>) -> Option<Node<'_>> {
+    for _ in 0..8 {
+        match node.kind() {
+            "parenthesized_expression" => node = node.named_child(0)?,
+            "sequence_expression" => {
+                let count = u32::try_from(node.named_child_count()).ok()?;
+                node = count
+                    .checked_sub(1)
+                    .and_then(|index| node.named_child(index))?;
+            }
+            _ => return Some(node),
+        }
+    }
+    None
+}
+
+fn parser_binding_shadows_eval(call: Node<'_>, content: &[u8]) -> bool {
+    let call_scope = parser_enclosing_function_span(call);
+    if let Some(function) = parser_enclosing_function_node(call)
+        && (function
+            .child_by_field_name("name")
+            .and_then(|name| expression_name(name, content))
+            .as_deref()
+            == Some("eval")
+            || function
+                .child_by_field_name("parameters")
+                .is_some_and(|parameters| parser_pattern_binds(parameters, "eval", content)))
+    {
+        return true;
+    }
+    let Some(root) = parser_program_root(call) else {
+        return true;
+    };
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return true;
+        }
+        let scope = parser_binding_scope(node);
+        let visible = scope.is_none() || scope == call_scope;
+        let declares_eval = matches!(
+            node.kind(),
+            "variable_declarator"
+                | "function_declaration"
+                | "generator_function_declaration"
+                | "class_declaration"
+                | "import_specifier"
+                | "namespace_import"
+                | "catch_clause"
+        );
+        let assignment_before_call = node.end_byte() <= call.start_byte()
+            && matches!(
+                node.kind(),
+                "assignment_expression" | "augmented_assignment_expression"
+            );
+        if visible
+            && (declares_eval || assignment_before_call)
+            && match node.kind() {
+                "variable_declarator" => node
+                    .child_by_field_name("name")
+                    .is_some_and(|binding| parser_pattern_binds(binding, "eval", content)),
+                "assignment_expression" | "augmented_assignment_expression" => {
+                    node.child_by_field_name("left")
+                        .and_then(|left| expression_name(left, content))
+                        .as_deref()
+                        == Some("eval")
+                }
+                "function_declaration" | "generator_function_declaration" | "class_declaration" => {
+                    node.child_by_field_name("name")
+                        .and_then(|binding| expression_name(binding, content))
+                        .as_deref()
+                        == Some("eval")
+                }
+                "import_specifier" | "namespace_import" => {
+                    parser_import_local_name(node, content).as_deref() == Some("eval")
+                }
+                "catch_clause" => node
+                    .child_by_field_name("parameter")
+                    .is_some_and(|binding| parser_pattern_binds(binding, "eval", content)),
+                _ => false,
+            }
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn parser_pattern_binds(node: Node<'_>, name: &str, content: &[u8]) -> bool {
+    if node.kind().contains("type") {
+        return false;
+    }
+    if matches!(
+        node.kind(),
+        "identifier" | "shorthand_property_identifier_pattern" | "shorthand_property_identifier"
+    ) && expression_name(node, content).as_deref() == Some(name)
+    {
+        return true;
+    }
+    (0..node.named_child_count()).any(|index| {
+        node.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+            .is_some_and(|child| parser_pattern_binds(child, name, content))
+    })
+}
+
+fn parser_import_local_name(node: Node<'_>, content: &[u8]) -> Option<String> {
+    node.child_by_field_name("alias")
+        .or_else(|| node.child_by_field_name("name"))
+        .and_then(|binding| expression_name(binding, content))
+        .or_else(|| {
+            (0..node.named_child_count()).find_map(|index| {
+                node.named_child(u32::try_from(index).ok()?)
+                    .and_then(|binding| expression_name(binding, content))
+            })
+        })
+}
+
+fn parser_program_root(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        node = parent;
+    }
+    (node.kind() == "program").then_some(node)
+}
+
+fn parser_enclosing_function_node(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        if parser_is_function(parent) {
+            return Some(parent);
+        }
+        node = parent;
+    }
+    None
+}
+
+fn parser_enclosing_function_span(node: Node<'_>) -> Option<(usize, usize)> {
+    parser_enclosing_function_node(node)
+        .map(|function| (function.start_byte(), function.end_byte()))
+}
+
+fn parser_binding_scope(node: Node<'_>) -> Option<(usize, usize)> {
+    let start = if parser_is_function(node) {
+        node.parent()
+    } else {
+        Some(node)
+    }?;
+    parser_enclosing_function_node(start)
+        .map(|function| (function.start_byte(), function.end_byte()))
+}
+
+fn parser_is_function(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "function_declaration"
+            | "generator_function_declaration"
+            | "function_expression"
+            | "arrow_function"
+            | "method_definition"
+    )
 }
 
 fn expression_name(node: Node<'_>, content: &[u8]) -> Option<String> {

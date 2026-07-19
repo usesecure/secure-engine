@@ -41,6 +41,14 @@ server-selected identity on opposite sides of an exact equality check. These pri
 change the public graph vocabulary or extractor identity; cache v8 prevents reuse of older program
 units.
 
+Phase 6.11 tranche 2 resolves a sequence-expression callee only when its final value is the
+unshadowed built-in evaluator or a bounded unique local alias to it. Filesystem composition retains
+the selected value through supported local helpers and imports, while a confinement guard applies
+only to the exact unreassigned sink path, a bounded trusted root, a recognized lexical/canonical
+operation, and a separator-aware terminating rejection. Extended-round filesystem candidates are
+enabled only with that matching barrier precision; redirect remains restricted. The public graph
+identity is unchanged and cache v9 prevents reuse of pre-tranche private records.
+
 ## Findings and suppressions
 
 Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.

@@ -766,6 +766,21 @@ pub(crate) fn analyze(
                             {
                                 trace.field_sensitive = false;
                             }
+                            if record.kind == "transformation"
+                                && trace.sanitizers.contains("filesystem-path-confinement")
+                                && !record.callee.as_deref().is_some_and(|callee| {
+                                    transparent_value_coercion(callee)
+                                        || unique_function(
+                                            callee,
+                                            record,
+                                            &raw_functions,
+                                            &import_bindings,
+                                        )
+                                        .is_some()
+                                })
+                            {
+                                trace.sanitizers.remove("filesystem-path-confinement");
+                            }
                             trace.values.insert(output.clone());
                             insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                         } else if record.kind == "assignment"
@@ -848,8 +863,14 @@ pub(crate) fn analyze(
                                     || required_sanitizer_policy("SE1005") == Some(policy)
                                     || required_sanitizer_policy("SE1006") == Some(policy)
                                     || (policy == "filesystem-path-confinement"
-                                        && trace_has_path_normalization(&trace, &builder)
-                                        && guard_has_separator_boundary(guard, &all_records)))
+                                        && filesystem_guard_proves_values(
+                                            guard,
+                                            &record.inputs,
+                                            record,
+                                            &trace,
+                                            &all_records,
+                                            &snapshot,
+                                        )))
                             {
                                 trace.sanitizers.insert(policy.into());
                             }
@@ -868,9 +889,9 @@ pub(crate) fn analyze(
                             rule_id,
                             trace,
                             &dominant,
-                            &builder,
                             &all_records,
                             &snapshot,
+                            record,
                         ) {
                             candidates.remove(&format!("{rule_id}:{record_node}"));
                         } else if extended_round_candidate_allowed(
@@ -1438,6 +1459,7 @@ fn extract_record_for_node(
             let raw_callee = node
                 .child_by_field_name("function")
                 .and_then(|item| expression_name(item, content));
+            let dynamic_callee = unshadowed_dynamic_code_callee(node, content, function, aliases);
             let expression = node.utf8_text(content).unwrap_or_default();
             let source_inputs = value_names(node, content);
             let resolved_callee = raw_callee
@@ -1446,7 +1468,7 @@ fn extract_record_for_node(
                 .unwrap_or_default();
             let source_kind =
                 framework_call_source(function, &resolved_callee, expression, &source_inputs);
-            if raw_callee.is_none() {
+            if raw_callee.is_none() && dynamic_callee.is_none() {
                 if let Some(source_kind) = source_kind
                     && let Some(output) = source_inputs.first()
                 {
@@ -1464,9 +1486,16 @@ fn extract_record_for_node(
                 return;
             }
             let raw_callee = raw_callee.unwrap_or_default();
-            let callee = resolve_alias(&raw_callee, function, aliases);
+            let callee = dynamic_callee.map_or_else(
+                || resolve_alias(&raw_callee, function, aliases),
+                str::to_owned,
+            );
             let inputs = argument_values(node, content);
-            let mut sink = sink_kind(&callee);
+            let mut sink = if dynamic_callee.is_some() {
+                Some("dynamic-code-execution")
+            } else {
+                sink_kind(&callee)
+            };
             if sink == Some("process-execution")
                 && fixed_executable_without_shell(node, content, &callee)
             {
@@ -1593,6 +1622,7 @@ fn extract_record_for_node(
                         authorization_guard_survives_try_context(node, function, content)
                     })
                 {
+                    inputs.extend(filesystem_confinement_markers(node, condition, content));
                     records.push(record_with_dominance(
                         "control-gate",
                         None,
@@ -2464,6 +2494,13 @@ fn source_container_call(callee: &str) -> bool {
     matches!(
         terminal_identifier(&callee.to_ascii_lowercase()),
         "json" | "formdata" | "cookies" | "headers"
+    )
+}
+
+fn transparent_value_coercion(callee: &str) -> bool {
+    matches!(
+        terminal_identifier(&callee.to_ascii_lowercase()),
+        "string" | "tostring" | "valueof"
     )
 }
 
@@ -3352,9 +3389,9 @@ fn trace_is_sanitized_for(
     rule_id: &str,
     trace: &Trace,
     guards: &[&ProgramRecord],
-    builder: &GraphBuilder,
     records: &[&ProgramRecord],
     taints: &BTreeMap<(String, String), Trace>,
+    sink: &ProgramRecord,
 ) -> bool {
     let Some(policy) = required_sanitizer_policy(rule_id) else {
         return false;
@@ -3373,8 +3410,14 @@ fn trace_is_sanitized_for(
             .is_some_and(|name| name == policy || name == crate::semantics::POLICY_EXACT_ALLOWLIST)
             && guard_applies_to_trace(guard, trace, taints)
             && (rule_id != "SE1003"
-                || (trace_has_path_normalization(trace, builder)
-                    && guard_has_separator_boundary(guard, records)))
+                || filesystem_guard_proves_values(
+                    guard,
+                    &sensitive_sink_inputs(sink),
+                    sink,
+                    trace,
+                    records,
+                    taints,
+                ))
     })
 }
 
@@ -3428,59 +3471,110 @@ fn is_identity_resolver(callee: &str) -> bool {
     .any(|marker| lower.contains(marker))
 }
 
-fn guard_has_separator_boundary(guard: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
-    let guard_has_separator = guard.inputs.iter().any(|value| {
-        let lower = value.to_ascii_lowercase();
-        terminal_identifier(&lower) == "sep"
-    });
-    let guard_has_root = guard.inputs.iter().any(|value| {
-        let lower = value.to_ascii_lowercase();
-        ["root", "base", "directory", "storage", "upload"]
-            .iter()
-            .any(|marker| lower.contains(marker))
-    });
-    if guard_has_separator
-        && guard_has_root
-        && guard.inputs.iter().any(|input| {
-            let root = input.split(['.', '[']).next().unwrap_or(input);
-            records.iter().any(|record| {
-                record.function == guard.function
-                    && record.location.span.end_byte <= guard.location.span.start_byte
-                    && record.output.as_deref() == Some(root)
-                    && record.callee.as_deref().is_some_and(|callee| {
-                        let lower = callee.to_ascii_lowercase();
-                        lower.contains("resolve")
-                            || lower.contains("normalize")
-                            || lower.contains("canonical")
-                    })
-            })
-        })
+fn filesystem_guard_proves_values(
+    guard: &ProgramRecord,
+    target_values: &[String],
+    target: &ProgramRecord,
+    trace: &Trace,
+    records: &[&ProgramRecord],
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    let candidate = guard
+        .inputs
+        .iter()
+        .find_map(|input| input.strip_prefix("@filesystem-candidate:"));
+    let has_structural_proof = guard
+        .inputs
+        .iter()
+        .any(|input| input.starts_with("@filesystem-proof:"));
+    let (Some(candidate), true) = (candidate, has_structural_proof) else {
+        return false;
+    };
+    if guard.function != target.function
+        || !guard_applies_to_trace(guard, trace, taints)
+        || value_reassigned_between(
+            candidate,
+            guard.location.span.end_byte,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        )
     {
+        return false;
+    }
+    target_values.iter().any(|value| {
+        current_value_derives_from(
+            value,
+            candidate,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+            8,
+        )
+    })
+}
+
+fn current_value_derives_from(
+    value: &str,
+    expected: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if value == expected {
         return true;
     }
-    guard.inputs.iter().any(|input| {
-        let root = input.split(['.', '[']).next().unwrap_or(input);
-        records.iter().any(|record| {
-            record.function == guard.function
-                && record.location.span.end_byte <= guard.location.span.start_byte
-                && record.output.as_deref() == Some(root)
-                && record.inputs.iter().any(|value| {
-                    let lower = value.to_ascii_lowercase();
-                    terminal_identifier(&lower) == "sep"
-                })
-                && record.inputs.iter().any(|value| {
-                    let lower = value.to_ascii_lowercase();
-                    lower.contains("resolve")
-                        || lower.contains("normalize")
-                        || lower.contains("canonical")
-                })
-                && record.inputs.iter().any(|value| {
-                    let lower = value.to_ascii_lowercase();
-                    ["root", "base", "directory", "storage", "upload"]
-                        .iter()
-                        .any(|marker| lower.contains(marker))
-                })
+    if depth == 0 || value.starts_with('@') {
+        return false;
+    }
+    records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(record.kind.as_str(), "assignment" | "alias")
+                && record.callee.is_none()
         })
+        .max_by_key(|record| record.location.span.end_byte)
+        .and_then(|record| {
+            let inputs = record
+                .inputs
+                .iter()
+                .filter(|input| !input.starts_with('@'))
+                .collect::<Vec<_>>();
+            (inputs.len() == 1).then(|| inputs[0])
+        })
+        .is_some_and(|input| {
+            current_value_derives_from(
+                input,
+                expected,
+                before,
+                function,
+                records,
+                depth.saturating_sub(1),
+            )
+        })
+}
+
+fn value_reassigned_between(
+    value: &str,
+    after: u64,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+) -> bool {
+    records.iter().any(|record| {
+        record.function.as_deref() == function
+            && record.output.as_deref() == Some(value)
+            && record.location.span.start_byte >= after
+            && record.location.span.end_byte <= before
+            && matches!(
+                record.kind.as_str(),
+                "assignment" | "alias" | "transformation" | "sanitizer"
+            )
     })
 }
 
@@ -3640,27 +3734,6 @@ fn values_correspond(left: &str, right: &str) -> bool {
             .is_some_and(|suffix| suffix.starts_with(['.', '[']))
 }
 
-fn trace_has_path_normalization(trace: &Trace, builder: &GraphBuilder) -> bool {
-    trace.nodes.iter().any(|node_id| {
-        builder
-            .nodes
-            .get(node_id)
-            .and_then(|node| node.name.as_deref())
-            .is_some_and(|name| {
-                let lower = name.to_ascii_lowercase().replace("::", ".");
-                [
-                    "resolve",
-                    "normalize",
-                    "relative",
-                    "realpath",
-                    "canonicalize",
-                ]
-                .iter()
-                .any(|leaf| lower.rsplit('.').next() == Some(*leaf))
-            })
-    })
-}
-
 fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
     match record.name.as_deref()? {
         "process-execution" => Some("SE1001"),
@@ -3681,7 +3754,7 @@ fn extended_round_candidate_allowed(
     legacy_passes: usize,
     already_present: bool,
 ) -> bool {
-    pass < legacy_passes || already_present || !matches!(rule_id, "SE1003" | "SE1005")
+    pass < legacy_passes || already_present || rule_id != "SE1005"
 }
 
 fn unique_function<'a>(
@@ -3925,7 +3998,7 @@ fn sink_kind(callee: &str) -> Option<&'static str> {
     if leaf == "redirect" {
         return Some("redirect");
     }
-    if leaf == "eval" || leaf == "function" {
+    if leaf == "function" {
         return Some("dynamic-code-execution");
     }
     if matches!(leaf, "revalidatepath" | "revalidatetag")
@@ -5403,6 +5476,520 @@ fn condition_contains_conjunction(condition: Node<'_>, content: &[u8]) -> bool {
     false
 }
 
+fn filesystem_confinement_markers(
+    statement: Node<'_>,
+    condition: Node<'_>,
+    content: &[u8],
+) -> Vec<String> {
+    let Some((candidate, root)) = separator_aware_prefix_rejection(condition, content) else {
+        return Vec::new();
+    };
+    if !trusted_filesystem_root(statement, &root, content) {
+        return Vec::new();
+    }
+    let Some(proof) = composed_path_proof(statement, &candidate, &root, content) else {
+        return Vec::new();
+    };
+    vec![
+        format!("@filesystem-candidate:{candidate}"),
+        format!("@filesystem-root:{root}"),
+        format!("@filesystem-proof:{proof}"),
+    ]
+}
+
+fn separator_aware_prefix_rejection(
+    condition: Node<'_>,
+    content: &[u8],
+) -> Option<(String, String)> {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "call_expression"
+            && call_is_negated_within(node, condition, content)
+            && let Some(callee) = node.child_by_field_name("function")
+            && callee.kind() == "member_expression"
+            && callee
+                .child_by_field_name("property")
+                .and_then(|property| expression_name(property, content))
+                .as_deref()
+                == Some("startsWith")
+            && let Some(candidate) = callee
+                .child_by_field_name("object")
+                .and_then(|object| expression_name(object, content))
+            && !candidate.contains('[')
+            && let Some(argument) = node
+                .child_by_field_name("arguments")
+                .and_then(|arguments| arguments.named_child(0))
+            && let Some(root) = separator_boundary_root(condition, argument, content)
+        {
+            return Some((candidate, root));
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    None
+}
+
+fn call_is_negated_within(call: Node<'_>, boundary: Node<'_>, content: &[u8]) -> bool {
+    let mut current = call.parent();
+    while let Some(node) = current {
+        if node.kind() == "unary_expression"
+            && node
+                .child_by_field_name("operator")
+                .and_then(|operator| operator.utf8_text(content).ok())
+                .is_some_and(|operator| operator.trim() == "!")
+        {
+            return true;
+        }
+        if node == boundary {
+            break;
+        }
+        current = node.parent();
+    }
+    false
+}
+
+fn separator_boundary_root(
+    anchor: Node<'_>,
+    mut expression: Node<'_>,
+    content: &[u8],
+) -> Option<String> {
+    while expression.kind() == "parenthesized_expression" {
+        expression = expression.named_child(0)?;
+    }
+    if let Some(name) = expression_name(expression, content)
+        && latest_bound_value(anchor, &name, anchor.start_byte(), content)
+            .is_some_and(|value| separator_wrapped_expression(value, content).is_some())
+    {
+        return Some(name);
+    }
+    if expression.kind() != "binary_expression"
+        || expression
+            .child_by_field_name("operator")
+            .and_then(|operator| operator.utf8_text(content).ok())
+            .is_none_or(|operator| operator.trim() != "+")
+    {
+        return None;
+    }
+    let left = expression.child_by_field_name("left")?;
+    let right = expression.child_by_field_name("right")?;
+    if is_separator_value(right, content) {
+        return expression_name(left, content);
+    }
+    if is_separator_value(left, content) {
+        return expression_name(right, content);
+    }
+    None
+}
+
+fn separator_wrapped_expression<'tree>(
+    mut expression: Node<'tree>,
+    content: &[u8],
+) -> Option<Node<'tree>> {
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "await_expression"
+    ) {
+        expression = expression.named_child(0)?;
+    }
+    if expression.kind() != "binary_expression"
+        || expression
+            .child_by_field_name("operator")
+            .and_then(|operator| operator.utf8_text(content).ok())
+            .is_none_or(|operator| operator.trim() != "+")
+    {
+        return None;
+    }
+    let left = expression.child_by_field_name("left")?;
+    let right = expression.child_by_field_name("right")?;
+    if is_separator_value(right, content) {
+        return Some(left);
+    }
+    is_separator_value(left, content).then_some(right)
+}
+
+fn is_separator_value(node: Node<'_>, content: &[u8]) -> bool {
+    expression_name(node, content).is_some_and(|name| {
+        let lower = name.to_ascii_lowercase();
+        if lower == "path.sep" {
+            return true;
+        }
+        lower == "sep" && imported_path_operation(node, &name, "sep", content)
+    })
+}
+
+fn trusted_filesystem_root(anchor: Node<'_>, root: &str, content: &[u8]) -> bool {
+    trusted_root_name(
+        anchor,
+        root,
+        anchor.start_byte(),
+        content,
+        &mut BTreeSet::new(),
+        8,
+    )
+}
+
+fn trusted_root_name(
+    anchor: Node<'_>,
+    name: &str,
+    before: usize,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> bool {
+    if depth == 0 || !visited.insert(name.to_owned()) {
+        return false;
+    }
+    let result = latest_bound_value(anchor, name, before, content).is_some_and(|value| {
+        trusted_root_expression(
+            anchor,
+            value,
+            value.start_byte(),
+            content,
+            visited,
+            depth.saturating_sub(1),
+        )
+    });
+    visited.remove(name);
+    result
+}
+
+fn trusted_root_expression(
+    anchor: Node<'_>,
+    mut expression: Node<'_>,
+    before: usize,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "await_expression"
+    ) {
+        let Some(child) = expression.named_child(0) else {
+            return false;
+        };
+        expression = child;
+    }
+    if fixed_string(expression, content) {
+        return true;
+    }
+    if let Some(base) = separator_wrapped_expression(expression, content) {
+        return trusted_root_expression(
+            anchor,
+            base,
+            before,
+            content,
+            visited,
+            depth.saturating_sub(1),
+        );
+    }
+    if expression.kind() == "identifier" {
+        return expression_name(expression, content).is_some_and(|name| {
+            trusted_root_name(
+                anchor,
+                &name,
+                before,
+                content,
+                visited,
+                depth.saturating_sub(1),
+            )
+        });
+    }
+    if matches!(expression.kind(), "member_expression")
+        && expression_name(expression, content).is_some_and(|name| {
+            let lower = name.to_ascii_lowercase();
+            !is_untrusted_source(&lower)
+                && ![
+                    ".body",
+                    ".query",
+                    ".params",
+                    ".headers",
+                    ".cookies",
+                    ".formdata",
+                ]
+                .iter()
+                .any(|marker| lower.contains(marker))
+        })
+    {
+        return true;
+    }
+    if expression.kind() != "call_expression"
+        || known_path_operation(expression, content).is_none_or(|operation| {
+            !matches!(
+                operation,
+                "realpath" | "canonicalize" | "resolve" | "normalize"
+            )
+        })
+    {
+        return false;
+    }
+    expression
+        .child_by_field_name("arguments")
+        .filter(|arguments| arguments.named_child_count() == 1)
+        .and_then(|arguments| arguments.named_child(0))
+        .is_some_and(|argument| {
+            trusted_root_expression(
+                anchor,
+                argument,
+                expression.start_byte(),
+                content,
+                visited,
+                depth.saturating_sub(1),
+            )
+        })
+}
+
+fn composed_path_proof(
+    anchor: Node<'_>,
+    candidate: &str,
+    root: &str,
+    content: &[u8],
+) -> Option<&'static str> {
+    let mut value = latest_bound_value(anchor, candidate, anchor.start_byte(), content)?;
+    while matches!(
+        value.kind(),
+        "parenthesized_expression" | "await_expression"
+    ) {
+        value = value.named_child(0)?;
+    }
+    known_path_operation(value, content)?;
+    let mut stack = vec![value];
+    let mut supported = false;
+    let mut canonical = false;
+    let mut root_present = false;
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 256 {
+            return None;
+        }
+        if node.kind() == "call_expression"
+            && let Some(operation) = known_path_operation(node, content)
+        {
+            supported = true;
+            canonical |= matches!(operation, "realpath" | "canonicalize");
+        }
+        root_present |= expression_name(node, content).as_deref() == Some(root);
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    (supported && root_present).then_some(if canonical { "canonical" } else { "lexical" })
+}
+
+fn known_path_operation(call: Node<'_>, content: &[u8]) -> Option<&'static str> {
+    let callee = call
+        .child_by_field_name("function")
+        .and_then(|function| expression_name(function, content))?;
+    let lower = callee.to_ascii_lowercase();
+    let leaf = terminal_identifier(&lower);
+    let operation = match leaf {
+        "join" => "join",
+        "resolve" => "resolve",
+        "normalize" => "normalize",
+        "realpath" => "realpath",
+        "canonicalize" => "canonicalize",
+        _ => return None,
+    };
+    if let Some((object, _)) = lower.rsplit_once('.') {
+        let expected_object = match operation {
+            "join" | "resolve" | "normalize" => "path",
+            "realpath" | "canonicalize" => "fs",
+            _ => return None,
+        };
+        return (object == expected_object
+            && conventional_module_object_is_unshadowed(call, expected_object, content))
+        .then_some(operation);
+    }
+    imported_path_operation(call, &callee, operation, content).then_some(operation)
+}
+
+fn conventional_module_object_is_unshadowed(call: Node<'_>, object: &str, content: &[u8]) -> bool {
+    if module_object_imported(call, object, content) {
+        return true;
+    }
+    if non_variable_binding_shadows_name(call, object, content) {
+        return false;
+    }
+    let call_scope = enclosing_function_span(call);
+    let Some(root) = program_root(call) else {
+        return false;
+    };
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let scope = binding_scope(node);
+        if (scope.is_none() || scope == call_scope)
+            && node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|binding| pattern_binds_name(binding, object, content))
+        {
+            return false;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    true
+}
+
+fn module_object_imported(call: Node<'_>, object: &str, content: &[u8]) -> bool {
+    let Some(root) = program_root(call) else {
+        return false;
+    };
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let expected_module = node
+            .child_by_field_name("source")
+            .and_then(|source| string_value(source, content))
+            .is_some_and(|module| {
+                if object == "path" {
+                    matches!(module.as_str(), "path" | "node:path")
+                } else {
+                    matches!(module.as_str(), "fs" | "node:fs" | "node:fs/promises")
+                }
+            });
+        if node.kind() == "import_statement"
+            && expected_module
+            && (0..node.named_child_count()).any(|index| {
+                node.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                    .is_some_and(|child| pattern_binds_name(child, object, content))
+            })
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn imported_path_operation(anchor: Node<'_>, local: &str, operation: &str, content: &[u8]) -> bool {
+    let Some(root) = program_root(anchor) else {
+        return false;
+    };
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "import_statement"
+            && node
+                .child_by_field_name("source")
+                .and_then(|source| string_value(source, content))
+                .is_some_and(|module| match operation {
+                    "join" | "resolve" | "normalize" | "sep" => {
+                        matches!(module.as_str(), "path" | "node:path")
+                    }
+                    "realpath" | "canonicalize" => {
+                        matches!(module.as_str(), "fs" | "node:fs" | "node:fs/promises")
+                    }
+                    _ => false,
+                })
+        {
+            let mut imports = vec![node];
+            while let Some(item) = imports.pop() {
+                if item.kind() == "import_specifier" {
+                    let imported = item
+                        .child_by_field_name("name")
+                        .and_then(|name| expression_name(name, content));
+                    let bound = item
+                        .child_by_field_name("alias")
+                        .and_then(|alias| expression_name(alias, content))
+                        .or_else(|| imported.clone());
+                    if imported.as_deref() == Some(operation) && bound.as_deref() == Some(local) {
+                        return true;
+                    }
+                }
+                for index in (0..item.named_child_count()).rev() {
+                    if let Some(child) = item.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                    {
+                        imports.push(child);
+                    }
+                }
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn latest_bound_value<'tree>(
+    anchor: Node<'tree>,
+    name: &str,
+    before: usize,
+    content: &[u8],
+) -> Option<Node<'tree>> {
+    let root = program_root(anchor)?;
+    let context_scope = enclosing_function_span(anchor);
+    let mut local = Vec::<(usize, Node<'tree>)>::new();
+    let mut global = Vec::<(usize, Node<'tree>)>::new();
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return None;
+        }
+        let value = if node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .and_then(|binding| expression_name(binding, content))
+                .as_deref()
+                == Some(name)
+        {
+            node.child_by_field_name("value")
+        } else if matches!(
+            node.kind(),
+            "assignment_expression" | "augmented_assignment_expression"
+        ) && node
+            .child_by_field_name("left")
+            .and_then(|binding| expression_name(binding, content))
+            .as_deref()
+            == Some(name)
+        {
+            node.child_by_field_name("right")
+        } else {
+            None
+        };
+        if let Some(value) = value
+            && node.end_byte() <= before
+        {
+            match binding_scope(node) {
+                scope if scope == context_scope => local.push((node.end_byte(), value)),
+                None => global.push((node.end_byte(), value)),
+                _ => {}
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    let candidates = if local.is_empty() {
+        &mut global
+    } else {
+        &mut local
+    };
+    candidates.sort_by_key(|(end, _)| *end);
+    candidates.last().map(|(_, value)| *value)
+}
+
 fn condition_rejects_invalid(condition: &str) -> bool {
     let compact = condition
         .to_ascii_lowercase()
@@ -5845,6 +6432,268 @@ fn call_callee(node: Node<'_>, content: &[u8]) -> Option<String> {
             .and_then(|item| call_callee(item, content));
     }
     None
+}
+
+fn unshadowed_dynamic_code_callee(
+    call: Node<'_>,
+    content: &[u8],
+    function: Option<&FunctionInfo>,
+    aliases: &AliasMap,
+) -> Option<&'static str> {
+    let callee = call.child_by_field_name("function")?;
+    let final_value = final_sequence_value(callee)?;
+    let raw = expression_name(final_value, content)?;
+    if raw.contains('.') || raw.contains('[') {
+        return None;
+    }
+    let resolved = resolve_alias(&raw, function, aliases);
+    if resolved != "eval" || !alias_chain_originates_from_builtin_eval(call, &raw, content, 8) {
+        return None;
+    }
+    Some("eval")
+}
+
+fn final_sequence_value(mut node: Node<'_>) -> Option<Node<'_>> {
+    for _ in 0..8 {
+        match node.kind() {
+            "parenthesized_expression" => node = node.named_child(0)?,
+            "sequence_expression" => {
+                let count = u32::try_from(node.named_child_count()).ok()?;
+                node = count
+                    .checked_sub(1)
+                    .and_then(|index| node.named_child(index))?;
+            }
+            _ => return Some(node),
+        }
+    }
+    None
+}
+
+fn alias_chain_originates_from_builtin_eval(
+    call: Node<'_>,
+    name: &str,
+    content: &[u8],
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    if name == "eval" {
+        return !binding_shadows_builtin_eval(call, content);
+    }
+    if non_variable_binding_shadows_name(call, name, content) {
+        return false;
+    }
+    unique_alias_initializer(call, name, content).is_some_and(|initializer| {
+        final_sequence_value(initializer)
+            .and_then(|value| expression_name(value, content))
+            .is_some_and(|target| {
+                !target.contains('.')
+                    && !target.contains('[')
+                    && alias_chain_originates_from_builtin_eval(
+                        call,
+                        &target,
+                        content,
+                        depth.saturating_sub(1),
+                    )
+            })
+    })
+}
+
+fn binding_shadows_builtin_eval(call: Node<'_>, content: &[u8]) -> bool {
+    if non_variable_binding_shadows_name(call, "eval", content) {
+        return true;
+    }
+    let call_scope = enclosing_function_span(call);
+    let Some(root) = program_root(call) else {
+        return true;
+    };
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return true;
+        }
+        let declaration_scope = binding_scope(node);
+        let visible_scope = declaration_scope.is_none() || declaration_scope == call_scope;
+        let declares_eval = node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|pattern| pattern_binds_name(pattern, "eval", content));
+        let assigns_eval_before_call = node.end_byte() <= call.start_byte()
+            && (matches!(
+                node.kind(),
+                "assignment_expression" | "augmented_assignment_expression"
+            ) && node
+                .child_by_field_name("left")
+                .and_then(|left| expression_name(left, content))
+                .as_deref()
+                == Some("eval"));
+        if visible_scope && (declares_eval || assigns_eval_before_call) {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn non_variable_binding_shadows_name(call: Node<'_>, name: &str, content: &[u8]) -> bool {
+    let call_scope = enclosing_function_span(call);
+    if let Some(function) = enclosing_function_node(call)
+        && (function
+            .child_by_field_name("name")
+            .and_then(|node| expression_name(node, content))
+            .as_deref()
+            == Some(name)
+            || function
+                .child_by_field_name("parameters")
+                .is_some_and(|parameters| pattern_binds_name(parameters, name, content)))
+    {
+        return true;
+    }
+    let Some(root) = program_root(call) else {
+        return true;
+    };
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return true;
+        }
+        let declaration_scope = binding_scope(node);
+        let visible_scope = declaration_scope.is_none() || declaration_scope == call_scope;
+        if visible_scope
+            && match node.kind() {
+                "function_declaration" | "generator_function_declaration" | "class_declaration" => {
+                    node.child_by_field_name("name")
+                        .and_then(|binding| expression_name(binding, content))
+                        .as_deref()
+                        == Some(name)
+                }
+                "import_specifier" | "namespace_import" => {
+                    import_local_name(node, content).as_deref() == Some(name)
+                }
+                "catch_clause" => node
+                    .child_by_field_name("parameter")
+                    .is_some_and(|binding| pattern_binds_name(binding, name, content)),
+                _ => false,
+            }
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn unique_alias_initializer<'tree>(
+    call: Node<'tree>,
+    name: &str,
+    content: &[u8],
+) -> Option<Node<'tree>> {
+    let root = program_root(call)?;
+    let call_scope = enclosing_function_span(call);
+    let mut local = Vec::new();
+    let mut global = Vec::new();
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return None;
+        }
+        if node.kind() == "variable_declarator"
+            && node.end_byte() <= call.start_byte()
+            && node
+                .child_by_field_name("name")
+                .and_then(|binding| expression_name(binding, content))
+                .as_deref()
+                == Some(name)
+            && let Some(value) = node.child_by_field_name("value")
+        {
+            match binding_scope(node) {
+                scope if scope == call_scope => local.push(value),
+                None => global.push(value),
+                _ => {}
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    let candidates = if local.is_empty() { global } else { local };
+    (candidates.len() == 1).then(|| candidates[0])
+}
+
+fn pattern_binds_name(node: Node<'_>, name: &str, content: &[u8]) -> bool {
+    if node.kind().contains("type") {
+        return false;
+    }
+    if matches!(
+        node.kind(),
+        "identifier" | "shorthand_property_identifier_pattern" | "shorthand_property_identifier"
+    ) && expression_name(node, content).as_deref() == Some(name)
+    {
+        return true;
+    }
+    (0..node.named_child_count()).any(|index| {
+        node.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+            .is_some_and(|child| pattern_binds_name(child, name, content))
+    })
+}
+
+fn import_local_name(node: Node<'_>, content: &[u8]) -> Option<String> {
+    node.child_by_field_name("alias")
+        .or_else(|| node.child_by_field_name("name"))
+        .and_then(|binding| expression_name(binding, content))
+        .or_else(|| {
+            (0..node.named_child_count()).find_map(|index| {
+                node.named_child(u32::try_from(index).ok()?)
+                    .and_then(|binding| expression_name(binding, content))
+            })
+        })
+}
+
+fn program_root(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        node = parent;
+    }
+    (node.kind() == "program").then_some(node)
+}
+
+fn enclosing_function_node(mut node: Node<'_>) -> Option<Node<'_>> {
+    while let Some(parent) = node.parent() {
+        if is_function(parent) {
+            return Some(parent);
+        }
+        node = parent;
+    }
+    None
+}
+
+fn enclosing_function_span(node: Node<'_>) -> Option<(usize, usize)> {
+    enclosing_function_node(node).map(|function| (function.start_byte(), function.end_byte()))
+}
+
+fn binding_scope(node: Node<'_>) -> Option<(usize, usize)> {
+    let start = if is_function(node) {
+        node.parent()
+    } else {
+        Some(node)
+    }?;
+    enclosing_function_node(start).map(|function| (function.start_byte(), function.end_byte()))
 }
 
 fn expression_name(node: Node<'_>, content: &[u8]) -> Option<String> {

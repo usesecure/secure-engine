@@ -403,11 +403,12 @@ checks pass without executing Secure Bench or changing public contracts.
 
 Exit condition: release 0.1.6 passes every compatibility, quality, security, schema, privacy, determinism, performance, and Fedora packaging gate, retires only structurally proven false positives in the single permitted post-remediation application scan, and produces two byte-identical RPMs without executing Secure Bench, pushing, or making a benchmark claim.
 
-### Phase 6.11 - Retired Phase 19 generalization, tranche 1
+### Phase 6.11 - Retired Phase 19 generalization tranches
 
-Status: complete on the development branch. The known Phase 19 corpus is development/regression
-material, not an independent holdout, and the final post-regression-correction tree is deliberately
-unmeasured against it.
+Status: tranche 1 is integrated into main and tranche 2 is implemented on its development branch.
+Phase 6.11 remains open because redirect constructed-origin, outbound property connectivity,
+computed dispatch, and dynamic/ambiguous boundaries are explicitly deferred. The known Phase 19
+corpus is development/regression material, not an independent holdout, and is not rescored.
 
 - [Complete] Classify all 33 false negatives and 8 false positives into structural causes and select exactly two general causes.
 - [Complete] Separate bounded local fixed-point convergence from the configured interprocedural hop limit while retaining prior candidate budgets for redirect and filesystem families whose paired barrier semantics are deferred.
@@ -415,10 +416,15 @@ unmeasured against it.
 - [Complete] Exercise independent JavaScript, JSX, TypeScript, and TSX fixtures across direct, helper, imported, alias, control-flow, adversarial, and metamorphic forms.
 - [Complete] Preserve public schemas, taxonomy, evidence contract, SARIF, unaffected fingerprints, CLI/desktop parity, privacy, cancellation, bounds, and disabled-by-default AI while advancing only the private cache envelope to v8.
 - [Complete] Preserve the single development-only retrospective rescore and its regressions, then correct the general regression cause with synthetic fixtures without rescoring the known corpus.
+- [Complete] Resolve only a final unshadowed built-in evaluator through bounded parentheses, sequence expressions, and unique local aliases; reject shadowing, members, reassignment, and ambiguity.
+- [Complete] Preserve composed filesystem identity and accept only dominant separator-aware confinement over the same current path and a trusted bounded root.
+- [Complete] Enable extended-round filesystem candidates after matching barrier precision, retain the redirect restriction, and advance the private cache to v9 with v8 as a safe miss.
+- [Deferred] Constructed redirect origins, inline outbound property connectivity, computed higher-order dispatch, reflection, dynamic imports, and ambiguous runtime resolution.
 
-Exit condition: all local compatibility, quality, security, determinism, privacy, and dependency gates
-pass; the two selected causes and all deferred limits are documented; v0.1.6 artifacts remain
-byte-identical; exactly one signed DCO commit is created without packaging, release, or push.
+Current tranche exit condition: all local compatibility, quality, security, determinism, privacy,
+and dependency gates pass; both selected causes and all deferred limits are documented; v0.1.6
+artifacts remain byte-identical; exactly one signed DCO commit is created without corpus execution,
+packaging, release, or push. Phase 6.11 is not declared complete while deferred causes remain.
 
 ### Phase 7 - Distribution
 

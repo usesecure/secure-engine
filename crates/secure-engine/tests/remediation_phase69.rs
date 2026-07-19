@@ -405,7 +405,7 @@ fn ambiguous_dynamic_boundaries_remain_conservative_and_private()
 }
 
 #[test]
-fn cache_v8_ignores_older_entries_and_reuses_only_current_evidence()
+fn cache_v9_ignores_older_entries_and_reuses_only_current_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = TempDir::new()?;
     fs::create_dir_all(repository.path().join("src"))?;
@@ -414,7 +414,7 @@ fn cache_v8_ignores_older_entries_and_reuses_only_current_evidence()
         "export function handle(req) { return fetch(req.query.target); }",
     )?;
     let cache = TempDir::new()?;
-    let stale = cache.path().join("secure-parse-cache-v6/legacy/stale.json");
+    let stale = cache.path().join("secure-parse-cache-v8/legacy/stale.json");
     fs::create_dir_all(stale.parent().ok_or("stale parent missing")?)?;
     fs::write(&stale, b"legacy-cache-envelope")?;
 
@@ -428,7 +428,7 @@ fn cache_v8_ignores_older_entries_and_reuses_only_current_evidence()
     assert!(cold.parsing.cache_misses > 0);
     assert!(cold.parsing.cache_writes > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v8").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v9").is_dir());
 
     let warm = scan_repository(&request, &CancellationToken::new(), |_| {})?;
     assert_eq!(warm.parsing.cache_misses, 0);
