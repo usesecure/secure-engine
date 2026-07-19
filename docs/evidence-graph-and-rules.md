@@ -8,7 +8,7 @@ All identifiers and fingerprints are stable for the same repository content and 
 
 Propagation is intraprocedural by default and crosses only uniquely resolved local function calls, including calls between supported-language files. `max_interprocedural_depth` bounds repeated propagation; graph and finding counts have independent limits. A sanitizer applies only to its matching invariant. In TypeScript, its successful condition must structurally dominate the sink, while rejection branches must terminate or prevent the operation. Parameterized SQL call shapes do not become raw-query findings. A preceding local auth/authorization guard, recognized dependency/decorator, or locally visible framework middleware produces guard-dominance evidence. Unresolved runtime middleware, dynamic imports, ambiguous dispatch, callbacks, reflection, generated code, and unresolved calls are not inferred.
 
-Phase 6.5 propagates return taint, sanitizer policy, authorization guards, and handler reachability through uniquely resolved local helpers. Filesystem confinement requires canonicalization plus approved-root containment. Outbound requests require a dominating protocol and hostname policy; redirects require an explicit destination allowlist or fixed safe fallback. A fixed executable invoked through a supported argument-vector API is not shell command injection unless options explicitly enable a shell. Executable-specific argument injection remains unsupported and is reported as an analysis limitation.
+Phase 6.5 propagates return taint, sanitizer policy, authorization guards, and handler reachability through uniquely resolved local helpers. Filesystem confinement requires canonicalization plus approved-root containment. Outbound requests require a dominating protocol and hostname policy; redirects require an explicit destination allowlist or fixed safe fallback. A fixed executable invoked through a supported argument-vector API is not shell command injection unless options explicitly enable a shell or the executable is a structurally proven supported shell whose exact `-c` program argument constructs code. Executable-specific argument injection remains unsupported and is reported as an analysis limitation.
 
 Phase 6.6 adds explicit semantic roles and stable identities to relevant nodes and path steps. Imports, destructuring, direct aliases, arguments, and returns are resolved conservatively; every candidate must have internally consistent edges and a realizable source-to-sink order. Guards protect only corresponding values and must establish the exact rule policy. Authentication is distinct from operation authorization. Candidate paths have a derived deterministic budget and report truncation when exhausted. See [evidence-semantics.md](./evidence-semantics.md).
 
@@ -57,7 +57,9 @@ without tainting siblings or later arguments. Computed/spread/ambiguous shapes r
 Redirect candidates now share the extended fixed-point rounds because their barriers have matching
 value precision. Phase 6.12 tranche 2 further binds exact-origin guards to typed relative URL
 projections and binds complete tenant/owner guards to the same loaded record and authenticated
-principal. The public graph identity remains unchanged and cache v12 isolates these private record
+principal. Phase 6.12 tranche 3 records the exact program-text argument only when a supported shell
+interpreter and `-c` option position are structurally proven; later positional arguments retain argv
+semantics. The public graph identity remains unchanged and cache v13 isolates these private record
 changes.
 
 ## Findings and suppressions

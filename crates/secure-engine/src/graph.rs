@@ -22,6 +22,16 @@ const URL_INPUT_MARKER: &str = "@identity:url-input:";
 const URL_RELATIVE_MARKER: &str = "@identity:url-relative:";
 const RESOURCE_OBJECT_MARKER: &str = "@identity:resource-object";
 const RESOURCE_REQUEST_MARKER: &str = "@identity:resource-request:";
+const SHELL_PROGRAM_MARKER: &str = "@identity:shell-program-text";
+const SHELL_PROGRAM_VALUE_MARKER: &str = "@identity:shell-program-value:";
+const SHELL_INTERPRETER_MARKER: &str = "@identity:shell-interpreter:";
+const SHELL_COMMAND_OPTION_MARKER: &str = "@identity:shell-command-option:";
+
+struct ShellProgramText<'tree> {
+    interpreter: &'static str,
+    option: String,
+    program: Node<'tree>,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ProgramUnit {
@@ -1605,6 +1615,17 @@ fn extract_record_for_node(
                 str::to_owned,
             );
             let mut inputs = argument_values(node, content);
+            let shell_program = shell_program_text(node, content, &callee);
+            if let Some(program) = &shell_program {
+                inputs.push(SHELL_PROGRAM_MARKER.into());
+                inputs.push(format!("{SHELL_INTERPRETER_MARKER}{}", program.interpreter));
+                inputs.push(format!("{SHELL_COMMAND_OPTION_MARKER}{}", program.option));
+                inputs.extend(
+                    shell_program_values(program.program, content)
+                        .into_iter()
+                        .map(|value| format!("{SHELL_PROGRAM_VALUE_MARKER}{value}")),
+                );
+            }
             if let Some(marker) = path_composer_summary_marker(node, content, &raw_callee, &callee)
             {
                 inputs.push(marker);
@@ -1615,6 +1636,7 @@ fn extract_record_for_node(
                 sink_kind(&callee)
             };
             if sink == Some("process-execution")
+                && shell_program.is_none()
                 && fixed_executable_without_shell(node, content, &callee)
             {
                 sink = Some("process-argument-execution");
@@ -1672,7 +1694,13 @@ fn extract_record_for_node(
                 inputs,
                 output,
                 Some(&callee),
-                location_for_node(path, content, node),
+                location_for_node(
+                    path,
+                    content,
+                    shell_program
+                        .as_ref()
+                        .map_or(node, |program| program.program),
+                ),
                 provenance,
                 dominance,
             );
@@ -5466,6 +5494,213 @@ fn fixed_executable_without_shell(call: Node<'_>, content: &[u8], callee: &str) 
     object_property_is_absent_or_false(options, content, "shell")
 }
 
+fn shell_program_text<'tree>(
+    call: Node<'tree>,
+    content: &[u8],
+    callee: &str,
+) -> Option<ShellProgramText<'tree>> {
+    let leaf = terminal_identifier(&callee.to_ascii_lowercase()).to_owned();
+    if !matches!(
+        leaf.as_str(),
+        "spawn" | "spawnsync" | "execfile" | "execfilesync"
+    ) {
+        return None;
+    }
+    let arguments = call.child_by_field_name("arguments")?;
+    if let Some(options) = arguments.named_child(2)
+        && !object_property_is_absent_or_false(options, content, "shell")
+    {
+        return None;
+    }
+    let executable = arguments.named_child(0)?;
+    let interpreter = known_shell_interpreter(call, executable, content, &mut BTreeSet::new(), 8)?;
+    let argument_array = arguments.named_child(1)?;
+    let argument_array =
+        stable_syntax_value(call, argument_array, content, &mut BTreeSet::new(), 8)?;
+    if !matches!(argument_array.kind(), "array" | "array_expression") {
+        return None;
+    }
+    let elements = unambiguous_array_elements(argument_array)?;
+    for (index, element) in elements.iter().copied().enumerate() {
+        if matches!(element.kind(), "spread_element" | "spread_property") {
+            return None;
+        }
+        let option = static_string_expression(call, element, content, &mut BTreeSet::new(), 8)?;
+        if shell_command_option(interpreter, &option) {
+            let program = *elements.get(index.saturating_add(1))?;
+            if matches!(program.kind(), "spread_element" | "spread_property") {
+                return None;
+            }
+            return Some(ShellProgramText {
+                interpreter,
+                option,
+                program,
+            });
+        }
+        if !shell_pre_program_option(interpreter, &option) {
+            return None;
+        }
+    }
+    None
+}
+
+fn known_shell_interpreter(
+    anchor: Node<'_>,
+    expression: Node<'_>,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<&'static str> {
+    let value = static_string_expression(anchor, expression, content, visited, depth)?;
+    let path = Path::new(&value);
+    if value.contains(['/', '\\']) && !path.is_absolute() {
+        return None;
+    }
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    match name.as_str() {
+        "sh" => Some("sh"),
+        "bash" => Some("bash"),
+        "dash" => Some("dash"),
+        "ash" => Some("ash"),
+        "ksh" => Some("ksh"),
+        "zsh" => Some("zsh"),
+        _ => None,
+    }
+}
+
+fn static_string_expression(
+    anchor: Node<'_>,
+    mut expression: Node<'_>,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<String> {
+    if depth == 0 {
+        return None;
+    }
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "as_expression" | "satisfies_expression"
+    ) {
+        expression = expression.named_child(0)?;
+    }
+    if is_fixed_string_literal(expression, content) {
+        return string_value(expression, content);
+    }
+    let name = expression_name(expression, content)?;
+    if name.contains(['.', '[']) || !visited.insert(name.clone()) {
+        return None;
+    }
+    let value = stable_bound_value(anchor, &name, expression.start_byte(), content)?;
+    let result = static_string_expression(anchor, value, content, visited, depth.saturating_sub(1));
+    visited.remove(&name);
+    result
+}
+
+fn stable_syntax_value<'tree>(
+    anchor: Node<'tree>,
+    mut expression: Node<'tree>,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<Node<'tree>> {
+    if depth == 0 {
+        return None;
+    }
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "as_expression" | "satisfies_expression"
+    ) {
+        expression = expression.named_child(0)?;
+    }
+    if matches!(expression.kind(), "array" | "array_expression") {
+        return Some(expression);
+    }
+    let name = expression_name(expression, content)?;
+    if name.contains(['.', '[']) || !visited.insert(name.clone()) {
+        return None;
+    }
+    let value = stable_bound_value(anchor, &name, expression.start_byte(), content)?;
+    let result = stable_syntax_value(anchor, value, content, visited, depth.saturating_sub(1));
+    visited.remove(&name);
+    result
+}
+
+fn stable_bound_value<'tree>(
+    anchor: Node<'tree>,
+    name: &str,
+    before: usize,
+    content: &[u8],
+) -> Option<Node<'tree>> {
+    let value = latest_bound_value(anchor, name, before, content)?;
+    let declaration = value.parent()?;
+    if declaration.kind() != "variable_declarator" {
+        return None;
+    }
+    let root = program_root(anchor)?;
+    (!binding_mutated_between(root, name, declaration.end_byte(), before, content)).then_some(value)
+}
+
+fn unambiguous_array_elements(array: Node<'_>) -> Option<Vec<Node<'_>>> {
+    let mut elements = Vec::new();
+    let mut expects_value = true;
+    let mut cursor = array.walk();
+    for child in array.children(&mut cursor) {
+        if matches!(child.kind(), "[" | "]" | "comment") {
+            continue;
+        }
+        if child.kind() == "," {
+            if expects_value {
+                return None;
+            }
+            expects_value = true;
+            continue;
+        }
+        if !expects_value || matches!(child.kind(), "spread_element" | "spread_property") {
+            return None;
+        }
+        elements.push(child);
+        expects_value = false;
+    }
+    Some(elements)
+}
+
+fn shell_command_option(interpreter: &str, option: &str) -> bool {
+    let Some(flags) = option.strip_prefix('-') else {
+        return false;
+    };
+    if flags.is_empty() || flags.starts_with('-') {
+        return false;
+    }
+    let mut command = 0_usize;
+    let mut seen = BTreeSet::new();
+    flags.chars().all(|flag| {
+        command = command.saturating_add(usize::from(flag == 'c'));
+        seen.insert(flag) && shell_option_flag(interpreter, flag)
+    }) && command == 1
+}
+
+fn shell_pre_program_option(interpreter: &str, option: &str) -> bool {
+    let Some(flags) = option.strip_prefix('-') else {
+        return false;
+    };
+    !flags.is_empty()
+        && !flags.starts_with('-')
+        && !flags.contains('c')
+        && flags
+            .chars()
+            .all(|flag| shell_option_flag(interpreter, flag))
+}
+
+fn shell_option_flag(interpreter: &str, flag: char) -> bool {
+    matches!(flag, 'c' | 'e' | 'x')
+        || (matches!(interpreter, "bash" | "ksh" | "zsh") && flag == 'l')
+}
+
+fn shell_program_values(program: Node<'_>, content: &[u8]) -> Vec<String> {
+    summary_return_inputs(program, content).unwrap_or_default()
+}
+
 fn object_property_is_absent_or_false(object: Node<'_>, content: &[u8], property: &str) -> bool {
     if !matches!(object.kind(), "object" | "object_expression") {
         return false;
@@ -8317,6 +8552,18 @@ fn property_values(slot: &[String], requested: &str) -> Vec<String> {
 }
 
 fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
+    if record
+        .inputs
+        .iter()
+        .any(|input| input == SHELL_PROGRAM_MARKER)
+    {
+        return record
+            .inputs
+            .iter()
+            .filter_map(|input| input.strip_prefix(SHELL_PROGRAM_VALUE_MARKER))
+            .map(str::to_owned)
+            .collect();
+    }
     let mut slots = argument_slots(&record.inputs);
     let leaf = record
         .callee
