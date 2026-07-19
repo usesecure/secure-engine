@@ -405,10 +405,10 @@ Exit condition: release 0.1.6 passes every compatibility, quality, security, sch
 
 ### Phase 6.11 - Retired Phase 19 generalization tranches
 
-Status: tranche 1 is integrated into main and tranche 2 is implemented on its development branch.
-Phase 6.11 remains open because redirect constructed-origin, outbound property connectivity,
-computed dispatch, and dynamic/ambiguous boundaries are explicitly deferred. The known Phase 19
-corpus is development/regression material, not an independent holdout, and is not rescored.
+Status: tranches 1 and 2 are integrated into main; tranche 3 is implemented on its development
+branch and closes Phase 6.11 development. The known Phase 19 corpus is development/regression
+material, not an independent holdout, and was not accessed or rescored by tranches 2 or 3. Any
+future evaluation requires a new independent holdout.
 
 - [Complete] Classify all 33 false negatives and 8 false positives into structural causes and select exactly two general causes.
 - [Complete] Separate bounded local fixed-point convergence from the configured interprocedural hop limit while retaining prior candidate budgets for redirect and filesystem families whose paired barrier semantics are deferred.
@@ -419,12 +419,16 @@ corpus is development/regression material, not an independent holdout, and is no
 - [Complete] Resolve only a final unshadowed built-in evaluator through bounded parentheses, sequence expressions, and unique local aliases; reject shadowing, members, reassignment, and ambiguity.
 - [Complete] Preserve composed filesystem identity and accept only dominant separator-aware confinement over the same current path and a trusted bounded root.
 - [Complete] Enable extended-round filesystem candidates after matching barrier precision, retain the redirect restriction, and advance the private cache to v9 with v8 as a safe miss.
-- [Deferred] Constructed redirect origins, inline outbound property connectivity, computed higher-order dispatch, reflection, dynamic imports, and ambiguous runtime resolution.
+- [Complete] Bind constructed redirects to an exact fixed-origin proof over the same current URL, then enable extended-round redirect candidates with matching value precision.
+- [Complete] Preserve static outbound property identity through object remapping, nested destructuring, unique helpers/imports, aliases, and transparent coercions without tainting siblings or later arguments.
+- [Complete] Advance the private cache to v10 with v9 as a safe miss while preserving all public contracts and unaffected fingerprints.
+- [Intentional limit] Computed higher-order dispatch, dynamic/computed properties, reflection, ambiguous imports/calls, unresolved callbacks, and runtime filesystem state remain conservative boundaries.
 
-Current tranche exit condition: all local compatibility, quality, security, determinism, privacy,
-and dependency gates pass; both selected causes and all deferred limits are documented; v0.1.6
-artifacts remain byte-identical; exactly one signed DCO commit is created without corpus execution,
-packaging, release, or push. Phase 6.11 is not declared complete while deferred causes remain.
+Development exit condition: all local compatibility, quality, security, determinism, privacy, and
+dependency gates pass; all six improvements across the three tranches and the intentional limits
+are documented; v0.1.6 artifacts remain byte-identical; exactly one signed DCO commit is created
+without corpus access, packaging, release, or push. This closure makes no claim that 0.1.7 is
+evaluated, production-ready, superior, or complete.
 
 ### Phase 7 - Distribution
 

@@ -49,6 +49,15 @@ operation, and a separator-aware terminating rejection. Extended-round filesyste
 enabled only with that matching barrier precision; redirect remains restricted. The public graph
 identity is unchanged and cache v9 prevents reuse of pre-tranche private records.
 
+Phase 6.11 tranche 3 attaches redirect policy only to a structurally constructed URL whose complete
+fixed origin is checked by a dominant terminating branch and whose current value or plain alias is
+the redirect argument. Static unambiguous object literals emit exact leaf-property records;
+recursive destructuring and unique bounded calls/imports preserve the selected outbound field
+without tainting siblings or later arguments. Computed/spread/ambiguous shapes remain unresolved.
+Redirect candidates now share the extended fixed-point rounds because their barriers have matching
+value precision. The public graph identity remains unchanged and cache v10 isolates these private
+record changes.
+
 ## Findings and suppressions
 
 Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.

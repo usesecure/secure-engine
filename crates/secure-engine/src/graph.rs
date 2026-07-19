@@ -735,6 +735,16 @@ pub(crate) fn analyze(
                     }
                 }
                 "assignment" | "alias" | "transformation" => {
+                    if record.kind == "assignment"
+                        && record.dominance_start.is_some()
+                        && let Some(output) = &record.output
+                        && !record
+                            .inputs
+                            .iter()
+                            .any(|input| values_correspond(input, output))
+                    {
+                        remove_value_and_descendants(&mut taints, &function, output);
+                    }
                     let trace = trace_for_transformation(
                         &snapshot,
                         &function,
@@ -822,20 +832,42 @@ pub(crate) fn analyze(
                         }
                     }
                 }
-                "call" => propagate_local_call(
-                    record,
-                    record_node,
-                    &snapshot,
-                    &mut taints,
-                    &raw_functions,
-                    &import_bindings,
-                    &guards,
-                    &all_records,
-                    &parameter_records,
-                    &record_nodes,
-                    &mut builder,
-                    configuration.max_interprocedural_depth,
-                ),
+                "call" => {
+                    propagate_local_call(
+                        record,
+                        record_node,
+                        &snapshot,
+                        &mut taints,
+                        &raw_functions,
+                        &import_bindings,
+                        &guards,
+                        &all_records,
+                        &parameter_records,
+                        &record_nodes,
+                        &mut builder,
+                        configuration.max_interprocedural_depth,
+                    );
+                    if record
+                        .callee
+                        .as_deref()
+                        .is_some_and(transparent_value_coercion)
+                        && let (Some(output), Some(trace)) = (
+                            record.output.as_ref(),
+                            trace_for_inputs(&snapshot, &function, &record.inputs),
+                        )
+                    {
+                        let edge = builder.edge(
+                            "source-to-sink-propagation",
+                            trace.nodes.last().map_or(record_node, String::as_str),
+                            record_node,
+                            &record.location,
+                            &record.provenance,
+                        );
+                        let mut trace = extend_trace(&trace, record_node, edge);
+                        trace.values.insert(output.clone());
+                        insert_trace(&mut taints, (function.clone(), output.clone()), trace);
+                    }
+                }
                 "return" => {
                     if let Some(trace) = trace_for_inputs(&snapshot, &function, &record.inputs) {
                         let mut trace = extend_trace(
@@ -860,7 +892,19 @@ pub(crate) fn analyze(
                                     || required_sanitizer_policy("SE1001") == Some(policy)
                                     || required_sanitizer_policy("SE1002") == Some(policy)
                                     || required_sanitizer_policy("SE1004") == Some(policy)
-                                    || required_sanitizer_policy("SE1005") == Some(policy)
+                                    || (required_sanitizer_policy("SE1005") == Some(policy)
+                                        && (!guard
+                                            .inputs
+                                            .iter()
+                                            .any(|input| input.starts_with("@redirect-proof:"))
+                                            || redirect_guard_proves_values(
+                                                guard,
+                                                &record.inputs,
+                                                record,
+                                                &trace,
+                                                &all_records,
+                                                &snapshot,
+                                            )))
                                     || required_sanitizer_policy("SE1006") == Some(policy)
                                     || (policy == "filesystem-path-confinement"
                                         && filesystem_guard_proves_values(
@@ -1403,6 +1447,14 @@ fn extract_record_for_node(
                 );
                 return;
             }
+            if let (Some(output), Some(value)) = (output.as_deref(), value)
+                && matches!(value.kind(), "object" | "object_expression")
+            {
+                append_object_property_records(
+                    path, content, value, output, function, provenance, aliases, records,
+                );
+                return;
+            }
             if let (Some(output), Some(value)) = (output, value) {
                 let callee = call_callee(value, content)
                     .map(|callee| resolve_alias(&callee, function, aliases));
@@ -1623,6 +1675,7 @@ fn extract_record_for_node(
                     })
                 {
                     inputs.extend(filesystem_confinement_markers(node, condition, content));
+                    inputs.extend(redirect_origin_markers(node, condition, content));
                     records.push(record_with_dominance(
                         "control-gate",
                         None,
@@ -1655,6 +1708,150 @@ fn extract_record_for_node(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn append_object_property_records(
+    path: &str,
+    content: &[u8],
+    object: Node<'_>,
+    output: &str,
+    function: Option<&FunctionInfo>,
+    provenance: &ParserProvenance,
+    aliases: &AliasMap,
+    records: &mut Vec<ProgramRecord>,
+) {
+    if !object_shape_is_unambiguous(object, content) {
+        return;
+    }
+    append_object_property_records_inner(
+        path, content, object, output, None, function, provenance, aliases, records,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_object_property_records_inner(
+    path: &str,
+    content: &[u8],
+    object: Node<'_>,
+    output: &str,
+    prefix: Option<&str>,
+    function: Option<&FunctionInfo>,
+    provenance: &ParserProvenance,
+    aliases: &AliasMap,
+    records: &mut Vec<ProgramRecord>,
+) {
+    for index in 0..object.named_child_count() {
+        let Some(property) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            continue;
+        };
+        let (key, value) = if matches!(
+            property.kind(),
+            "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+        ) {
+            let Some(key) = expression_name(property, content) else {
+                continue;
+            };
+            (key, property)
+        } else {
+            let Some(key) = static_property_key(property, content) else {
+                continue;
+            };
+            let Some(value) = property
+                .child_by_field_name("value")
+                .or_else(|| property.named_child(1))
+            else {
+                continue;
+            };
+            (key, value)
+        };
+        let property_path = append_property_path(prefix, &key);
+        if matches!(value.kind(), "object" | "object_expression") {
+            append_object_property_records_inner(
+                path,
+                content,
+                value,
+                output,
+                Some(&property_path),
+                function,
+                provenance,
+                aliases,
+                records,
+            );
+            continue;
+        }
+        let callee =
+            call_callee(value, content).map(|callee| resolve_alias(&callee, function, aliases));
+        let mut inputs = value_names(value, content);
+        if callee.is_some() {
+            inputs.push(call_output_key(value));
+        }
+        records.push(record_with_dominance(
+            if is_transformation(value) {
+                "transformation"
+            } else {
+                "assignment"
+            },
+            callee.as_deref(),
+            function.map(|item| item.qualified_name.as_str()),
+            inputs,
+            Some(&format!("{output}.{property_path}")),
+            callee.as_deref(),
+            location_for_node(path, content, property),
+            provenance,
+            direct_call_dominance(property, function),
+        ));
+    }
+}
+
+fn object_shape_is_unambiguous(object: Node<'_>, content: &[u8]) -> bool {
+    if !matches!(object.kind(), "object" | "object_expression") {
+        return false;
+    }
+    let mut keys = BTreeSet::new();
+    for index in 0..object.named_child_count() {
+        let Some(property) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            return false;
+        };
+        if matches!(property.kind(), "spread_element" | "spread_property") {
+            return false;
+        }
+        let key = if matches!(
+            property.kind(),
+            "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+        ) {
+            expression_name(property, content)
+        } else {
+            static_property_key(property, content)
+        };
+        let Some(key) = key else {
+            return false;
+        };
+        if !keys.insert(key) {
+            return false;
+        }
+        if property
+            .child_by_field_name("value")
+            .or_else(|| property.named_child(1))
+            .is_some_and(|value| {
+                matches!(value.kind(), "object" | "object_expression")
+                    && !object_shape_is_unambiguous(value, content)
+            })
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn static_property_key(property: Node<'_>, content: &[u8]) -> Option<String> {
+    let key = property.child_by_field_name("key")?;
+    matches!(
+        key.kind(),
+        "property_identifier" | "identifier" | "string" | "number"
+    )
+    .then(|| expression_name(key, content).or_else(|| string_value(key, content)))
+    .flatten()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn append_destructuring_records(
     path: &str,
     content: &[u8],
@@ -1665,30 +1862,63 @@ fn append_destructuring_records(
     aliases: &AliasMap,
     records: &mut Vec<ProgramRecord>,
 ) {
+    if !destructuring_shape_is_unambiguous(pattern, content) {
+        return;
+    }
     let Some(base) = expression_name(value, content)
         .or_else(|| nested_call_expression(value).map(call_output_key))
     else {
         return;
     };
     let resolved_base = resolve_alias(&base, function, aliases);
-    for index in 0..pattern.named_child_count() {
-        let Some(item) = pattern.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
-            continue;
+    append_destructuring_records_inner(
+        path,
+        content,
+        pattern,
+        &base,
+        &resolved_base,
+        None,
+        function,
+        provenance,
+        records,
+    );
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn append_destructuring_records_inner(
+    path: &str,
+    content: &[u8],
+    pattern: Node<'_>,
+    base: &str,
+    resolved_base: &str,
+    prefix: Option<&str>,
+    function: Option<&FunctionInfo>,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    if matches!(
+        pattern.kind(),
+        "identifier" | "shorthand_property_identifier_pattern"
+    ) {
+        let Some(output) = expression_name(pattern, content) else {
+            return;
         };
-        let key = item
-            .child_by_field_name("key")
-            .and_then(|child| expression_name(child, content))
-            .or_else(|| expression_name(item, content));
-        let output = item
-            .child_by_field_name("value")
-            .and_then(|child| expression_name(child, content))
-            .or_else(|| expression_name(item, content));
-        let (Some(key), Some(output)) = (key, output) else {
-            continue;
+        let property_path = prefix.or_else(|| {
+            (pattern.kind() == "shorthand_property_identifier_pattern").then_some(output.as_str())
+        });
+        let Some(property_path) = property_path else {
+            return;
         };
-        let selected = format!("{base}.{key}");
-        let resolved_selected = format!("{resolved_base}.{key}");
+        let selected = format!("{base}.{property_path}");
+        let resolved_selected = format!("{resolved_base}.{property_path}");
         let source = framework_member_source(function, &resolved_selected);
+        let evidence_node = pattern.parent().filter(|parent| {
+            matches!(parent.kind(), "pair_pattern" | "pair")
+                && parent
+                    .child_by_field_name("value")
+                    .or_else(|| parent.named_child(1))
+                    == Some(pattern)
+        });
         records.push(record(
             if source.is_some() {
                 "source"
@@ -1704,10 +1934,103 @@ fn append_destructuring_records(
             },
             Some(&output),
             None,
-            location_for_node(path, content, item),
+            location_for_node(path, content, evidence_node.unwrap_or(pattern)),
             provenance,
         ));
+        return;
     }
+    if matches!(pattern.kind(), "pair_pattern" | "pair") {
+        let Some(key) = static_property_key(pattern, content) else {
+            return;
+        };
+        let Some(value) = pattern
+            .child_by_field_name("value")
+            .or_else(|| pattern.named_child(1))
+        else {
+            return;
+        };
+        let nested = append_property_path(prefix, &key);
+        append_destructuring_records_inner(
+            path,
+            content,
+            value,
+            base,
+            resolved_base,
+            Some(&nested),
+            function,
+            provenance,
+            records,
+        );
+        return;
+    }
+    if matches!(
+        pattern.kind(),
+        "assignment_pattern" | "required_parameter" | "optional_parameter"
+    ) && let Some(binding) = pattern
+        .child_by_field_name("left")
+        .or_else(|| pattern.child_by_field_name("pattern"))
+        .or_else(|| pattern.named_child(0))
+    {
+        append_destructuring_records_inner(
+            path,
+            content,
+            binding,
+            base,
+            resolved_base,
+            prefix,
+            function,
+            provenance,
+            records,
+        );
+        return;
+    }
+    for index in 0..pattern.named_child_count() {
+        let Some(child) = pattern.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            continue;
+        };
+        if child.kind().contains("type") {
+            continue;
+        }
+        let nested = if matches!(pattern.kind(), "array_pattern" | "array") {
+            Some(append_property_path(prefix, &index.to_string()))
+        } else {
+            prefix.map(str::to_owned)
+        };
+        append_destructuring_records_inner(
+            path,
+            content,
+            child,
+            base,
+            resolved_base,
+            nested.as_deref(),
+            function,
+            provenance,
+            records,
+        );
+    }
+}
+
+fn destructuring_shape_is_unambiguous(pattern: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![pattern];
+    while let Some(node) = stack.pop() {
+        if matches!(
+            node.kind(),
+            "rest_pattern" | "spread_element" | "spread_property"
+        ) {
+            return false;
+        }
+        if matches!(node.kind(), "pair_pattern" | "pair")
+            && static_property_key(node, content).is_none()
+        {
+            return false;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    true
 }
 
 fn nested_call_expression(mut node: Node<'_>) -> Option<Node<'_>> {
@@ -2069,56 +2392,58 @@ fn propagate_local_call(
             .inputs
             .iter()
             .find_map(|input| input.strip_prefix("@property:"));
-        let inputs =
-            property_path.map_or_else(|| slot_values(slot), |path| property_values(slot, path));
-        let Some(trace) = trace_for_inputs(taints, &origin_context, &inputs) else {
-            continue;
-        };
-        if trace.interprocedural_depth >= max_interprocedural_depth {
-            continue;
-        }
         let Some(parameter_node) = record_nodes.get(&parameter.record_id) else {
             continue;
         };
-        let call_edge = builder.edge(
-            "argument-flow",
-            trace.nodes.last().map_or(record_node, String::as_str),
-            record_node,
-            &record.location,
-            &record.provenance,
-        );
-        let via_call = extend_trace(&trace, record_node, call_edge);
-        let parameter_edge = builder.edge(
-            "argument-flow",
-            record_node,
-            parameter_node,
-            &parameter.location,
-            &parameter.provenance,
-        );
-        let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
-        parameter_trace.interprocedural_depth =
-            parameter_trace.interprocedural_depth.saturating_add(1);
-        for guard in dominating_guard_records(record, guards) {
-            let Some(policy) = guard.name.as_deref() else {
+        for (property_suffix, trace) in
+            parameter_argument_traces(taints, &origin_context, slot, property_path)
+        {
+            if trace.interprocedural_depth >= max_interprocedural_depth {
                 continue;
-            };
-            let applies = if crate::semantics::is_operation_authorization(policy) {
-                guard_is_authorization(guard, records)
-                    && authorization_applies_to_trace(guard, &trace, taints)
-            } else {
-                guard_applies_to_trace(guard, &trace, taints)
-            };
-            if applies {
-                parameter_trace.sanitizers.insert(policy.to_owned());
             }
-        }
-        if let Some(output) = &parameter.output {
-            parameter_trace.values.insert(output.clone());
-            insert_trace(
-                updates,
-                (callee_function.clone(), output.clone()),
-                parameter_trace,
+            let call_edge = builder.edge(
+                "argument-flow",
+                trace.nodes.last().map_or(record_node, String::as_str),
+                record_node,
+                &record.location,
+                &record.provenance,
             );
+            let via_call = extend_trace(&trace, record_node, call_edge);
+            let parameter_edge = builder.edge(
+                "argument-flow",
+                record_node,
+                parameter_node,
+                &parameter.location,
+                &parameter.provenance,
+            );
+            let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
+            parameter_trace.interprocedural_depth =
+                parameter_trace.interprocedural_depth.saturating_add(1);
+            for guard in dominating_guard_records(record, guards) {
+                let Some(policy) = guard.name.as_deref() else {
+                    continue;
+                };
+                let applies = if crate::semantics::is_operation_authorization(policy) {
+                    guard_is_authorization(guard, records)
+                        && authorization_applies_to_trace(guard, &trace, taints)
+                } else {
+                    guard_applies_to_trace(guard, &trace, taints)
+                };
+                if applies {
+                    parameter_trace.sanitizers.insert(policy.to_owned());
+                }
+            }
+            if let Some(output) = &parameter.output {
+                let selected_output = property_suffix
+                    .as_deref()
+                    .map_or_else(|| output.clone(), |suffix| format!("{output}.{suffix}"));
+                parameter_trace.values.insert(selected_output.clone());
+                insert_trace(
+                    updates,
+                    (callee_function.clone(), selected_output),
+                    parameter_trace,
+                );
+            }
         }
     }
     if let (Some(output), Some(return_trace)) = (
@@ -2139,6 +2464,56 @@ fn propagate_local_call(
         caller_trace.values.insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
+}
+
+fn parameter_argument_traces(
+    taints: &BTreeMap<(String, String), Trace>,
+    function: &str,
+    slot: &[String],
+    requested_property: Option<&str>,
+) -> Vec<(Option<String>, Trace)> {
+    if slot.iter().any(|input| input == "@ambiguous-property") {
+        return Vec::new();
+    }
+    if let Some(property) = requested_property {
+        return trace_for_inputs(taints, function, &property_values(slot, property))
+            .map(|trace| vec![(None, trace)])
+            .unwrap_or_default();
+    }
+    let properties = slot
+        .iter()
+        .filter_map(|input| input.strip_prefix("@property:"))
+        .collect::<BTreeSet<_>>();
+    if !properties.is_empty() {
+        return properties
+            .into_iter()
+            .filter_map(|property| {
+                trace_for_inputs(taints, function, &property_values(slot, property))
+                    .map(|trace| (Some(property.to_owned()), trace))
+            })
+            .collect();
+    }
+    let plain = slot_values(slot);
+    if let Some(trace) = trace_for_inputs(taints, function, &plain) {
+        return vec![(None, trace)];
+    }
+    let [base] = plain.as_slice() else {
+        return Vec::new();
+    };
+    let prefix = format!("{base}.");
+    taints
+        .iter()
+        .filter(|((candidate_function, candidate), _)| {
+            candidate_function == function && candidate.starts_with(&prefix)
+        })
+        .take(64)
+        .map(|((_, candidate), trace)| {
+            (
+                candidate.strip_prefix(&prefix).map(str::to_owned),
+                trace.clone(),
+            )
+        })
+        .collect()
 }
 
 fn add_candidate(
@@ -2545,6 +2920,17 @@ fn insert_trace(
     {
         taints.insert(key, trace);
     }
+}
+
+fn remove_value_and_descendants(
+    taints: &mut BTreeMap<(String, String), Trace>,
+    function: &str,
+    output: &str,
+) {
+    let prefix = format!("{output}.");
+    taints.retain(|(candidate_function, candidate), _| {
+        candidate_function != function || (candidate != output && !candidate.starts_with(&prefix))
+    });
 }
 
 fn trace_is_preferred(candidate: &Trace, existing: &Trace) -> bool {
@@ -3418,6 +3804,19 @@ fn trace_is_sanitized_for(
                     records,
                     taints,
                 ))
+            && (rule_id != "SE1005"
+                || !guard
+                    .inputs
+                    .iter()
+                    .any(|input| input.starts_with("@redirect-proof:"))
+                || redirect_guard_proves_values(
+                    guard,
+                    &sensitive_sink_inputs(sink),
+                    sink,
+                    trace,
+                    records,
+                    taints,
+                ))
     })
 }
 
@@ -3511,6 +3910,62 @@ fn filesystem_guard_proves_values(
             records,
             8,
         )
+    })
+}
+
+fn redirect_guard_proves_values(
+    guard: &ProgramRecord,
+    target_values: &[String],
+    target: &ProgramRecord,
+    trace: &Trace,
+    records: &[&ProgramRecord],
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    let candidate = guard
+        .inputs
+        .iter()
+        .find_map(|input| input.strip_prefix("@redirect-candidate:"));
+    let has_exact_origin = guard
+        .inputs
+        .iter()
+        .any(|input| input == "@redirect-proof:exact-origin");
+    let (Some(candidate), true) = (candidate, has_exact_origin) else {
+        return false;
+    };
+    if guard.function != target.function
+        || !guard_applies_to_trace(guard, trace, taints)
+        || value_reassigned_between(
+            candidate,
+            guard.location.span.end_byte,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        )
+    {
+        return false;
+    }
+    target_values.iter().any(|value| {
+        !value_reassigned_between(
+            value,
+            guard.location.span.end_byte,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        ) && (current_value_derives_from(
+            value,
+            candidate,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+            8,
+        ) || current_value_derives_from(
+            candidate,
+            value,
+            guard.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+            8,
+        ))
     })
 }
 
@@ -3749,12 +4204,12 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
 }
 
 fn extended_round_candidate_allowed(
-    rule_id: &str,
-    pass: usize,
-    legacy_passes: usize,
-    already_present: bool,
+    _rule_id: &str,
+    _pass: usize,
+    _legacy_passes: usize,
+    _already_present: bool,
 ) -> bool {
-    pass < legacy_passes || already_present || rule_id != "SE1005"
+    true
 }
 
 fn unique_function<'a>(
@@ -4391,6 +4846,12 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
     {
         return Some(authorization_policy_name(&lower));
     }
+    if inputs
+        .iter()
+        .any(|input| input == "@redirect-proof:exact-origin")
+    {
+        return Some("redirect-destination-policy");
+    }
     let named_allowlist =
         lower.contains("allow") || lower.contains("trusted") || lower.contains("approved");
     let unsafe_destination_check = [
@@ -4409,7 +4870,19 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         || ["hostname.includes(", ".host.includes(", "origin.includes("]
             .iter()
             .any(|marker| lower.contains(marker));
-    if !unsafe_destination_check
+    let destination_component = [
+        ".origin",
+        ".hostname",
+        ".host",
+        ".protocol",
+        ".href",
+        ".username",
+        ".password",
+    ]
+    .iter()
+    .any(|component| lower.contains(component));
+    if !destination_component
+        && !unsafe_destination_check
         && (condition_has_fixed_allowlist(condition, content)
             || condition_has_single_literal_allowlist(condition, content))
     {
@@ -4422,8 +4895,11 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         lower.contains("protocol") && (lower.contains("hostname") || lower.contains(".host"));
     let exact_destination =
         parsed_destination && destination_components_compare_to_literals(condition, content);
+    let fixed_destination_allowlist = condition_has_fixed_allowlist(condition, content);
     let origin_policy = lower.contains("origin") && allowlist;
-    if (parsed_destination && (allowlist || exact_destination) && !unsafe_destination_check)
+    if (parsed_destination
+        && (allowlist || exact_destination || fixed_destination_allowlist)
+        && !unsafe_destination_check)
         || origin_policy
     {
         return Some("outbound-destination-policy");
@@ -5476,6 +5952,276 @@ fn condition_contains_conjunction(condition: Node<'_>, content: &[u8]) -> bool {
     false
 }
 
+fn redirect_origin_markers(
+    statement: Node<'_>,
+    condition: Node<'_>,
+    content: &[u8],
+) -> Vec<String> {
+    let Some((candidate, trusted_origin)) = exact_origin_comparison(statement, condition, content)
+    else {
+        return Vec::new();
+    };
+    if !candidate_is_constructed_url(statement, &candidate, content) {
+        return Vec::new();
+    }
+    vec![
+        format!("@redirect-candidate:{candidate}"),
+        format!("@redirect-origin:{trusted_origin}"),
+        "@redirect-proof:exact-origin".into(),
+    ]
+}
+
+fn exact_origin_comparison(
+    anchor: Node<'_>,
+    condition: Node<'_>,
+    content: &[u8],
+) -> Option<(String, String)> {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "binary_expression"
+            && node
+                .child_by_field_name("operator")
+                .and_then(|operator| operator.utf8_text(content).ok())
+                .is_some_and(|operator| matches!(operator.trim(), "==" | "===" | "!=" | "!=="))
+            && let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            )
+        {
+            if let Some(candidate) = exact_origin_member(left, content)
+                && let Some(origin) = trusted_fixed_origin(anchor, right, content)
+            {
+                return Some((candidate, origin));
+            }
+            if let Some(candidate) = exact_origin_member(right, content)
+                && let Some(origin) = trusted_fixed_origin(anchor, left, content)
+            {
+                return Some((candidate, origin));
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    None
+}
+
+fn exact_origin_member(node: Node<'_>, content: &[u8]) -> Option<String> {
+    let node = unwrap_expression(node);
+    if node.kind() != "member_expression"
+        || node
+            .child_by_field_name("property")
+            .and_then(|property| expression_name(property, content))
+            .as_deref()
+            != Some("origin")
+    {
+        return None;
+    }
+    node.child_by_field_name("object")
+        .and_then(|object| expression_name(object, content))
+        .filter(|candidate| !candidate.contains('['))
+}
+
+fn trusted_fixed_origin(anchor: Node<'_>, expression: Node<'_>, content: &[u8]) -> Option<String> {
+    trusted_fixed_origin_inner(
+        anchor,
+        expression,
+        expression.start_byte(),
+        content,
+        &mut BTreeSet::new(),
+        8,
+    )
+}
+
+fn trusted_fixed_origin_inner(
+    anchor: Node<'_>,
+    mut expression: Node<'_>,
+    before: usize,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<String> {
+    if depth == 0 {
+        return None;
+    }
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "await_expression" | "as_expression"
+    ) {
+        expression = expression.named_child(0)?;
+    }
+    if let Some(value) = string_value(expression, content)
+        && fixed_origin_is_valid(&value)
+    {
+        return Some(value);
+    }
+    let name = expression_name(expression, content)?;
+    if name.contains('.') || name.contains('[') || !visited.insert(name.clone()) {
+        return None;
+    }
+    let value = latest_bound_value(anchor, &name, before, content)?;
+    let result = trusted_fixed_origin_inner(
+        anchor,
+        value,
+        value.start_byte(),
+        content,
+        visited,
+        depth.saturating_sub(1),
+    );
+    visited.remove(&name);
+    result
+}
+
+fn fixed_origin_is_valid(value: &str) -> bool {
+    let Some((scheme, authority)) = value.split_once("://") else {
+        return false;
+    };
+    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https")
+        || authority.is_empty()
+        || authority.contains(['/', '?', '#', '@'])
+        || authority.chars().any(char::is_whitespace)
+    {
+        return false;
+    }
+    if authority.starts_with('[') {
+        return authority.find(']').is_some_and(|end| {
+            end > 1
+                && (end + 1 == authority.len()
+                    || authority[end + 1..].strip_prefix(':').is_some_and(|port| {
+                        !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())
+                    }))
+        });
+    }
+    if authority.matches(':').count() > 1 {
+        return false;
+    }
+    let host = authority
+        .split_once(':')
+        .map_or(authority, |(host, _)| host);
+    let port_valid = authority.split_once(':').is_none_or(|(_, port)| {
+        !port.is_empty() && port.chars().all(|character| character.is_ascii_digit())
+    });
+    !host.is_empty() && port_valid
+}
+
+fn candidate_is_constructed_url(anchor: Node<'_>, candidate: &str, content: &[u8]) -> bool {
+    candidate_is_constructed_url_inner(
+        anchor,
+        candidate,
+        anchor.start_byte(),
+        content,
+        &mut BTreeSet::new(),
+        8,
+    )
+}
+
+fn candidate_is_constructed_url_inner(
+    anchor: Node<'_>,
+    candidate: &str,
+    before: usize,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> bool {
+    if depth == 0 || !visited.insert(candidate.to_owned()) {
+        return false;
+    }
+    let result = latest_bound_value(anchor, candidate, before, content).is_some_and(|value| {
+        constructed_url_expression(anchor, value, content, visited, depth.saturating_sub(1))
+    });
+    visited.remove(candidate);
+    result
+}
+
+fn constructed_url_expression(
+    anchor: Node<'_>,
+    mut expression: Node<'_>,
+    content: &[u8],
+    visited: &mut BTreeSet<String>,
+    depth: usize,
+) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    while matches!(
+        expression.kind(),
+        "parenthesized_expression" | "await_expression" | "as_expression"
+    ) {
+        let Some(child) = expression.named_child(0) else {
+            return false;
+        };
+        expression = child;
+    }
+    let is_url_construction = if expression.kind() == "new_expression" {
+        expression
+            .child_by_field_name("constructor")
+            .and_then(|constructor| expression_name(constructor, content))
+            .as_deref()
+            == Some("URL")
+    } else if expression.kind() == "call_expression" {
+        expression
+            .child_by_field_name("function")
+            .and_then(|function| expression_name(function, content))
+            .as_deref()
+            == Some("URL.parse")
+    } else {
+        false
+    };
+    if is_url_construction {
+        return url_builtin_is_unshadowed(anchor, content)
+            && expression
+                .child_by_field_name("arguments")
+                .is_some_and(|arguments| arguments.named_child_count() > 0);
+    }
+    expression_name(expression, content).is_some_and(|name| {
+        !name.contains('[')
+            && candidate_is_constructed_url_inner(
+                anchor,
+                &name,
+                expression.start_byte(),
+                content,
+                visited,
+                depth.saturating_sub(1),
+            )
+    })
+}
+
+fn url_builtin_is_unshadowed(anchor: Node<'_>, content: &[u8]) -> bool {
+    !non_variable_binding_shadows_name(anchor, "URL", content)
+        && !variable_binding_declares_name(anchor, "URL", content)
+}
+
+fn variable_binding_declares_name(anchor: Node<'_>, name: &str, content: &[u8]) -> bool {
+    let scope = enclosing_function_span(anchor);
+    let Some(root) = program_root(anchor) else {
+        return true;
+    };
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return true;
+        }
+        if (binding_scope(node).is_none() || binding_scope(node) == scope)
+            && node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("name")
+                .is_some_and(|binding| pattern_binds_name(binding, name, content))
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
 fn filesystem_confinement_markers(
     statement: Node<'_>,
     condition: Node<'_>,
@@ -5987,7 +6733,41 @@ fn latest_bound_value<'tree>(
         &mut local
     };
     candidates.sort_by_key(|(end, _)| *end);
-    candidates.last().map(|(_, value)| *value)
+    if let Some((_, value)) = candidates.last() {
+        return Some(*value);
+    }
+    let (base, property_path) = name.split_once('.')?;
+    let object = latest_bound_value(anchor, base, before, content)?;
+    static_object_property_value(object, property_path, content)
+}
+
+fn static_object_property_value<'tree>(
+    mut object: Node<'tree>,
+    property_path: &str,
+    content: &[u8],
+) -> Option<Node<'tree>> {
+    for property_name in property_path.split('.') {
+        while matches!(
+            object.kind(),
+            "parenthesized_expression" | "await_expression" | "as_expression"
+        ) {
+            object = object.named_child(0)?;
+        }
+        if !object_shape_is_unambiguous(object, content) {
+            return None;
+        }
+        object = (0..object.named_child_count()).find_map(|index| {
+            let property = object.named_child(u32::try_from(index).ok()?)?;
+            (static_property_key(property, content).as_deref() == Some(property_name))
+                .then(|| {
+                    property
+                        .child_by_field_name("value")
+                        .or_else(|| property.named_child(1))
+                })
+                .flatten()
+        })?;
+    }
+    Some(object)
 }
 
 fn condition_rejects_invalid(condition: &str) -> bool {
@@ -6320,6 +7100,7 @@ fn object_argument_values(object: Node<'_>, content: &[u8], prefix: Option<&str>
             .child_by_field_name("key")
             .and_then(|key| expression_name(key, content).or_else(|| string_value(key, content)))
         else {
+            values.push("@ambiguous-property".into());
             continue;
         };
         let Some(value) = property
@@ -6366,7 +7147,11 @@ fn argument_slots(inputs: &[String]) -> Vec<Vec<String>> {
 
 fn slot_values(slot: &[String]) -> Vec<String> {
     slot.iter()
-        .filter(|input| !input.starts_with('@'))
+        .filter(|input| {
+            !input.starts_with("@argument:")
+                && !input.starts_with("@property:")
+                && input.as_str() != "@ambiguous-property"
+        })
         .cloned()
         .collect()
 }
@@ -6374,17 +7159,27 @@ fn slot_values(slot: &[String]) -> Vec<String> {
 fn property_values(slot: &[String], requested: &str) -> Vec<String> {
     let mut values = Vec::new();
     let mut selected = false;
+    let has_property_markers = slot.iter().any(|input| input.starts_with("@property:"));
     for input in slot {
         if let Some(path) = input.strip_prefix("@property:") {
             selected = path == requested;
             continue;
         }
-        if input.starts_with('@') {
+        if input.starts_with("@argument:") || input == "@ambiguous-property" {
             selected = false;
             continue;
         }
         if selected {
             values.push(input.clone());
+        }
+    }
+    if !has_property_markers {
+        let plain = slot
+            .iter()
+            .filter(|input| !input.starts_with('@'))
+            .collect::<Vec<_>>();
+        if plain.len() == 1 {
+            values.push(format!("{}.{}", plain[0], requested));
         }
     }
     values
