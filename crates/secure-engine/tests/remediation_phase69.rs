@@ -405,7 +405,7 @@ fn ambiguous_dynamic_boundaries_remain_conservative_and_private()
 }
 
 #[test]
-fn cache_v11_ignores_older_entries_and_reuses_only_current_evidence()
+fn cache_v12_ignores_v11_entries_and_reuses_only_current_evidence()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = TempDir::new()?;
     fs::create_dir_all(repository.path().join("src"))?;
@@ -416,7 +416,7 @@ fn cache_v11_ignores_older_entries_and_reuses_only_current_evidence()
     let cache = TempDir::new()?;
     let stale = cache
         .path()
-        .join("secure-parse-cache-v10/legacy/stale.json");
+        .join("secure-parse-cache-v11/legacy/stale.json");
     fs::create_dir_all(stale.parent().ok_or("stale parent missing")?)?;
     fs::write(&stale, b"legacy-cache-envelope")?;
 
@@ -430,7 +430,7 @@ fn cache_v11_ignores_older_entries_and_reuses_only_current_evidence()
     assert!(cold.parsing.cache_misses > 0);
     assert!(cold.parsing.cache_writes > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v11").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v12").is_dir());
 
     let warm = scan_repository(&request, &CancellationToken::new(), |_| {})?;
     assert_eq!(warm.parsing.cache_misses, 0);

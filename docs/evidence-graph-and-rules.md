@@ -55,8 +55,10 @@ the redirect argument. Static unambiguous object literals emit exact leaf-proper
 recursive destructuring and unique bounded calls/imports preserve the selected outbound field
 without tainting siblings or later arguments. Computed/spread/ambiguous shapes remain unresolved.
 Redirect candidates now share the extended fixed-point rounds because their barriers have matching
-value precision. The public graph identity remains unchanged and cache v11 isolates these private
-record changes.
+value precision. Phase 6.12 tranche 2 further binds exact-origin guards to typed relative URL
+projections and binds complete tenant/owner guards to the same loaded record and authenticated
+principal. The public graph identity remains unchanged and cache v12 isolates these private record
+changes.
 
 ## Findings and suppressions
 

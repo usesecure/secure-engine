@@ -21,8 +21,10 @@ Secure Engine 0.1.7 retains the same public semantics and contracts while freezi
 6.11 generalizations: bounded local convergence independent of call depth, same-resource
 authorization, final dynamic sequence callees, composed filesystem identity and confinement,
 constructed-redirect exact-origin reasoning, and field-sensitive outbound connectivity. The
-private parse cache is v11; no public schema, taxonomy, rule ID, or unaffected fingerprint changes
-as a consequence of the private Phase 6.12 summary records.
+private parse cache is v12; no public schema, taxonomy, rule ID, or unaffected fingerprint changes
+as a consequence of the private Phase 6.12 summary and derived-identity records. RC5 barriers now
+require the same typed URL projection or the same loaded record, complete tenant/owner guards, and
+one authenticated principal lineage.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 

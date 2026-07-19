@@ -17,6 +17,11 @@ const MAX_FIXED_POINT_PASSES: usize = 12;
 const MAX_VALUE_SUMMARY_ARGUMENTS: usize = 16;
 const MAX_VALUE_SUMMARY_SYNTAX_DEPTH: usize = 8;
 const PATH_COMPOSER_MARKER: &str = "@summary:node-path-composer:";
+const URL_OBJECT_MARKER: &str = "@identity:url-object";
+const URL_INPUT_MARKER: &str = "@identity:url-input:";
+const URL_RELATIVE_MARKER: &str = "@identity:url-relative:";
+const RESOURCE_OBJECT_MARKER: &str = "@identity:resource-object";
+const RESOURCE_REQUEST_MARKER: &str = "@identity:resource-request:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ProgramUnit {
@@ -661,23 +666,34 @@ pub(crate) fn analyze(
         &mut builder,
         configuration.max_interprocedural_depth,
     );
+    let authorization_summary_set = authorization_summaries
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
     let resource_authorized_sinks = all_records
         .iter()
         .copied()
         .filter(|record| record.kind == "sink")
         .filter(|record| record.name.as_deref() == Some("sensitive-mutation"))
         .filter(|record| {
-            dominating_guard_records(record, &guards)
-                .iter()
-                .any(|guard| {
-                    guard
-                        .function
-                        .as_ref()
-                        .and_then(|function| records_by_function.get(function))
-                        .is_some_and(|function_records| {
-                            resource_authorization_applies_to_sink(guard, record, function_records)
-                        })
-                })
+            let dominant = dominating_guard_records(record, &guards);
+            dominant.iter().any(|guard| {
+                guard
+                    .function
+                    .as_ref()
+                    .and_then(|function| records_by_function.get(function))
+                    .is_some_and(|function_records| {
+                        resource_authorization_applies_to_sink(guard, record, function_records)
+                    })
+            }) || derived_resource_authorization_applies_to_sink(
+                &dominant,
+                record,
+                &all_records,
+                &authorization_summary_set,
+                &raw_functions,
+                &import_bindings,
+                &parameter_records,
+            )
         })
         .map(|record| record.record_id.clone())
         .collect::<BTreeSet<_>>();
@@ -916,23 +932,27 @@ pub(crate) fn analyze(
                                 continue;
                             };
                             if guard_applies_to_trace(guard, &trace, &snapshot)
-                                && (policy == crate::semantics::POLICY_EXACT_ALLOWLIST
+                                && ((policy == crate::semantics::POLICY_EXACT_ALLOWLIST
+                                    && redirect_policy_applies_to_values(
+                                        guard,
+                                        &record.inputs,
+                                        record,
+                                        &trace,
+                                        &all_records,
+                                        &snapshot,
+                                    ))
                                     || required_sanitizer_policy("SE1001") == Some(policy)
                                     || required_sanitizer_policy("SE1002") == Some(policy)
                                     || required_sanitizer_policy("SE1004") == Some(policy)
                                     || (required_sanitizer_policy("SE1005") == Some(policy)
-                                        && (!guard
-                                            .inputs
-                                            .iter()
-                                            .any(|input| input.starts_with("@redirect-proof:"))
-                                            || redirect_guard_proves_values(
-                                                guard,
-                                                &record.inputs,
-                                                record,
-                                                &trace,
-                                                &all_records,
-                                                &snapshot,
-                                            )))
+                                        && redirect_policy_applies_to_values(
+                                            guard,
+                                            &record.inputs,
+                                            record,
+                                            &trace,
+                                            &all_records,
+                                            &snapshot,
+                                        ))
                                     || required_sanitizer_policy("SE1006") == Some(policy)
                                     || (policy == "filesystem-path-confinement"
                                         && filesystem_guard_proves_values(
@@ -957,14 +977,15 @@ pub(crate) fn analyze(
                         && let Some(rule_id) = rule_for_sink(record)
                     {
                         let dominant = dominating_guard_records(record, &guards);
-                        if trace_is_sanitized_for(
+                        let sanitized = trace_is_sanitized_for(
                             rule_id,
                             trace,
                             &dominant,
                             &all_records,
                             &snapshot,
                             record,
-                        ) {
+                        );
+                        if sanitized {
                             candidates.remove(&format!("{rule_id}:{record_node}"));
                         } else if extended_round_candidate_allowed(
                             rule_id,
@@ -993,16 +1014,25 @@ pub(crate) fn analyze(
                     let authorization_trace = tainted_trace
                         .as_ref()
                         .or_else(|| handler_traces.get(&function));
+                    let resource_identity_scope = record.name.as_deref()
+                        == Some("sensitive-mutation")
+                        && function_has_resource_identity_before(
+                            &function,
+                            record.location.span.start_byte,
+                            &all_records,
+                        );
                     let has_effective_authorization = authorization_trace.is_some_and(|trace| {
-                        trace
-                            .sanitizers
-                            .iter()
-                            .any(|policy| crate::semantics::is_operation_authorization(policy))
-                            || resource_authorized_sinks.contains(&record.record_id)
+                        trace.sanitizers.iter().any(|policy| {
+                            crate::semantics::is_operation_authorization(policy)
+                                && (!resource_identity_scope
+                                    || resource_guard_kind(Some(policy)).is_none())
+                        }) || resource_authorized_sinks.contains(&record.record_id)
                             || dominating_guard_records(record, &guards)
                                 .iter()
                                 .any(|guard| {
                                     guard_is_authorization(guard, &all_records)
+                                        && (!resource_identity_scope
+                                            || resource_guard_kind(guard.name.as_deref()).is_none())
                                         && authorization_applies_to_trace(guard, trace, &snapshot)
                                 })
                     });
@@ -1487,6 +1517,13 @@ fn extract_record_for_node(
                 if callee.is_some() {
                     inputs.push(call_output_key(value));
                 }
+                inputs.extend(url_construction_identity_markers(node, value, content));
+                inputs.extend(url_relative_identity_markers(value, content));
+                inputs.extend(resource_load_identity_markers(
+                    value,
+                    callee.as_deref(),
+                    content,
+                ));
                 let constant_destination = safe_constant_mapping_fallback(node, value, content);
                 let kind =
                     if constant_destination || callee.as_deref().is_some_and(is_sanitizer_name) {
@@ -1587,6 +1624,13 @@ fn extract_record_for_node(
             {
                 sink = Some("destination-policy-selected");
             }
+            if sink == Some("redirect")
+                && let Some(destination) = node
+                    .child_by_field_name("arguments")
+                    .and_then(|arguments| arguments.named_child(0))
+            {
+                inputs.extend(url_relative_identity_markers(destination, content));
+            }
             let kind = if sink.is_some() {
                 "sink"
             } else if is_guard_name(&callee) {
@@ -1656,11 +1700,13 @@ fn extract_record_for_node(
         }
         "return_statement" => {
             if let Some(value) = node.named_child(0) {
+                let mut inputs = summary_return_inputs(value, content).unwrap_or_default();
+                inputs.extend(url_relative_identity_markers(value, content));
                 records.push(record(
                     "return",
                     None,
                     function_name,
-                    summary_return_inputs(value, content).unwrap_or_default(),
+                    inputs,
                     Some("@return"),
                     None,
                     location_for_node(path, content, node),
@@ -1673,6 +1719,8 @@ fn extract_record_for_node(
                 && body.kind() != "statement_block"
                 && let Some(inputs) = summary_return_inputs(body, content)
             {
+                let mut inputs = inputs;
+                inputs.extend(url_relative_identity_markers(body, content));
                 records.push(record(
                     "return",
                     None,
@@ -1831,6 +1879,13 @@ fn append_object_property_records_inner(
         if callee.is_some() {
             inputs.push(call_output_key(value));
         }
+        inputs.extend(url_construction_identity_markers(property, value, content));
+        inputs.extend(url_relative_identity_markers(value, content));
+        inputs.extend(resource_load_identity_markers(
+            value,
+            callee.as_deref(),
+            content,
+        ));
         records.push(record_with_dominance(
             if is_transformation(value) {
                 "transformation"
@@ -3999,11 +4054,7 @@ fn trace_is_sanitized_for(
                     taints,
                 ))
             && (rule_id != "SE1005"
-                || !guard
-                    .inputs
-                    .iter()
-                    .any(|input| input.starts_with("@redirect-proof:"))
-                || redirect_guard_proves_values(
+                || redirect_policy_applies_to_values(
                     guard,
                     &sensitive_sink_inputs(sink),
                     sink,
@@ -4011,6 +4062,34 @@ fn trace_is_sanitized_for(
                     records,
                     taints,
                 ))
+    })
+}
+
+fn redirect_policy_applies_to_values(
+    guard: &ProgramRecord,
+    target_values: &[String],
+    target: &ProgramRecord,
+    trace: &Trace,
+    records: &[&ProgramRecord],
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    let proof = guard
+        .inputs
+        .iter()
+        .any(|input| input.starts_with("@redirect-proof:"))
+        .then_some(guard)
+        .or_else(|| {
+            records.iter().copied().find(|candidate| {
+                candidate.function == guard.function
+                    && candidate.location == guard.location
+                    && candidate
+                        .inputs
+                        .iter()
+                        .any(|input| input.starts_with("@redirect-proof:"))
+            })
+        });
+    proof.is_none_or(|proof| {
+        redirect_guard_proves_values(proof, target_values, target, trace, records, taints)
     })
 }
 
@@ -4123,14 +4202,49 @@ fn redirect_guard_proves_values(
         .inputs
         .iter()
         .any(|input| input == "@redirect-proof:exact-origin");
-    let (Some(candidate), true) = (candidate, has_exact_origin) else {
+    let has_exact_protocol_origin = guard
+        .inputs
+        .iter()
+        .any(|input| input == "@redirect-proof:exact-protocol-origin");
+    let has_conditional_conjunction = guard
+        .inputs
+        .iter()
+        .any(|input| input == "@conditional-conjunction");
+    let (Some(candidate), true, true, false) = (
+        candidate,
+        has_exact_origin,
+        has_exact_protocol_origin,
+        has_conditional_conjunction,
+    ) else {
+        return false;
+    };
+    let Some((url_object, url_input, construction_end)) = url_object_derivation(
+        candidate,
+        guard.location.span.start_byte,
+        guard.function.as_deref(),
+        records,
+        8,
+    ) else {
         return false;
     };
     if guard.function != target.function
         || !guard_applies_to_trace(guard, trace, taints)
-        || value_reassigned_between(
-            candidate,
-            guard.location.span.end_byte,
+        || value_definition_count_before(
+            &url_object,
+            guard.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        ) != 1
+        || value_or_descendant_changed_between(
+            &url_object,
+            construction_end,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        )
+        || value_or_descendant_changed_between(
+            &url_input,
+            construction_end,
             target.location.span.start_byte,
             guard.function.as_deref(),
             records,
@@ -4138,29 +4252,163 @@ fn redirect_guard_proves_values(
     {
         return false;
     }
-    target_values.iter().any(|value| {
-        !value_reassigned_between(
+    let values = target_values
+        .iter()
+        .filter(|value| !value.starts_with('@'))
+        .collect::<Vec<_>>();
+    if values.is_empty() {
+        return false;
+    }
+    if values.iter().any(|value| {
+        value_redefined_between(
             value,
             guard.location.span.end_byte,
             target.location.span.start_byte,
             guard.function.as_deref(),
             records,
-        ) && (current_value_derives_from(
+        )
+    }) {
+        return false;
+    }
+    let exact_object = values.iter().all(|value| {
+        current_value_derives_from(
             value,
-            candidate,
+            &url_object,
             target.location.span.start_byte,
             guard.function.as_deref(),
             records,
             8,
-        ) || current_value_derives_from(
-            candidate,
-            value,
-            guard.location.span.start_byte,
-            guard.function.as_deref(),
+        )
+    });
+    exact_object
+        || values.iter().all(|value| {
+            url_relative_value_derives_from(
+                value,
+                &url_object,
+                target.location.span.start_byte,
+                guard.function.as_deref(),
+                records,
+                8,
+            )
+        })
+}
+
+fn url_object_derivation(
+    value: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> Option<(String, String, u64)> {
+    if depth == 0 || value.starts_with('@') {
+        return None;
+    }
+    let origin = records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(
+                    record.kind.as_str(),
+                    "assignment" | "alias" | "transformation"
+                )
+        })
+        .max_by_key(|record| record.location.span.end_byte)?;
+    if origin.inputs.iter().any(|input| input == URL_OBJECT_MARKER) {
+        let input = origin
+            .inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(URL_INPUT_MARKER))?;
+        return Some((
+            value.to_owned(),
+            input.to_owned(),
+            origin.location.span.end_byte,
+        ));
+    }
+    let inputs = origin
+        .inputs
+        .iter()
+        .filter(|input| !input.starts_with('@'))
+        .collect::<Vec<_>>();
+    if origin.callee.is_none() && inputs.len() == 1 {
+        return url_object_derivation(
+            inputs[0],
+            origin.location.span.start_byte,
+            function,
             records,
-            8,
-        ))
-    })
+            depth.saturating_sub(1),
+        );
+    }
+    None
+}
+
+fn url_relative_value_derives_from(
+    value: &str,
+    url_object: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if depth == 0 || value.starts_with('@') {
+        return false;
+    }
+    if ["pathname", "search", "hash"]
+        .iter()
+        .any(|property| value == format!("{url_object}.{property}"))
+    {
+        return true;
+    }
+    let Some(origin) = records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(
+                    record.kind.as_str(),
+                    "assignment" | "alias" | "transformation"
+                )
+        })
+        .max_by_key(|record| record.location.span.end_byte)
+    else {
+        return false;
+    };
+    if origin.inputs.iter().any(|input| {
+        input
+            .strip_prefix(URL_RELATIVE_MARKER)
+            .is_some_and(|object| {
+                object == url_object
+                    || current_value_derives_from(
+                        object,
+                        url_object,
+                        origin.location.span.start_byte,
+                        function,
+                        records,
+                        depth.saturating_sub(1),
+                    )
+            })
+    }) {
+        return true;
+    }
+    let inputs = origin
+        .inputs
+        .iter()
+        .filter(|input| !input.starts_with('@'))
+        .collect::<Vec<_>>();
+    origin.callee.is_none()
+        && inputs.len() == 1
+        && url_relative_value_derives_from(
+            inputs[0],
+            url_object,
+            origin.location.span.start_byte,
+            function,
+            records,
+            depth.saturating_sub(1),
+        )
 }
 
 fn current_value_derives_from(
@@ -4227,6 +4475,82 @@ fn value_reassigned_between(
     })
 }
 
+fn value_or_descendant_changed_between(
+    value: &str,
+    after: u64,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+) -> bool {
+    records.iter().any(|record| {
+        if record.function.as_deref() != function
+            || record.location.span.start_byte < after
+            || record.location.span.end_byte > before
+        {
+            return false;
+        }
+        let changed_output = record.output.as_deref().is_some_and(|output| {
+            output == value
+                || output
+                    .strip_prefix(value)
+                    .is_some_and(|suffix| suffix.starts_with('.') || suffix.starts_with('['))
+        }) && matches!(
+            record.kind.as_str(),
+            "assignment" | "alias" | "transformation" | "sanitizer"
+        );
+        let receiver_call = record.callee.as_deref().is_some_and(|callee| {
+            callee
+                .strip_prefix(value)
+                .is_some_and(|suffix| suffix.starts_with('.') || suffix.starts_with('['))
+        });
+        changed_output || receiver_call
+    })
+}
+
+fn value_definition_count_before(
+    value: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+) -> usize {
+    records
+        .iter()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(
+                    record.kind.as_str(),
+                    "assignment" | "alias" | "transformation" | "sanitizer"
+                )
+        })
+        .count()
+}
+
+fn value_redefined_between(
+    value: &str,
+    after: u64,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+) -> bool {
+    let definitions = records
+        .iter()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.start_byte >= after
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(
+                    record.kind.as_str(),
+                    "assignment" | "alias" | "transformation" | "sanitizer"
+                )
+        })
+        .count();
+    definitions > 1
+        || (definitions == 1 && value_definition_count_before(value, after, function, records) > 0)
+}
+
 fn guard_applies_to_trace(
     guard: &ProgramRecord,
     trace: &Trace,
@@ -4281,6 +4605,427 @@ fn resource_authorization_applies_to_sink(
             && call.location.span.end_byte <= guard.location.span.end_byte
             && resource_authorization_call_binds_sink(call, sink, &sink_values, records)
     })
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResourceGuardKind {
+    Tenant,
+    Owner,
+}
+
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn derived_resource_authorization_applies_to_sink(
+    guards: &[&ProgramRecord],
+    sink: &ProgramRecord,
+    records: &[&ProgramRecord],
+    summaries: &BTreeSet<AuthorizationSummary>,
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> bool {
+    let Some(function) = sink.function.as_deref() else {
+        return false;
+    };
+    let sink_values = sensitive_sink_inputs(sink);
+    records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == Some(function)
+                && record.location.span.end_byte < sink.location.span.start_byte
+                && record.output.is_some()
+                && record
+                    .inputs
+                    .iter()
+                    .any(|input| input == RESOURCE_OBJECT_MARKER)
+        })
+        .any(|load| {
+            let Some(resource) = load.output.as_deref() else {
+                return false;
+            };
+            let Some(requested) = load
+                .inputs
+                .iter()
+                .find_map(|input| input.strip_prefix(RESOURCE_REQUEST_MARKER))
+                .filter(|requested| !requested.starts_with('@'))
+            else {
+                return false;
+            };
+            if value_definition_count_before(
+                resource,
+                load.location.span.end_byte,
+                Some(function),
+                records,
+            ) != 1
+            {
+                return false;
+            }
+            let sink_uses_resource = sink_values.iter().any(|value| {
+                value == resource
+                    || current_value_derives_from(
+                        value,
+                        &format!("{resource}.id"),
+                        sink.location.span.start_byte,
+                        Some(function),
+                        records,
+                        8,
+                    )
+            });
+            if !sink_uses_resource
+                || value_or_descendant_changed_between(
+                    resource,
+                    load.location.span.end_byte,
+                    sink.location.span.start_byte,
+                    Some(function),
+                    records,
+                )
+                || value_or_descendant_changed_between(
+                    requested,
+                    load.location.span.end_byte,
+                    sink.location.span.start_byte,
+                    Some(function),
+                    records,
+                )
+            {
+                return false;
+            }
+            let tenant = matching_resource_guard(
+                ResourceGuardKind::Tenant,
+                resource,
+                guards,
+                records,
+                summaries,
+                functions,
+                import_bindings,
+                parameters,
+            );
+            let owner = matching_resource_guard(
+                ResourceGuardKind::Owner,
+                resource,
+                guards,
+                records,
+                summaries,
+                functions,
+                import_bindings,
+                parameters,
+            );
+            let (Some((tenant_guard, tenant_principal)), Some((owner_guard, owner_principal))) =
+                (tenant, owner)
+            else {
+                return false;
+            };
+            if tenant_principal != owner_principal {
+                return false;
+            }
+            let last_guard_end = tenant_guard
+                .location
+                .span
+                .end_byte
+                .max(owner_guard.location.span.end_byte);
+            !value_or_descendant_changed_between(
+                &tenant_principal,
+                last_guard_end,
+                sink.location.span.start_byte,
+                Some(function),
+                records,
+            ) && !sink_values.iter().any(|value| {
+                value_redefined_between(
+                    value,
+                    last_guard_end,
+                    sink.location.span.start_byte,
+                    Some(function),
+                    records,
+                )
+            })
+        })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn matching_resource_guard<'a>(
+    kind: ResourceGuardKind,
+    resource: &str,
+    guards: &'a [&'a ProgramRecord],
+    records: &[&ProgramRecord],
+    summaries: &BTreeSet<AuthorizationSummary>,
+    functions: &BTreeMap<String, Vec<String>>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
+) -> Option<(&'a ProgramRecord, String)> {
+    guards.iter().copied().find_map(|guard| {
+        if guard
+            .inputs
+            .iter()
+            .any(|input| input == "@conditional-conjunction")
+            || resource_guard_kind(guard.name.as_deref()) != Some(kind)
+        {
+            return None;
+        }
+        let function = guard.function.as_deref()?;
+        let has_resource_property = guard.inputs.iter().any(|input| {
+            let root = input.split(['.', '[']).next().unwrap_or(input);
+            (input != root
+                && resource_property_matches(kind, terminal_identifier(input))
+                && current_value_derives_from(
+                    root,
+                    resource,
+                    guard.location.span.start_byte,
+                    Some(function),
+                    records,
+                    8,
+                ))
+                || derived_resource_property_matches(
+                    kind,
+                    input,
+                    resource,
+                    guard.location.span.start_byte,
+                    Some(function),
+                    records,
+                    8,
+                )
+        });
+        if !has_resource_property {
+            return None;
+        }
+        guard.inputs.iter().find_map(|input| {
+            if input.starts_with('@') || input.starts_with(resource) {
+                return None;
+            }
+            trusted_principal_bindings(
+                function,
+                input,
+                guard.location.span.end_byte,
+                records,
+                summaries,
+                functions,
+                import_bindings,
+                parameters,
+                10,
+            )?;
+            derived_principal_property_matches(
+                kind,
+                input,
+                guard.location.span.start_byte,
+                Some(function),
+                records,
+                8,
+            )
+            .then(|| {
+                (
+                    guard,
+                    principal_identity_root(
+                        function,
+                        input,
+                        guard.location.span.end_byte,
+                        records,
+                        8,
+                    )
+                    .unwrap_or_else(|| input.split(['.', '[']).next().unwrap_or(input).to_owned()),
+                )
+            })
+        })
+    })
+}
+
+fn resource_guard_kind(policy: Option<&str>) -> Option<ResourceGuardKind> {
+    match policy {
+        Some(TENANT_POLICY) => Some(ResourceGuardKind::Tenant),
+        Some(OWNERSHIP_POLICY | IDENTITY_POLICY) => Some(ResourceGuardKind::Owner),
+        _ => None,
+    }
+}
+
+fn function_has_resource_identity_before(
+    function: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+) -> bool {
+    records.iter().any(|record| {
+        record.function.as_deref() == Some(function)
+            && record.location.span.end_byte < before
+            && record
+                .inputs
+                .iter()
+                .any(|input| input == RESOURCE_OBJECT_MARKER)
+    })
+}
+
+fn resource_property_matches(kind: ResourceGuardKind, property: &str) -> bool {
+    let property = property.to_ascii_lowercase();
+    resource_property_names(kind)
+        .iter()
+        .any(|candidate| *candidate == property)
+}
+
+fn resource_property_names(kind: ResourceGuardKind) -> &'static [&'static str] {
+    match kind {
+        ResourceGuardKind::Tenant => &[
+            "tenant",
+            "tenantid",
+            "organization",
+            "organizationid",
+            "workspace",
+            "workspaceid",
+        ],
+        ResourceGuardKind::Owner => &[
+            "owner",
+            "ownerid",
+            "member",
+            "memberid",
+            "accountid",
+            "userid",
+        ],
+    }
+}
+
+fn principal_property_matches(kind: ResourceGuardKind, property: &str) -> bool {
+    let property = property.to_ascii_lowercase();
+    match kind {
+        ResourceGuardKind::Tenant => resource_property_matches(kind, &property),
+        ResourceGuardKind::Owner => matches!(
+            property.as_str(),
+            "id" | "sub" | "subject" | "principalid" | "accountid" | "userid"
+        ),
+    }
+}
+
+fn derived_resource_property_matches(
+    kind: ResourceGuardKind,
+    value: &str,
+    resource: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    let root = value.split(['.', '[']).next().unwrap_or(value);
+    if root == resource && resource_property_matches(kind, terminal_identifier(value)) {
+        return true;
+    }
+    if depth == 0 || value.starts_with('@') {
+        return false;
+    }
+    records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(root)
+                && matches!(record.kind.as_str(), "assignment" | "alias")
+                && record.callee.is_none()
+        })
+        .max_by_key(|record| record.location.span.end_byte)
+        .and_then(|record| {
+            let inputs = record
+                .inputs
+                .iter()
+                .filter(|input| !input.starts_with('@'))
+                .collect::<Vec<_>>();
+            (inputs.len() == 1).then_some(inputs[0])
+        })
+        .is_some_and(|input| {
+            derived_resource_property_matches(
+                kind,
+                input,
+                resource,
+                before,
+                function,
+                records,
+                depth.saturating_sub(1),
+            )
+        })
+}
+
+fn derived_principal_property_matches(
+    kind: ResourceGuardKind,
+    value: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if principal_property_matches(kind, terminal_identifier(value)) {
+        return true;
+    }
+    if depth == 0 || value.starts_with('@') {
+        return false;
+    }
+    let root = value.split(['.', '[']).next().unwrap_or(value);
+    records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(root)
+                && matches!(record.kind.as_str(), "assignment" | "alias")
+                && record.callee.is_none()
+        })
+        .max_by_key(|record| record.location.span.end_byte)
+        .and_then(|record| {
+            let inputs = record
+                .inputs
+                .iter()
+                .filter(|input| !input.starts_with('@'))
+                .collect::<Vec<_>>();
+            (inputs.len() == 1).then_some(inputs[0])
+        })
+        .is_some_and(|input| {
+            derived_principal_property_matches(
+                kind,
+                input,
+                before,
+                function,
+                records,
+                depth.saturating_sub(1),
+            )
+        })
+}
+
+fn principal_identity_root(
+    function: &str,
+    value: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> Option<String> {
+    if depth == 0 || value.starts_with('@') {
+        return None;
+    }
+    let root = value.split(['.', '[']).next().unwrap_or(value);
+    let origin = records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == Some(function)
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(root)
+                && !matches!(record.kind.as_str(), "argument" | "source")
+        })
+        .max_by_key(|record| record.location.span.end_byte)?;
+    if origin
+        .callee
+        .as_deref()
+        .is_some_and(|callee| trusted_external_principal_resolver(callee, origin, &BTreeMap::new()))
+    {
+        return Some(root.to_owned());
+    }
+    let inputs = origin
+        .inputs
+        .iter()
+        .filter(|input| !input.starts_with('@'))
+        .collect::<Vec<_>>();
+    (inputs.len() == 1)
+        .then(|| {
+            principal_identity_root(
+                function,
+                inputs[0],
+                origin.location.span.start_byte,
+                records,
+                depth.saturating_sub(1),
+            )
+        })
+        .flatten()
 }
 
 fn resource_authorization_call_binds_sink(
@@ -5033,6 +5778,8 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
         "capability",
         "owner",
         "tenant",
+        "organization",
+        "workspace",
         "member",
     ]
     .iter()
@@ -6146,6 +6893,183 @@ fn condition_contains_conjunction(condition: Node<'_>, content: &[u8]) -> bool {
     false
 }
 
+fn url_construction_identity_markers(
+    anchor: Node<'_>,
+    expression: Node<'_>,
+    content: &[u8],
+) -> Vec<String> {
+    let expression = unwrap_expression(expression);
+    let is_constructor = expression.kind() == "new_expression"
+        && expression
+            .child_by_field_name("constructor")
+            .and_then(|constructor| expression_name(constructor, content))
+            .as_deref()
+            == Some("URL");
+    let is_parser = expression.kind() == "call_expression"
+        && expression
+            .child_by_field_name("function")
+            .and_then(|function| expression_name(function, content))
+            .as_deref()
+            == Some("URL.parse");
+    if (!is_constructor && !is_parser) || !url_builtin_is_unshadowed(anchor, content) {
+        return Vec::new();
+    }
+    let Some(input) = expression
+        .child_by_field_name("arguments")
+        .and_then(|arguments| arguments.named_child(0))
+        .map(unwrap_expression)
+        .and_then(|input| expression_name(input, content))
+        .filter(|input| !input.contains('['))
+    else {
+        return Vec::new();
+    };
+    vec![
+        URL_OBJECT_MARKER.into(),
+        format!("{URL_INPUT_MARKER}{input}"),
+    ]
+}
+
+fn url_relative_identity_markers(expression: Node<'_>, content: &[u8]) -> Vec<String> {
+    relative_url_projection_part(expression, content)
+        .and_then(|part| match part {
+            RelativeUrlPart::Fixed => None,
+            RelativeUrlPart::Projection(object) => {
+                Some(vec![format!("{URL_RELATIVE_MARKER}{object}")])
+            }
+        })
+        .unwrap_or_default()
+}
+
+enum RelativeUrlPart {
+    Fixed,
+    Projection(String),
+}
+
+// A fixed relative fragment and a typed URL projection are distinct from an
+// unsupported or potentially absolute expression (`None`).
+fn relative_url_projection_part(expression: Node<'_>, content: &[u8]) -> Option<RelativeUrlPart> {
+    let expression = unwrap_expression(expression);
+    if expression.kind() == "member_expression" {
+        let property = expression
+            .child_by_field_name("property")
+            .and_then(|property| expression_name(property, content))?;
+        if !matches!(property.as_str(), "pathname" | "search" | "hash") {
+            return None;
+        }
+        let object = expression
+            .child_by_field_name("object")
+            .and_then(|object| expression_name(object, content))
+            .filter(|object| !object.contains('['))?;
+        return Some(RelativeUrlPart::Projection(object));
+    }
+    if expression.kind() == "binary_expression"
+        && expression
+            .child_by_field_name("operator")
+            .and_then(|operator| operator.utf8_text(content).ok())
+            == Some("+")
+    {
+        let left = relative_url_projection_part(expression.child_by_field_name("left")?, content)?;
+        let right =
+            relative_url_projection_part(expression.child_by_field_name("right")?, content)?;
+        return match (left, right) {
+            (RelativeUrlPart::Projection(left), RelativeUrlPart::Projection(right))
+                if left == right =>
+            {
+                Some(RelativeUrlPart::Projection(left))
+            }
+            (RelativeUrlPart::Projection(object), RelativeUrlPart::Fixed)
+            | (RelativeUrlPart::Fixed, RelativeUrlPart::Projection(object)) => {
+                Some(RelativeUrlPart::Projection(object))
+            }
+            (RelativeUrlPart::Fixed, RelativeUrlPart::Fixed) => Some(RelativeUrlPart::Fixed),
+            _ => None,
+        };
+    }
+    if matches!(expression.kind(), "string" | "template_string")
+        && let Some(fragment) = string_value(expression, content)
+    {
+        return (!fragment.contains("://")
+            && !fragment.starts_with("//")
+            && !fragment.contains('\\'))
+        .then_some(RelativeUrlPart::Fixed);
+    }
+    None
+}
+
+fn resource_load_identity_markers(
+    expression: Node<'_>,
+    callee: Option<&str>,
+    content: &[u8],
+) -> Vec<String> {
+    let Some(call) = nested_call_expression(expression) else {
+        return Vec::new();
+    };
+    let Some(callee) = callee else {
+        return Vec::new();
+    };
+    if !matches!(
+        terminal_identifier(&callee.to_ascii_lowercase()),
+        "findunique" | "findone" | "findfirst" | "findbyid" | "getbyid" | "loadbyid"
+    ) {
+        return Vec::new();
+    }
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return Vec::new();
+    };
+    let Some(first) = arguments.named_child(0).map(unwrap_expression) else {
+        return Vec::new();
+    };
+    let mut identifiers = Vec::new();
+    if matches!(first.kind(), "object" | "object_expression") {
+        collect_resource_identifier_values(first, content, &mut identifiers);
+    } else if let Some(value) = expression_name(first, content).filter(|value| !value.contains('['))
+    {
+        identifiers.push(value);
+    }
+    identifiers.sort();
+    identifiers.dedup();
+    if identifiers.len() != 1 {
+        return Vec::new();
+    }
+    vec![
+        RESOURCE_OBJECT_MARKER.into(),
+        format!("{RESOURCE_REQUEST_MARKER}{}", identifiers[0]),
+    ]
+}
+
+fn collect_resource_identifier_values(object: Node<'_>, content: &[u8], values: &mut Vec<String>) {
+    for index in 0..object.named_child_count() {
+        let Some(property) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            continue;
+        };
+        if matches!(property.kind(), "spread_element" | "spread_property") {
+            values.push("@ambiguous".into());
+            continue;
+        }
+        let Some(key) = static_property_key(property, content) else {
+            values.push("@ambiguous".into());
+            continue;
+        };
+        let Some(value) = property
+            .child_by_field_name("value")
+            .or_else(|| property.named_child(1))
+            .map(unwrap_expression)
+        else {
+            continue;
+        };
+        if matches!(value.kind(), "object" | "object_expression") {
+            collect_resource_identifier_values(value, content, values);
+        } else if matches!(
+            key.to_ascii_lowercase().as_str(),
+            "id" | "recordid" | "resourceid" | "itemid"
+        ) && let Some(name) =
+            expression_name(value, content).filter(|name| !name.contains('['))
+        {
+            values.push(name);
+        }
+    }
+}
+
 fn redirect_origin_markers(
     statement: Node<'_>,
     condition: Node<'_>,
@@ -6162,6 +7086,7 @@ fn redirect_origin_markers(
         format!("@redirect-candidate:{candidate}"),
         format!("@redirect-origin:{trusted_origin}"),
         "@redirect-proof:exact-origin".into(),
+        "@redirect-proof:exact-protocol-origin".into(),
     ]
 }
 
