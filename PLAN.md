@@ -405,8 +405,8 @@ Exit condition: release 0.1.6 passes every compatibility, quality, security, sch
 
 ### Phase 6.11 - Retired Phase 19 generalization tranches
 
-Status: tranches 1 and 2 are integrated into main; tranche 3 is implemented on its development
-branch and closes Phase 6.11 development. The known Phase 19 corpus is development/regression
+Status: all three tranches are integrated into main and Phase 6.11 development is closed. The
+resulting main commit is the exact source base for release candidate 0.1.7. The known Phase 19 corpus is development/regression
 material, not an independent holdout, and was not accessed or rescored by tranches 2 or 3. Any
 future evaluation requires a new independent holdout.
 
@@ -429,6 +429,19 @@ dependency gates pass; all six improvements across the three tranches and the in
 are documented; v0.1.6 artifacts remain byte-identical; exactly one signed DCO commit is created
 without corpus access, packaging, release, or push. This closure makes no claim that 0.1.7 is
 evaluated, production-ready, superior, or complete.
+
+### Release candidate 0.1.7
+
+Status: candidate preparation uses Phase 6.11 commit
+`44f151308815f3d85a6d7b4f337d46e794fce99a` as its sole parent. Version and Fedora metadata move
+to 0.1.7 while secure-json-v1, Evidence Contract v2, taxonomy 1.0.0, SARIF 2.1.0, rule IDs,
+unaffected fingerprints, CLI/desktop parity, local product state, and disabled-by-default AI remain
+compatible. The private parse cache remains v10, with v9 and older entries treated as safe misses.
+
+The candidate is not an independent evaluation, a Phase 19 result, or evidence of ranking,
+superiority, production readiness, or complete coverage. Its build roots, staged trees, extracted
+packages, verification logs, hashes, and provenance are frozen outside Git for a future independent
+holdout. No tag, release, or remote publication is part of candidate preparation.
 
 ### Phase 7 - Distribution
 
