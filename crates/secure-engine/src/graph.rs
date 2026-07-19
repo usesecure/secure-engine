@@ -13,7 +13,10 @@ use crate::{
 
 pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v1";
 const MAX_RECORD_NAME_BYTES: usize = 512;
-const MAX_FIXED_POINT_PASSES: usize = 8;
+const MAX_FIXED_POINT_PASSES: usize = 12;
+const MAX_VALUE_SUMMARY_ARGUMENTS: usize = 16;
+const MAX_VALUE_SUMMARY_SYNTAX_DEPTH: usize = 8;
+const PATH_COMPOSER_MARKER: &str = "@summary:node-path-composer:";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct ProgramUnit {
@@ -43,6 +46,8 @@ pub(crate) struct ProgramRecord {
     inputs: Vec<String>,
     output: Option<String>,
     callee: Option<String>,
+    #[serde(default)]
+    raw_callee: Option<String>,
     location: SourceLocation,
     provenance: ParserProvenance,
     #[serde(default)]
@@ -361,17 +366,22 @@ pub(crate) fn validate_program(unit: &ProgramUnit, expected_path: &str, maximum:
                 && item.name.as_deref().is_none_or(normalized)
                 && item.output.as_deref().is_none_or(normalized)
                 && item.callee.as_deref().is_none_or(normalized)
-                && record_with_dominance(
-                    &item.kind,
-                    item.name.as_deref(),
-                    item.function.as_deref(),
-                    item.inputs.clone(),
-                    item.output.as_deref(),
-                    item.callee.as_deref(),
-                    item.location.clone(),
-                    &item.provenance,
-                    item.dominance_start.zip(item.dominance_end),
-                ) == *item
+                && item.raw_callee.as_deref().is_none_or(normalized)
+                && {
+                    let mut expected = record_with_dominance(
+                        &item.kind,
+                        item.name.as_deref(),
+                        item.function.as_deref(),
+                        item.inputs.clone(),
+                        item.output.as_deref(),
+                        item.callee.as_deref(),
+                        item.location.clone(),
+                        &item.provenance,
+                        item.dominance_start.zip(item.dominance_end),
+                    );
+                    expected.raw_callee.clone_from(&item.raw_callee);
+                    expected == *item
+                }
         })
 }
 
@@ -867,6 +877,24 @@ pub(crate) fn analyze(
                         trace.values.insert(output.clone());
                         insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                     }
+                    if path_composer_call_is_trusted(record, &import_bindings, &all_records)
+                        && let (Some(output), Some(trace)) = (
+                            record.output.as_ref(),
+                            trace_for_inputs(&snapshot, &function, &record.inputs),
+                        )
+                    {
+                        let edge = builder.edge(
+                            "source-to-sink-propagation",
+                            trace.nodes.last().map_or(record_node, String::as_str),
+                            record_node,
+                            &record.location,
+                            &record.provenance,
+                        );
+                        let mut trace = extend_trace(&trace, record_node, edge);
+                        trace.sanitizers.remove("filesystem-path-confinement");
+                        trace.values.insert(output.clone());
+                        insert_trace(&mut taints, (function.clone(), output.clone()), trace);
+                    }
                 }
                 "return" => {
                     if let Some(trace) = trace_for_inputs(&snapshot, &function, &record.inputs) {
@@ -1210,10 +1238,7 @@ fn collect_functions(
                 (global_use_server && is_exported(node)) || function_has_use_server(node, content);
             let exported = is_exported(node);
             let handler = next_handler || server_action || route_handlers.contains(&raw_name);
-            let parameters = node
-                .child_by_field_name("parameters")
-                .map(|parameters| parameter_names(path, content, parameters))
-                .unwrap_or_default();
+            let parameters = function_parameters(path, content, node);
             functions.push(FunctionInfo {
                 qualified_name: format!("{path}::{raw_name}"),
                 name: raw_name,
@@ -1542,7 +1567,11 @@ fn extract_record_for_node(
                 || resolve_alias(&raw_callee, function, aliases),
                 str::to_owned,
             );
-            let inputs = argument_values(node, content);
+            let mut inputs = argument_values(node, content);
+            if let Some(marker) = path_composer_summary_marker(node, content, &raw_callee, &callee)
+            {
+                inputs.push(marker);
+            }
             let mut sink = if dynamic_callee.is_some() {
                 Some("dynamic-code-execution")
             } else {
@@ -1592,7 +1621,7 @@ fn extract_record_for_node(
             let guard_name = (kind == "guard")
                 .then(|| authorization_policy_name(&callee))
                 .or(name);
-            records.push(record_with_dominance(
+            let mut call_record = record_with_dominance(
                 kind,
                 guard_name,
                 function_name,
@@ -1602,7 +1631,9 @@ fn extract_record_for_node(
                 location_for_node(path, content, node),
                 provenance,
                 dominance,
-            ));
+            );
+            call_record.raw_callee = (!raw_callee.is_empty()).then_some(raw_callee);
+            records.push(call_record);
         }
         "new_expression" => {
             if node
@@ -1629,10 +1660,27 @@ fn extract_record_for_node(
                     "return",
                     None,
                     function_name,
-                    value_names(value, content),
+                    summary_return_inputs(value, content).unwrap_or_default(),
                     Some("@return"),
                     None,
                     location_for_node(path, content, node),
+                    provenance,
+                ));
+            }
+        }
+        "arrow_function" => {
+            if let Some(body) = node.child_by_field_name("body")
+                && body.kind() != "statement_block"
+                && let Some(inputs) = summary_return_inputs(body, content)
+            {
+                records.push(record(
+                    "return",
+                    None,
+                    function_name,
+                    inputs,
+                    Some("@return"),
+                    None,
+                    location_for_node(path, content, body),
                     provenance,
                 ));
             }
@@ -2060,6 +2108,25 @@ fn append_import_bindings(
 ) {
     let mut stack = vec![import];
     while let Some(node) = stack.pop() {
+        if node.kind() == "import_clause"
+            && let Some(local) = (0..node.named_child_count()).find_map(|index| {
+                let child = node.named_child(u32::try_from(index).unwrap_or(u32::MAX))?;
+                (child.kind() == "identifier")
+                    .then(|| expression_name(child, content))
+                    .flatten()
+            })
+        {
+            records.push(record(
+                "import-binding",
+                Some(&local),
+                function,
+                Vec::new(),
+                Some("default"),
+                Some(module),
+                location_for_node(path, content, node),
+                provenance,
+            ));
+        }
         if node.kind() == "import_specifier" {
             let imported = node
                 .child_by_field_name("name")
@@ -2192,6 +2259,7 @@ pub(crate) fn record_with_dominance(
         inputs,
         output: output.map(str::to_owned),
         callee: callee.map(str::to_owned),
+        raw_callee: None,
         location,
         provenance: provenance.clone(),
         dominance_start,
@@ -2351,7 +2419,7 @@ fn unguarded_handler_traces(
     traces
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn propagate_local_call(
     record: &ProgramRecord,
     record_node: &str,
@@ -2366,6 +2434,9 @@ fn propagate_local_call(
     builder: &mut GraphBuilder,
     max_interprocedural_depth: usize,
 ) {
+    if !local_call_target_is_stable(record, records) {
+        return;
+    }
     let Some(callee_function) = record
         .callee
         .as_ref()
@@ -2464,6 +2535,39 @@ fn propagate_local_call(
         caller_trace.values.insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
+}
+
+fn local_call_target_is_stable(call: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
+    let Some(callee) = call.callee.as_deref() else {
+        return false;
+    };
+    let leaf = terminal_identifier(call.raw_callee.as_deref().unwrap_or(callee));
+    !records.iter().any(|candidate| {
+        if candidate.location.path != call.location.path
+            || candidate.location.span.start_byte >= call.location.span.start_byte
+            || candidate.kind == "import-binding"
+            || !(candidate.function == call.function || candidate.function.is_none())
+            || candidate.output.as_deref() != Some(leaf)
+        {
+            return false;
+        }
+        !record_declares_function_binding(candidate, leaf, records)
+    })
+}
+
+fn record_declares_function_binding(
+    binding: &ProgramRecord,
+    name: &str,
+    records: &[&ProgramRecord],
+) -> bool {
+    binding.kind == "assignment"
+        && records.iter().any(|candidate| {
+            matches!(candidate.kind.as_str(), "function" | "handler")
+                && candidate.location.path == binding.location.path
+                && candidate.name.as_deref() == Some(name)
+                && candidate.location.span.start_byte >= binding.location.span.start_byte
+                && candidate.location.span.end_byte <= binding.location.span.end_byte
+        })
 }
 
 fn parameter_argument_traces(
@@ -2877,6 +2981,96 @@ fn transparent_value_coercion(callee: &str) -> bool {
         terminal_identifier(&callee.to_ascii_lowercase()),
         "string" | "tostring" | "valueof"
     )
+}
+
+fn path_composer_call_is_trusted(
+    record: &ProgramRecord,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    records: &[&ProgramRecord],
+) -> bool {
+    if record.kind != "call"
+        || !(record.provenance.grammar.contains("tree-sitter-javascript")
+            || record.provenance.grammar.contains("tree-sitter-typescript"))
+    {
+        return false;
+    }
+    let Some(raw_callee) = record.inputs.iter().find_map(|input| {
+        input
+            .strip_prefix(PATH_COMPOSER_MARKER)
+            .filter(|callee| normalized(callee))
+    }) else {
+        return false;
+    };
+    let Some(bindings) = import_bindings.get(&record.location.path) else {
+        return false;
+    };
+    let parts = raw_callee.split('.').collect::<Vec<_>>();
+    let matching = bindings
+        .iter()
+        .filter(|binding| binding.module == "node:path")
+        .filter(|binding| match parts.as_slice() {
+            [local] => {
+                binding.local == *local
+                    && path_composer_operation(&binding.imported)
+                    && record.callee.as_deref().is_some_and(|callee| {
+                        terminal_identifier(callee) == binding.imported.as_str()
+                    })
+            }
+            [namespace, member] => {
+                binding.local == *namespace
+                    && matches!(binding.imported.as_str(), "*" | "default")
+                    && path_composer_operation(member)
+                    && record
+                        .callee
+                        .as_deref()
+                        .is_some_and(|callee| terminal_identifier(callee) == *member)
+            }
+            _ => false,
+        })
+        .collect::<Vec<_>>();
+    matching.len() == 1 && path_binding_is_stable(record, matching[0], records)
+}
+
+fn path_binding_is_stable(
+    call: &ProgramRecord,
+    binding: &ImportBinding,
+    records: &[&ProgramRecord],
+) -> bool {
+    let binding_prefix = format!("{}.", binding.local);
+    !records.iter().any(|candidate| {
+        if candidate.location.path != call.location.path
+            || candidate.location.span.start_byte >= call.location.span.start_byte
+            || candidate.kind == "import-binding"
+        {
+            return false;
+        }
+        let nested_function_shadows = matches!(candidate.kind.as_str(), "function" | "handler")
+            && candidate.name.as_deref() == Some(binding.local.as_str())
+            && call.function.as_ref().is_some_and(|owner| {
+                records.iter().any(|record| {
+                    record.function.as_ref() == Some(owner)
+                        && matches!(record.kind.as_str(), "function" | "handler")
+                        && candidate.location.span.start_byte >= record.location.span.start_byte
+                        && candidate.location.span.end_byte <= record.location.span.end_byte
+                })
+            });
+        if nested_function_shadows {
+            return true;
+        }
+        let visible = candidate.function == call.function || candidate.function.is_none();
+        if !visible {
+            return false;
+        }
+        candidate.output.as_deref().is_some_and(|output| {
+            output == binding.local
+                || (matches!(binding.imported.as_str(), "*" | "default")
+                    && output.starts_with(&binding_prefix))
+        })
+    })
+}
+
+fn path_composer_operation(name: &str) -> bool {
+    matches!(name, "join" | "resolve" | "normalize")
 }
 
 fn append_value_identity(prefix: &str, suffix: &str) -> String {
@@ -6920,6 +7114,18 @@ fn parameter_names(path: &str, content: &[u8], parameters: Node<'_>) -> Vec<Para
     result
 }
 
+fn function_parameters(path: &str, content: &[u8], function: Node<'_>) -> Vec<ParameterInfo> {
+    if let Some(parameters) = function.child_by_field_name("parameters") {
+        return parameter_names(path, content, parameters);
+    }
+    let Some(parameter) = function.child_by_field_name("parameter") else {
+        return Vec::new();
+    };
+    let mut result = Vec::new();
+    collect_parameter_bindings(path, content, parameter, 0, None, &mut result);
+    result
+}
+
 fn collect_parameter_bindings(
     path: &str,
     content: &[u8],
@@ -7209,6 +7415,117 @@ fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
         sensitive.extend(arguments);
     }
     sensitive
+}
+
+fn summary_return_inputs(value: Node<'_>, content: &[u8]) -> Option<Vec<String>> {
+    let mut unwrapped = value;
+    while matches!(
+        unwrapped.kind(),
+        "parenthesized_expression" | "await_expression" | "as_expression"
+    ) {
+        unwrapped = unwrapped.named_child(0)?;
+    }
+    if unwrapped.kind() == "call_expression" {
+        return Some(vec![call_output_key(unwrapped)]);
+    }
+    Some(value_names(unwrapped, content))
+}
+
+fn path_composer_summary_marker(
+    call: Node<'_>,
+    content: &[u8],
+    raw_callee: &str,
+    resolved_callee: &str,
+) -> Option<String> {
+    let function = call.child_by_field_name("function")?;
+    let structural_callee = match function.kind() {
+        "identifier" | "member_expression" => expression_name(function, content),
+        _ => None,
+    }?;
+    let argument_count = call
+        .child_by_field_name("arguments")
+        .map(|arguments| arguments.named_child_count())?;
+    let operation = terminal_identifier(resolved_callee);
+    if structural_callee != raw_callee
+        || !path_composer_operation(operation)
+        || (operation == "normalize" && argument_count != 1)
+        || !value_summary_call_is_supported(call, content)
+    {
+        return None;
+    }
+    Some(format!("{PATH_COMPOSER_MARKER}{raw_callee}"))
+}
+
+fn value_summary_call_is_supported(call: Node<'_>, content: &[u8]) -> bool {
+    value_summary_call_is_supported_at_depth(call, content, 0)
+}
+
+fn value_summary_call_is_supported_at_depth(call: Node<'_>, content: &[u8], depth: usize) -> bool {
+    if depth >= MAX_VALUE_SUMMARY_SYNTAX_DEPTH {
+        return false;
+    }
+    let Some(function) = call.child_by_field_name("function") else {
+        return false;
+    };
+    let static_callee = match function.kind() {
+        "identifier" => true,
+        "member_expression" => expression_name(function, content)
+            .is_some_and(|callee| path_composer_operation(terminal_identifier(&callee))),
+        _ => false,
+    };
+    if !static_callee {
+        return false;
+    }
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let count = arguments.named_child_count();
+    if count == 0 || count > MAX_VALUE_SUMMARY_ARGUMENTS {
+        return false;
+    }
+    (0..count).all(|index| {
+        arguments
+            .named_child(u32::try_from(index).unwrap_or(u32::MAX))
+            .is_some_and(|argument| {
+                argument.kind() != "spread_element"
+                    && value_summary_expression_is_supported(
+                        argument,
+                        content,
+                        depth.saturating_add(1),
+                    )
+            })
+    })
+}
+
+fn value_summary_expression_is_supported(
+    expression: Node<'_>,
+    content: &[u8],
+    depth: usize,
+) -> bool {
+    if depth >= MAX_VALUE_SUMMARY_SYNTAX_DEPTH {
+        return false;
+    }
+    match expression.kind() {
+        "identifier" | "member_expression" | "string" | "number" | "true" | "false" | "null"
+        | "undefined" => true,
+        "subscript_expression" => expression
+            .child_by_field_name("index")
+            .is_some_and(|index| string_value(index, content).is_some()),
+        "parenthesized_expression" | "await_expression" | "as_expression" => {
+            expression.named_child(0).is_some_and(|inner| {
+                value_summary_expression_is_supported(inner, content, depth.saturating_add(1))
+            })
+        }
+        "call_expression" => {
+            value_summary_call_is_supported_at_depth(expression, content, depth.saturating_add(1))
+        }
+        "template_string" => !(0..expression.named_child_count()).any(|index| {
+            expression
+                .named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                .is_some_and(|child| child.kind() == "template_substitution")
+        }),
+        _ => false,
+    }
 }
 
 fn call_output_key(call: Node<'_>) -> String {

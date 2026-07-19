@@ -395,9 +395,9 @@ fn equivalent_safe_guards_and_guard_removal_are_path_sensitive()
     let cases = [
         (
             "SE1003",
-            "const ROOT = '/srv/data';\nfunction confine(value) { const candidate = path.resolve(ROOT, value); if (!candidate.startsWith(ROOT + path.sep)) { throw new Error('outside root'); } return candidate; }\nexport function receive(request) { return fs.readFile(confine(request.params.path), () => undefined); }",
-            "const ROOT = '/srv/data';\nfunction confine(value) { const candidate = path.normalize(path.join(ROOT, value)); if (!candidate.startsWith(ROOT + path.sep)) { throw new Error('outside root'); } return candidate; }\nexport function receive(request) { return fs.readFile(confine(request.params.path), () => undefined); }",
-            "const ROOT = '/srv/data';\nfunction compose(value) { return path.resolve(ROOT, value); }\nexport function receive(request) { return fs.readFile(compose(request.params.path), () => undefined); }",
+            "import * as path from 'node:path';\nconst ROOT = '/srv/data';\nfunction confine(value) { const candidate = path.resolve(ROOT, value); if (!candidate.startsWith(ROOT + path.sep)) { throw new Error('outside root'); } return candidate; }\nexport function receive(request) { return fs.readFile(confine(request.params.path), () => undefined); }",
+            "import * as path from 'node:path';\nconst ROOT = '/srv/data';\nfunction confine(value) { const candidate = path.normalize(path.join(ROOT, value)); if (!candidate.startsWith(ROOT + path.sep)) { throw new Error('outside root'); } return candidate; }\nexport function receive(request) { return fs.readFile(confine(request.params.path), () => undefined); }",
+            "import * as path from 'node:path';\nconst ROOT = '/srv/data';\nfunction compose(value) { return path.resolve(ROOT, value); }\nexport function receive(request) { return fs.readFile(compose(request.params.path), () => undefined); }",
         ),
         (
             "SE1004",
