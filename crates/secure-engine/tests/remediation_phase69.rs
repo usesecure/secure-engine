@@ -430,7 +430,7 @@ fn current_cache_ignores_v13_entries_and_reuses_only_current_evidence()
     assert!(cold.parsing.cache_misses > 0);
     assert!(cold.parsing.cache_writes > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v15").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v16").is_dir());
 
     let warm = scan_repository(&request, &CancellationToken::new(), |_| {})?;
     assert_eq!(warm.parsing.cache_misses, 0);

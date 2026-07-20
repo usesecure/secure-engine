@@ -968,7 +968,21 @@ pub(crate) fn analyze(
                             let Some(policy) = guard.name.as_deref() else {
                                 continue;
                             };
-                            if guard_applies_to_trace(guard, &trace, &snapshot)
+                            let guard_applies = if policy
+                                == required_sanitizer_policy("SE1004").unwrap_or_default()
+                            {
+                                outbound_policy_applies_to_values(
+                                    guard,
+                                    &record.inputs,
+                                    record,
+                                    &trace,
+                                    &all_records,
+                                    &snapshot,
+                                )
+                            } else {
+                                guard_applies_to_trace(guard, &trace, &snapshot)
+                            };
+                            if guard_applies
                                 && ((policy == crate::semantics::POLICY_EXACT_ALLOWLIST
                                     && redirect_policy_applies_to_values(
                                         guard,
@@ -1838,6 +1852,9 @@ fn extract_record_for_node(
                 {
                     inputs.extend(filesystem_confinement_markers(node, condition, content));
                     inputs.extend(redirect_origin_markers(node, condition, content));
+                    let outbound_markers =
+                        outbound_destination_markers(node, condition, content, &inputs);
+                    inputs.extend(outbound_markers);
                     records.push(record_with_dominance(
                         "control-gate",
                         None,
@@ -4422,7 +4439,18 @@ fn trace_is_sanitized_for(
             .name
             .as_deref()
             .is_some_and(|name| name == policy || name == crate::semantics::POLICY_EXACT_ALLOWLIST)
-            && guard_applies_to_trace(guard, trace, taints)
+            && (if rule_id == "SE1004" {
+                outbound_policy_applies_to_values(
+                    guard,
+                    &sensitive_sink_inputs(sink),
+                    sink,
+                    trace,
+                    records,
+                    taints,
+                )
+            } else {
+                guard_applies_to_trace(guard, trace, taints)
+            })
             && (rule_id != "SE1003"
                 || filesystem_guard_proves_values(
                     guard,
@@ -4442,6 +4470,113 @@ fn trace_is_sanitized_for(
                     taints,
                 ))
     })
+}
+
+fn outbound_policy_applies_to_values(
+    guard: &ProgramRecord,
+    target_values: &[String],
+    target: &ProgramRecord,
+    trace: &Trace,
+    records: &[&ProgramRecord],
+    taints: &BTreeMap<(String, String), Trace>,
+) -> bool {
+    let has_exact_url_proof = guard
+        .inputs
+        .iter()
+        .any(|input| input == "@outbound-proof:exact-url-components");
+    if !has_exact_url_proof {
+        let component_guard = guard
+            .inputs
+            .iter()
+            .any(|input| terminal_identifier(input) == "protocol")
+            && guard
+                .inputs
+                .iter()
+                .any(|input| matches!(terminal_identifier(input), "hostname" | "host"));
+        if component_guard {
+            return false;
+        }
+        return guard_applies_to_trace(guard, trace, taints);
+    }
+    if guard
+        .inputs
+        .iter()
+        .any(|input| input == "@conditional-conjunction")
+    {
+        return false;
+    }
+    let Some(candidate) = guard
+        .inputs
+        .iter()
+        .find_map(|input| input.strip_prefix("@outbound-candidate:"))
+    else {
+        return false;
+    };
+    let Some((url_object, url_input, construction_end)) = url_object_derivation(
+        candidate,
+        guard.location.span.start_byte,
+        guard.function.as_deref(),
+        records,
+        8,
+    ) else {
+        return false;
+    };
+    if guard.function != target.function
+        || value_definition_count_before(
+            &url_object,
+            guard.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        ) != 1
+        || value_or_descendant_changed_between(
+            &url_object,
+            construction_end,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        )
+        || value_or_descendant_changed_between(
+            &url_input,
+            construction_end,
+            target.location.span.start_byte,
+            guard.function.as_deref(),
+            records,
+        )
+    {
+        return false;
+    }
+    let Some(candidate_trace) = trace_for_inputs(
+        taints,
+        guard.function.as_deref().unwrap_or_default(),
+        &[candidate.to_owned()],
+    ) else {
+        return false;
+    };
+    if candidate_trace.source_node != trace.source_node {
+        return false;
+    }
+    let values = target_values
+        .iter()
+        .filter(|value| !value.starts_with('@'))
+        .collect::<Vec<_>>();
+    !values.is_empty()
+        && values.iter().all(|value| {
+            current_value_derives_from(
+                value,
+                &url_object,
+                target.location.span.start_byte,
+                guard.function.as_deref(),
+                records,
+                8,
+            ) || outbound_url_value_derives_from(
+                value,
+                &url_object,
+                target.location.span.start_byte,
+                guard.function.as_deref(),
+                records,
+                8,
+            )
+        })
 }
 
 fn redirect_policy_applies_to_values(
@@ -4781,6 +4916,53 @@ fn url_relative_value_derives_from(
     origin.callee.is_none()
         && inputs.len() == 1
         && url_relative_value_derives_from(
+            inputs[0],
+            url_object,
+            origin.location.span.start_byte,
+            function,
+            records,
+            depth.saturating_sub(1),
+        )
+}
+
+fn outbound_url_value_derives_from(
+    value: &str,
+    url_object: &str,
+    before: u64,
+    function: Option<&str>,
+    records: &[&ProgramRecord],
+    depth: usize,
+) -> bool {
+    if depth == 0 || value.starts_with('@') {
+        return false;
+    }
+    if value == format!("{url_object}.href") {
+        return true;
+    }
+    let Some(origin) = records
+        .iter()
+        .copied()
+        .filter(|record| {
+            record.function.as_deref() == function
+                && record.location.span.end_byte <= before
+                && record.output.as_deref() == Some(value)
+                && matches!(
+                    record.kind.as_str(),
+                    "assignment" | "alias" | "transformation"
+                )
+        })
+        .max_by_key(|record| record.location.span.end_byte)
+    else {
+        return false;
+    };
+    let inputs = origin
+        .inputs
+        .iter()
+        .filter(|input| !input.starts_with('@'))
+        .collect::<Vec<_>>();
+    origin.callee.is_none()
+        && inputs.len() == 1
+        && outbound_url_value_derives_from(
             inputs[0],
             url_object,
             origin.location.span.start_byte,
@@ -6379,8 +6561,6 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
     {
         return Some("redirect-destination-policy");
     }
-    let named_allowlist =
-        lower.contains("allow") || lower.contains("trusted") || lower.contains("approved");
     let unsafe_destination_check = [
         "blocked",
         "denied",
@@ -6415,7 +6595,7 @@ fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Optio
     {
         return Some(crate::semantics::POLICY_EXACT_ALLOWLIST);
     }
-    let allowlist = named_allowlist
+    let allowlist = condition_has_fixed_allowlist(condition, content)
         && (lower.contains(".has(") || lower.contains(".includes("))
         && !unsafe_destination_check;
     let parsed_destination =
@@ -7321,6 +7501,31 @@ fn binding_mutated_between(
         {
             return true;
         }
+        if node.kind() == "variable_declarator"
+            && node.child_by_field_name("value").is_some_and(|value| {
+                value_names(value, content)
+                    .iter()
+                    .any(|name| name == binding)
+            })
+        {
+            return true;
+        }
+        if node.kind() == "assignment_expression"
+            && node.child_by_field_name("right").is_some_and(|right| {
+                value_names(right, content)
+                    .iter()
+                    .any(|name| name == binding)
+            })
+        {
+            return true;
+        }
+        if matches!(node.kind(), "return_statement" | "yield_expression")
+            && value_names(node, content)
+                .iter()
+                .any(|name| name == binding)
+        {
+            return true;
+        }
         if node.kind() == "call_expression"
             && let Some(function) = node.child_by_field_name("function")
             && let Some(object) = function.child_by_field_name("object")
@@ -7332,18 +7537,18 @@ fn binding_mutated_between(
                     expression_name(property, content).or_else(|| string_value(property, content))
                 })
                 .is_some_and(|method| {
-                    matches!(
-                        method.to_ascii_lowercase().as_str(),
-                        "add"
-                            | "clear"
-                            | "delete"
-                            | "pop"
-                            | "push"
-                            | "set"
-                            | "shift"
-                            | "splice"
-                            | "unshift"
-                    )
+                    !matches!(method.to_ascii_lowercase().as_str(), "has" | "includes")
+                })
+        {
+            return true;
+        }
+        if node.kind() == "call_expression"
+            && node
+                .child_by_field_name("arguments")
+                .is_some_and(|arguments| {
+                    value_names(arguments, content)
+                        .iter()
+                        .any(|name| name == binding)
                 })
         {
             return true;
@@ -7358,6 +7563,26 @@ fn binding_mutated_between(
 }
 
 fn collection_is_fixed_strings(node: Node<'_>, content: &[u8]) -> bool {
+    collection_is_fixed_strings_inner(node, content, 8)
+}
+
+fn collection_is_fixed_strings_inner(node: Node<'_>, content: &[u8], depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    if node.kind() == "call_expression"
+        && node
+            .child_by_field_name("function")
+            .and_then(|function| expression_name(function, content))
+            .as_deref()
+            == Some("Object.freeze")
+        && builtin_binding_is_stable(node, "Object", content)
+        && let Some(arguments) = node.child_by_field_name("arguments")
+        && arguments.named_child_count() == 1
+        && let Some(value) = arguments.named_child(0)
+    {
+        return collection_is_fixed_strings_inner(value, content, depth.saturating_sub(1));
+    }
     let array = if matches!(node.kind(), "array" | "array_expression") {
         Some(node)
     } else if node.kind() == "new_expression"
@@ -7676,6 +7901,106 @@ fn redirect_origin_markers(
     ]
 }
 
+fn outbound_destination_markers(
+    statement: Node<'_>,
+    condition: Node<'_>,
+    content: &[u8],
+    inputs: &[String],
+) -> Vec<String> {
+    if guard_policy(condition, content, inputs) != Some("outbound-destination-policy") {
+        return Vec::new();
+    }
+    let exact_literal_components = destination_components_compare_to_literals(condition, content);
+    let exact_fixed_host_allowlist = condition_has_fixed_allowlist(condition, content)
+        && destination_component_compares_to_literal(condition, content, "protocol");
+    if !exact_literal_components && !exact_fixed_host_allowlist {
+        return Vec::new();
+    }
+    let mut protocol_objects = BTreeSet::new();
+    let mut host_objects = BTreeSet::new();
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "member_expression"
+            && let (Some(object), Some(property)) = (
+                node.child_by_field_name("object")
+                    .and_then(|object| expression_name(object, content)),
+                node.child_by_field_name("property")
+                    .and_then(|property| expression_name(property, content)),
+            )
+            && !object.contains('[')
+        {
+            match property.as_str() {
+                "protocol" => {
+                    protocol_objects.insert(object);
+                }
+                "hostname" | "host" => {
+                    host_objects.insert(object);
+                }
+                _ => {}
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    let candidates = protocol_objects
+        .intersection(&host_objects)
+        .cloned()
+        .collect::<Vec<_>>();
+    let [candidate] = candidates.as_slice() else {
+        return Vec::new();
+    };
+    if !candidate_is_constructed_url(statement, candidate, content) {
+        return Vec::new();
+    }
+    vec![
+        format!("@outbound-candidate:{candidate}"),
+        "@outbound-proof:exact-url-components".into(),
+    ]
+}
+
+fn destination_component_compares_to_literal(
+    condition: Node<'_>,
+    content: &[u8],
+    expected: &str,
+) -> bool {
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "binary_expression"
+            && node
+                .child_by_field_name("operator")
+                .and_then(|operator| operator.utf8_text(content).ok())
+                .is_some_and(|operator| matches!(operator, "==" | "===" | "!=" | "!=="))
+            && let (Some(left), Some(right)) = (
+                node.child_by_field_name("left"),
+                node.child_by_field_name("right"),
+            )
+        {
+            let component = if is_fixed_string_literal(left, content) {
+                expression_name(right, content)
+            } else if is_fixed_string_literal(right, content) {
+                expression_name(left, content)
+            } else {
+                None
+            };
+            if component
+                .as_deref()
+                .is_some_and(|component| terminal_identifier(component) == expected)
+            {
+                return true;
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
 fn exact_origin_comparison(
     anchor: Node<'_>,
     condition: Node<'_>,
@@ -7894,8 +8219,46 @@ fn constructed_url_expression(
 }
 
 fn url_builtin_is_unshadowed(anchor: Node<'_>, content: &[u8]) -> bool {
-    !non_variable_binding_shadows_name(anchor, "URL", content)
-        && !variable_binding_declares_name(anchor, "URL", content)
+    builtin_binding_is_stable(anchor, "URL", content)
+}
+
+fn builtin_binding_is_stable(anchor: Node<'_>, name: &str, content: &[u8]) -> bool {
+    if non_variable_binding_shadows_name(anchor, name, content)
+        || variable_binding_declares_name(anchor, name, content)
+    {
+        return false;
+    }
+    let scope = enclosing_function_span(anchor);
+    let Some(root) = program_root(anchor) else {
+        return false;
+    };
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return false;
+        }
+        if node.end_byte() <= anchor.start_byte()
+            && (binding_scope(node).is_none() || binding_scope(node) == scope)
+            && matches!(
+                node.kind(),
+                "assignment_expression" | "augmented_assignment_expression"
+            )
+            && node
+                .child_by_field_name("left")
+                .and_then(|left| expression_name(left, content))
+                .is_some_and(|left| left == name || left.starts_with(&format!("{name}.")))
+        {
+            return false;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    true
 }
 
 fn variable_binding_declares_name(anchor: Node<'_>, name: &str, content: &[u8]) -> bool {

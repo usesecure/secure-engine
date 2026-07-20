@@ -48,6 +48,13 @@ not establish a protected operation or exposed handler. A future opt-in domain c
 separate versioned design; until then, private cache v15 and the exact RC5 principal/resource proof
 remain unchanged.
 
+Phase 6.13 tranche 3 records a private exact outbound proof for one unshadowed constructed URL whose
+protocol and hostname/host are constrained by fixed structural evidence. The proof can reach only
+the same unmodified URL or its exact `href`; mutable collections, names, shadowed built-ins,
+ambiguous wrappers, different objects, mutation, exceptional continuation, cycles, and exhausted
+depth reject it. Parser recovery remains orthogonal and never suppresses a finding by itself.
+Development cache v16 treats v15 and older entries as safe misses.
+
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
 Each finding may carry `semantic_fingerprint`, a `secure-semantic-fingerprint-v1` digest of the rule and demonstrated source/sink semantic identities. It is stable across local renames, harmless statements, aliases, and helper extraction when the invariant is unchanged. The original finding fingerprint, ID, rule IDs, taxonomy coordinates, severity, and confidence remain unchanged. Report fingerprints intentionally change because new semantic evidence is part of the deterministic report; this is additive report content, not a legacy finding-identity change.

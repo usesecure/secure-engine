@@ -154,7 +154,7 @@ fn cycles_do_not_invent_sources_and_local_value_depth_is_bounded()
 }
 
 #[test]
-fn evidence_contracts_are_deterministic_and_cache_v15_safely_misses_v14()
+fn evidence_contracts_are_deterministic_and_cache_v16_safely_misses_v14()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = TempDir::new()?;
     fs::create_dir_all(repository.path().join("src"))?;
@@ -193,7 +193,7 @@ fn evidence_contracts_are_deterministic_and_cache_v15_safely_misses_v14()
     assert_eq!(cold.parsing.cache_hits, 0);
     assert!(cold.parsing.cache_misses > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v15").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v16").is_dir());
     assert!(warm.parsing.cache_hits > 0);
     Ok(())
 }

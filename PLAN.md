@@ -476,6 +476,11 @@ domain boundary without changing analyzer semantics or cache v15.
 - [Complete] Reject implicit handler inference from arbitrary exports/request-shaped parameters and implicit sink inference from `Map.set`, `Set.add`, property writes, generic methods, names, or comments.
 - [Complete] Preserve the RC5 authenticated-principal, canonical-resource, tenant-plus-owner, dominance, and same-resource proof without advancing private cache v15.
 - [Complete] Lock the boundary with independent synthetic supported-sink positives and local-mutation/exposure controls, and defer a separately versioned opt-in protected-operation contract.
+- [Complete] Reconcile the 16 Phase 34 false-positive observations as 3 syntax-valid outbound URL-policy projection gaps, 2 syntax-valid filesystem identity gaps, 2 syntax-valid redirect identity gaps, and 9 incomplete recoverable-syntax fixtures.
+- [Complete] Select only structural fixed-collection wrappers and exact same-URL `href` projection; retain the already integrated filesystem/redirect contracts and defer parser-recovery expectations.
+- [Complete] Remove nominal allowlist evidence from outbound policy and require exact fixed protocol/host structure on one unmodified constructed URL.
+- [Complete] Fail closed for mutation, shadowing, wrapper aliases, spreads, computed properties, ambiguous aliases, continuing exceptional control, conjunctions, cycles, and depth exhaustion.
+- [Complete] Advance private analysis cache to v16 with v15 as a safe miss while preserving public schemas, SARIF, Evidence Contract, fingerprints, CLI/desktop, privacy, bounds, cancellation, and disabled AI.
 
 Tranche exit condition: local offline quality, dependency, compatibility, privacy,
 determinism, cancellation, and product gates pass with exactly one signed DCO
