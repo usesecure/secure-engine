@@ -14,6 +14,7 @@ use crate::{
 pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v1";
 const MAX_RECORD_NAME_BYTES: usize = 512;
 const MAX_FIXED_POINT_PASSES: usize = 12;
+const MAX_LOCAL_VALUE_DEPTH: usize = 16;
 const MAX_VALUE_SUMMARY_ARGUMENTS: usize = 16;
 const MAX_VALUE_SUMMARY_SYNTAX_DEPTH: usize = 8;
 const PATH_COMPOSER_MARKER: &str = "@summary:node-path-composer:";
@@ -124,6 +125,7 @@ struct Trace {
     sanitizers: BTreeSet<String>,
     values: BTreeSet<String>,
     source_specificity: u8,
+    local_value_depth: usize,
     interprocedural_depth: usize,
 }
 
@@ -784,6 +786,7 @@ pub(crate) fn analyze(
                                 } else {
                                     2
                                 },
+                                local_value_depth: 0,
                                 interprocedural_depth: 0,
                             },
                         );
@@ -801,12 +804,16 @@ pub(crate) fn analyze(
                         remove_value_and_descendants(&mut taints, &function, output);
                     }
                     let trace = trace_for_transformation(
-                        &snapshot,
+                        &taints,
                         &function,
                         record,
                         &raw_functions,
                         &import_bindings,
-                    );
+                    )
+                    .filter(|trace| {
+                        trace.local_value_depth < MAX_LOCAL_VALUE_DEPTH
+                            && !trace.nodes.iter().any(|node| node == record_node)
+                    });
                     if let Some(output) = &record.output {
                         if let Some(trace) = trace {
                             let edge_kind =
@@ -846,6 +853,7 @@ pub(crate) fn analyze(
                             {
                                 trace.sanitizers.remove("filesystem-path-confinement");
                             }
+                            trace.local_value_depth = trace.local_value_depth.saturating_add(1);
                             trace.values.insert(output.clone());
                             insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                         } else if record.kind == "assignment"
@@ -1585,13 +1593,24 @@ fn extract_record_for_node(
                 .and_then(|item| expression_name(item, content));
             let value = node.child_by_field_name("right");
             if let (Some(output), Some(value)) = (output, value) {
+                let callee = call_callee(value, content);
+                let inputs = if node.kind() == "augmented_assignment_expression"
+                    || callee.as_deref().is_some_and(transparent_value_coercion)
+                {
+                    value_names(value, content)
+                } else {
+                    nested_call_expression(value).map_or_else(
+                        || value_names(value, content),
+                        |call| vec![call_output_key(call)],
+                    )
+                };
                 records.push(record_with_dominance(
                     "assignment",
                     None,
                     function_name,
-                    value_names(value, content),
+                    inputs,
                     Some(&output),
-                    call_callee(value, content).as_deref(),
+                    callee.as_deref(),
                     location_for_node(path, content, node),
                     provenance,
                     direct_call_dominance(node, function),
@@ -2754,6 +2773,7 @@ fn unguarded_handler_traces(
                     sanitizers: BTreeSet::new(),
                     values: BTreeSet::new(),
                     source_specificity: 0,
+                    local_value_depth: 0,
                     interprocedural_depth: 0,
                 },
             ))

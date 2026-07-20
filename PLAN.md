@@ -458,6 +458,24 @@ readiness, or complete-coverage claim. Two clean detached Fedora 44 builds, thei
 extracted binaries, logs, checksums, metadata, and provenance are frozen outside Git. No tag,
 release, installation, or remote publication is part of candidate preparation.
 
+### Phase 6.13 - Retired holdout v3 propagation generalization
+
+Status: tranche 1 development starts from the exact v0.1.8-rc1 source commit while
+the candidate artifacts and durable copy remain historical and unchanged. The
+retired holdout is causal evidence only and is never rescored or copied into tests.
+
+- [Complete] Reconcile the 18 lost-connectivity observations as 7 bounded scalar paths, 8 exact static-property paths, and 3 mutable collection/spread paths.
+- [Complete] Select only the scalar and exact static-property causes; defer mutable collection/spread order and mutation semantics.
+- [Complete] Use deterministic forward-pass state without removing dominant reassignment kills, and cap local value propagation at 16 non-repeating records.
+- [Complete] Keep opaque calls, computed properties, spreads, ambiguous aliases/imports/calls, cycles, and excess depth fail-closed.
+- [Complete] Add independent positive and adversarial fixtures and advance only the private parse cache to v15, with v14 as a safe miss.
+- [Complete] Preserve public schemas, SARIF, taxonomy, rule IDs, evidence contracts, unaffected fingerprints, CLI/desktop parity, privacy, cancellation, bounds, and disabled-by-default AI.
+
+Tranche exit condition: local offline quality, dependency, compatibility, privacy,
+determinism, cancellation, and product gates pass with exactly one signed DCO
+commit and no corpus execution, packaging, installation, release, tag, push, or
+final-tree coverage claim.
+
 ### Phase 7 - Distribution
 
 - Produce RPM, AppImage, and release archives.

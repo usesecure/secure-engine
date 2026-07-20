@@ -36,6 +36,12 @@ Secure Engine 0.1.8 publishes the already integrated Phase 6.12 proof refinement
 the public evidence semantics, taxonomy, Evidence Contract, secure-json-v1, SARIF, or rule IDs. The
 private parse cache remains v14; 0.1.7 structured reports remain valid secure-json-v1 inputs.
 
+Phase 6.13 tranche 1 retains those public contracts while allowing only proven earlier
+assignment/property records to feed the current deterministic forward pass. Local value
+propagation stops after 16 non-repeating records, opaque calls consume only proven call outputs,
+and ambiguous mutation remains unresolved. Development cache v15 treats historical v14 entries as
+safe misses; the v0.1.8-rc1 cache and artifacts remain historical.
+
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
 Each finding may carry `semantic_fingerprint`, a `secure-semantic-fingerprint-v1` digest of the rule and demonstrated source/sink semantic identities. It is stable across local renames, harmless statements, aliases, and helper extraction when the invariant is unchanged. The original finding fingerprint, ID, rule IDs, taxonomy coordinates, severity, and confidence remain unchanged. Report fingerprints intentionally change because new semantic evidence is part of the deterministic report; this is additive report content, not a legacy finding-identity change.

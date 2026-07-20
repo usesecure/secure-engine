@@ -271,7 +271,7 @@ fn evidence_spans_fingerprints_and_metamorphic_renames_are_deterministic()
 }
 
 #[test]
-fn cache_v14_misses_v13_and_interprocedural_depth_remains_bounded()
+fn current_cache_misses_v13_and_interprocedural_depth_remains_bounded()
 -> Result<(), Box<dyn std::error::Error>> {
     let repository = TempDir::new()?;
     fs::create_dir_all(repository.path().join("src"))?;
@@ -296,7 +296,7 @@ fn cache_v14_misses_v13_and_interprocedural_depth_remains_bounded()
     assert!(cold.parsing.cache_misses > 0);
     assert!(cold.parsing.cache_writes > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v14").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v15").is_dir());
     assert!(warm.parsing.cache_hits > 0);
     assert_eq!(cold.report_fingerprint, warm.report_fingerprint);
     assert_eq!(cold.facts, warm.facts);
