@@ -42,6 +42,12 @@ propagation stops after 16 non-repeating records, opaque calls consume only prov
 and ambiguous mutation remains unresolved. Development cache v15 treats historical v14 entries as
 safe misses; the v0.1.8-rc1 cache and artifacts remain historical.
 
+Phase 6.13 tranche 2 does not change analysis semantics. Generic `Map.set`, `Set.add`, property
+assignment, cache-like methods, arbitrary exports, request-shaped parameters, names, and comments do
+not establish a protected operation or exposed handler. A future opt-in domain contract is a
+separate versioned design; until then, private cache v15 and the exact RC5 principal/resource proof
+remain unchanged.
+
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
 Each finding may carry `semantic_fingerprint`, a `secure-semantic-fingerprint-v1` digest of the rule and demonstrated source/sink semantic identities. It is stable across local renames, harmless statements, aliases, and helper extraction when the invariant is unchanged. The original finding fingerprint, ID, rule IDs, taxonomy coordinates, severity, and confidence remain unchanged. Report fingerprints intentionally change because new semantic evidence is part of the deterministic report; this is additive report content, not a legacy finding-identity change.

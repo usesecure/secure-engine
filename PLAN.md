@@ -463,6 +463,8 @@ release, installation, or remote publication is part of candidate preparation.
 Status: tranche 1 development starts from the exact v0.1.8-rc1 source commit while
 the candidate artifacts and durable copy remain historical and unchanged. The
 retired holdout is causal evidence only and is never rescored or copied into tests.
+Tranche 2 starts from the integrated tranche 1 commit and records the authorization
+domain boundary without changing analyzer semantics or cache v15.
 
 - [Complete] Reconcile the 18 lost-connectivity observations as 7 bounded scalar paths, 8 exact static-property paths, and 3 mutable collection/spread paths.
 - [Complete] Select only the scalar and exact static-property causes; defer mutable collection/spread order and mutation semantics.
@@ -470,6 +472,10 @@ retired holdout is causal evidence only and is never rescored or copied into tes
 - [Complete] Keep opaque calls, computed properties, spreads, ambiguous aliases/imports/calls, cycles, and excess depth fail-closed.
 - [Complete] Add independent positive and adversarial fixtures and advance only the private parse cache to v15, with v14 as a safe miss.
 - [Complete] Preserve public schemas, SARIF, taxonomy, rule IDs, evidence contracts, unaffected fingerprints, CLI/desktop parity, privacy, cancellation, bounds, and disabled-by-default AI.
+- [Complete] Reconcile the eight Phase 33 authorization observations as six entrypoint-plus-sink gaps and two sink-only gaps, all eight requiring unavailable protected-operation domain semantics.
+- [Complete] Reject implicit handler inference from arbitrary exports/request-shaped parameters and implicit sink inference from `Map.set`, `Set.add`, property writes, generic methods, names, or comments.
+- [Complete] Preserve the RC5 authenticated-principal, canonical-resource, tenant-plus-owner, dominance, and same-resource proof without advancing private cache v15.
+- [Complete] Lock the boundary with independent synthetic supported-sink positives and local-mutation/exposure controls, and defer a separately versioned opt-in protected-operation contract.
 
 Tranche exit condition: local offline quality, dependency, compatibility, privacy,
 determinism, cancellation, and product gates pass with exactly one signed DCO
