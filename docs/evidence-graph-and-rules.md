@@ -59,8 +59,10 @@ value precision. Phase 6.12 tranche 2 further binds exact-origin guards to typed
 projections and binds complete tenant/owner guards to the same loaded record and authenticated
 principal. Phase 6.12 tranche 3 records the exact program-text argument only when a supported shell
 interpreter and `-c` option position are structurally proven; later positional arguments retain argv
-semantics. The public graph identity remains unchanged and cache v13 isolates these private record
-changes.
+semantics. Phase 6.12 tranche 4 assigns private per-property identity to one exact bounded object
+literal and connects only the matching supported destructuring entry. A private evaluation order
+represents RHS-before-binding semantics for direct literals while preserving evidence spans. The
+public graph identity remains unchanged and cache v14 isolates these private record changes.
 
 ## Findings and suppressions
 

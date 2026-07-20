@@ -26,11 +26,18 @@ const SHELL_PROGRAM_MARKER: &str = "@identity:shell-program-text";
 const SHELL_PROGRAM_VALUE_MARKER: &str = "@identity:shell-program-value:";
 const SHELL_INTERPRETER_MARKER: &str = "@identity:shell-interpreter:";
 const SHELL_COMMAND_OPTION_MARKER: &str = "@identity:shell-command-option:";
+const OBJECT_PROPERTY_RECORD_NAME: &str = "object-property-identity";
 
 struct ShellProgramText<'tree> {
     interpreter: &'static str,
     option: String,
     program: Node<'tree>,
+}
+
+enum ObjectLiteralResolution<'tree> {
+    Exact(Node<'tree>),
+    Refused,
+    Unresolved,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,6 +71,8 @@ pub(crate) struct ProgramRecord {
     #[serde(default)]
     raw_callee: Option<String>,
     location: SourceLocation,
+    #[serde(default)]
+    evaluation_order: Option<u64>,
     provenance: ParserProvenance,
     #[serde(default)]
     dominance_start: Option<u64>,
@@ -160,6 +169,7 @@ type AliasMap = BTreeMap<(String, String), BTreeSet<String>>;
 struct GraphBuilder {
     nodes: BTreeMap<String, EvidenceNode>,
     edges: BTreeMap<String, EvidenceEdge>,
+    evaluation_order: BTreeMap<String, u64>,
     max_nodes: usize,
     max_edges: usize,
     truncated: bool,
@@ -170,6 +180,7 @@ impl GraphBuilder {
         Self {
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            evaluation_order: BTreeMap::new(),
             max_nodes: configuration.max_graph_nodes,
             max_edges: configuration.max_graph_edges,
             truncated: false,
@@ -479,12 +490,15 @@ pub(crate) fn analyze(
     all_records.sort_by(|left, right| {
         (
             &left.location.path,
-            left.location.span.start_byte,
+            left.evaluation_order
+                .unwrap_or(left.location.span.start_byte),
             &left.record_id,
         )
             .cmp(&(
                 &right.location.path,
-                right.location.span.start_byte,
+                right
+                    .evaluation_order
+                    .unwrap_or(right.location.span.start_byte),
                 &right.record_id,
             ))
     });
@@ -536,6 +550,11 @@ pub(crate) fn analyze(
             &record.provenance,
         );
         record_nodes.insert(record.record_id.clone(), node.clone());
+        if let Some(evaluation_order) = record.evaluation_order {
+            builder
+                .evaluation_order
+                .insert(node.clone(), evaluation_order);
+        }
         if let Some((_, module)) = file_nodes.get(&record.location.path) {
             let _edge = builder.edge(
                 "containment",
@@ -1846,7 +1865,7 @@ fn append_object_property_records(
         return;
     }
     append_object_property_records_inner(
-        path, content, object, output, None, function, provenance, aliases, records,
+        path, content, object, output, None, function, provenance, aliases, records, false,
     );
 }
 
@@ -1861,15 +1880,17 @@ fn append_object_property_records_inner(
     provenance: &ParserProvenance,
     aliases: &AliasMap,
     records: &mut Vec<ProgramRecord>,
+    identity_record: bool,
 ) {
     for index in 0..object.named_child_count() {
         let Some(property) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
             continue;
         };
-        let (key, value) = if matches!(
+        let shorthand = matches!(
             property.kind(),
             "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
-        ) {
+        );
+        let (key, value) = if shorthand {
             let Some(key) = expression_name(property, content) else {
                 continue;
             };
@@ -1898,12 +1919,17 @@ fn append_object_property_records_inner(
                 provenance,
                 aliases,
                 records,
+                identity_record,
             );
             continue;
         }
         let callee =
             call_callee(value, content).map(|callee| resolve_alias(&callee, function, aliases));
-        let mut inputs = value_names(value, content);
+        let mut inputs = if shorthand {
+            vec![key.clone()]
+        } else {
+            value_names(value, content)
+        };
         if callee.is_some() {
             inputs.push(call_output_key(value));
         }
@@ -1920,7 +1946,9 @@ fn append_object_property_records_inner(
             } else {
                 "assignment"
             },
-            callee.as_deref(),
+            callee
+                .as_deref()
+                .or(identity_record.then_some(OBJECT_PROPERTY_RECORD_NAME)),
             function.map(|item| item.qualified_name.as_str()),
             inputs,
             Some(&format!("{output}.{property_path}")),
@@ -1944,10 +1972,14 @@ fn object_shape_is_unambiguous(object: Node<'_>, content: &[u8]) -> bool {
         if matches!(property.kind(), "spread_element" | "spread_property") {
             return false;
         }
-        let key = if matches!(
+        let shorthand = matches!(
             property.kind(),
             "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
-        ) {
+        );
+        if !shorthand && property.kind() != "pair" {
+            return false;
+        }
+        let key = if shorthand {
             expression_name(property, content)
         } else {
             static_property_key(property, content)
@@ -1996,6 +2028,36 @@ fn append_destructuring_records(
     if !destructuring_shape_is_unambiguous(pattern, content) {
         return;
     }
+    match object_literal_for_destructuring(value, pattern, content) {
+        ObjectLiteralResolution::Exact(object) => {
+            if !exact_object_shape_is_unambiguous(object, content, 0)
+                || !object_pattern_is_supported(pattern, content, 0)
+            {
+                return;
+            }
+            let identity = object_literal_identity(path, object);
+            append_object_property_records_inner(
+                path, content, object, &identity, None, function, provenance, aliases, records,
+                true,
+            );
+            let binding_records_start = records.len();
+            append_destructuring_records_inner(
+                path, content, pattern, &identity, &identity, None, function, provenance, records,
+            );
+            if matches!(
+                unwrap_expression(value).kind(),
+                "object" | "object_expression"
+            ) {
+                let evaluation_order = u64::try_from(object.end_byte()).unwrap_or(u64::MAX);
+                for record in &mut records[binding_records_start..] {
+                    record.evaluation_order = Some(evaluation_order);
+                }
+            }
+            return;
+        }
+        ObjectLiteralResolution::Refused => return,
+        ObjectLiteralResolution::Unresolved => {}
+    }
     let Some(base) = expression_name(value, content)
         .or_else(|| nested_call_expression(value).map(call_output_key))
     else {
@@ -2013,6 +2075,264 @@ fn append_destructuring_records(
         provenance,
         records,
     );
+}
+
+fn object_literal_identity(path: &str, object: Node<'_>) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hash_value(&mut hasher, b"object-literal-property-v1");
+    hash_value(&mut hasher, path.as_bytes());
+    hash_value(&mut hasher, &object.start_byte().to_le_bytes());
+    format!(
+        "@identity:object-literal:{}",
+        &hasher.finalize().to_hex()[..24]
+    )
+}
+
+fn object_literal_for_destructuring<'tree>(
+    value: Node<'tree>,
+    anchor: Node<'tree>,
+    content: &[u8],
+) -> ObjectLiteralResolution<'tree> {
+    let value = unwrap_expression(value);
+    if matches!(value.kind(), "object" | "object_expression") {
+        return ObjectLiteralResolution::Exact(value);
+    }
+    let Some(name) = expression_name(value, content).filter(|name| !name.contains(['.', '[']))
+    else {
+        return ObjectLiteralResolution::Unresolved;
+    };
+    let Some(root) = program_root(anchor) else {
+        return ObjectLiteralResolution::Refused;
+    };
+    let function_scope = enclosing_function_span(anchor);
+    let mut candidates = Vec::<(usize, usize, Node<'tree>, Node<'tree>)>::new();
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return ObjectLiteralResolution::Refused;
+        }
+        if node.kind() == "variable_declarator"
+            && node.end_byte() <= anchor.start_byte()
+            && enclosing_function_span(node) == function_scope
+            && node
+                .child_by_field_name("name")
+                .and_then(|binding| expression_name(binding, content))
+                .as_deref()
+                == Some(name.as_str())
+            && let (Some(initializer), Some(scope)) = (
+                node.child_by_field_name("value"),
+                declaration_visibility_scope(node),
+            )
+            && scope.start_byte() <= anchor.start_byte()
+            && scope.end_byte() >= anchor.end_byte()
+        {
+            candidates.push((
+                scope.end_byte().saturating_sub(scope.start_byte()),
+                node.end_byte(),
+                node,
+                initializer,
+            ));
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return ObjectLiteralResolution::Unresolved;
+    }
+    candidates.sort_by_key(|(scope_size, end, _, _)| (*scope_size, std::cmp::Reverse(*end)));
+    let (scope_size, _, declaration, initializer) = candidates[0];
+    if candidates
+        .iter()
+        .skip(1)
+        .any(|(candidate_scope, _, _, _)| *candidate_scope == scope_size)
+    {
+        return ObjectLiteralResolution::Refused;
+    }
+    let initializer = unwrap_expression(initializer);
+    if !matches!(initializer.kind(), "object" | "object_expression") {
+        let outer_object_exists = candidates.iter().skip(1).any(|(_, _, _, candidate)| {
+            matches!(
+                unwrap_expression(*candidate).kind(),
+                "object" | "object_expression"
+            )
+        });
+        return if outer_object_exists || nested_call_expression(initializer).is_some() {
+            ObjectLiteralResolution::Refused
+        } else {
+            ObjectLiteralResolution::Unresolved
+        };
+    }
+    if object_binding_invalidated_between(
+        root,
+        &name,
+        declaration.end_byte(),
+        anchor.start_byte(),
+        content,
+    ) {
+        return ObjectLiteralResolution::Refused;
+    }
+    ObjectLiteralResolution::Exact(initializer)
+}
+
+fn object_binding_invalidated_between(
+    root: Node<'_>,
+    binding: &str,
+    after: usize,
+    before: usize,
+    content: &[u8],
+) -> bool {
+    if binding_mutated_between(root, binding, after, before, content) {
+        return true;
+    }
+    let mut stack = vec![root];
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > 4096 {
+            return true;
+        }
+        if node.start_byte() < after || node.start_byte() >= before {
+            for index in (0..node.named_child_count()).rev() {
+                if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                    stack.push(child);
+                }
+            }
+            continue;
+        }
+        if node.kind() == "variable_declarator"
+            && node
+                .child_by_field_name("value")
+                .and_then(|value| expression_name(value, content))
+                .is_some_and(|value| values_correspond(&value, binding))
+        {
+            return true;
+        }
+        if matches!(node.kind(), "update_expression" | "unary_expression")
+            && expression_name(node, content)
+                .is_some_and(|value| values_correspond(&value, binding))
+        {
+            return true;
+        }
+        if node.kind() == "call_expression" {
+            let receiver_escapes = node
+                .child_by_field_name("function")
+                .and_then(|function| function.child_by_field_name("object"))
+                .and_then(|object| expression_name(object, content))
+                .is_some_and(|object| values_correspond(&object, binding));
+            let argument_escapes = node
+                .child_by_field_name("arguments")
+                .is_some_and(|arguments| {
+                    value_names(arguments, content)
+                        .iter()
+                        .any(|value| values_correspond(value, binding))
+                });
+            if receiver_escapes || argument_escapes {
+                return true;
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
+}
+
+fn declaration_visibility_scope(mut declaration: Node<'_>) -> Option<Node<'_>> {
+    let declaration_kind = declaration.parent()?.kind();
+    if declaration_kind == "variable_declaration" {
+        return enclosing_function_node(declaration).or_else(|| program_root(declaration));
+    }
+    if declaration_kind != "lexical_declaration" {
+        return None;
+    }
+    while let Some(parent) = declaration.parent() {
+        if matches!(
+            parent.kind(),
+            "statement_block"
+                | "program"
+                | "for_statement"
+                | "for_in_statement"
+                | "for_of_statement"
+                | "switch_body"
+        ) {
+            return Some(parent);
+        }
+        if is_function(parent) {
+            return None;
+        }
+        declaration = parent;
+    }
+    None
+}
+
+fn exact_object_shape_is_unambiguous(object: Node<'_>, content: &[u8], depth: usize) -> bool {
+    if depth > 8 || !object_shape_is_unambiguous(object, content) {
+        return false;
+    }
+    (0..object.named_child_count()).all(|index| {
+        let Some(property) = object.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            return false;
+        };
+        let value = if matches!(
+            property.kind(),
+            "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+        ) {
+            property
+        } else {
+            let Some(value) = property
+                .child_by_field_name("value")
+                .or_else(|| property.named_child(1))
+            else {
+                return false;
+            };
+            value
+        };
+        !matches!(value.kind(), "object" | "object_expression")
+            || exact_object_shape_is_unambiguous(value, content, depth.saturating_add(1))
+    })
+}
+
+fn object_pattern_is_supported(pattern: Node<'_>, content: &[u8], depth: usize) -> bool {
+    if depth > 8 || pattern.kind() != "object_pattern" {
+        return false;
+    }
+    let mut keys = BTreeSet::new();
+    for index in 0..pattern.named_child_count() {
+        let Some(property) = pattern.named_child(u32::try_from(index).unwrap_or(u32::MAX)) else {
+            return false;
+        };
+        let shorthand = property.kind() == "shorthand_property_identifier_pattern";
+        let (key, binding) = if shorthand {
+            (expression_name(property, content), Some(property))
+        } else if property.kind() == "pair_pattern" {
+            (
+                static_property_key(property, content),
+                property
+                    .child_by_field_name("value")
+                    .or_else(|| property.named_child(1)),
+            )
+        } else {
+            return false;
+        };
+        let (Some(key), Some(binding)) = (key, binding) else {
+            return false;
+        };
+        if !keys.insert(key)
+            || (!shorthand
+                && binding.kind() != "identifier"
+                && !object_pattern_is_supported(binding, content, depth.saturating_add(1)))
+        {
+            return false;
+        }
+    }
+    true
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -2344,6 +2664,7 @@ pub(crate) fn record_with_dominance(
         callee: callee.map(str::to_owned),
         raw_callee: None,
         location,
+        evaluation_order: None,
         provenance: provenance.clone(),
         dominance_start,
         dominance_end,
@@ -3279,13 +3600,23 @@ fn trace_is_realizable(trace: &Trace, builder: &GraphBuilder) -> bool {
         let Some(to_node) = builder.nodes.get(to) else {
             return false;
         };
-        locations_are_ordered(&from_node.location, &to_node.location)
+        locations_are_ordered(
+            &from_node.location,
+            builder.evaluation_order.get(from).copied(),
+            &to_node.location,
+            builder.evaluation_order.get(to).copied(),
+        )
     })
 }
 
-fn locations_are_ordered(from: &SourceLocation, to: &SourceLocation) -> bool {
+fn locations_are_ordered(
+    from: &SourceLocation,
+    from_order: Option<u64>,
+    to: &SourceLocation,
+    to_order: Option<u64>,
+) -> bool {
     from.path != to.path
-        || to.span.start_byte >= from.span.start_byte
+        || to_order.unwrap_or(to.span.start_byte) >= from_order.unwrap_or(from.span.start_byte)
         || (to.span.start_byte <= from.span.start_byte && to.span.end_byte >= from.span.end_byte)
 }
 
