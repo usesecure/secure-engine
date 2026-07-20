@@ -443,6 +443,21 @@ superiority, production readiness, or complete coverage. Its build roots, staged
 packages, verification logs, hashes, and provenance are frozen outside Git for a future independent
 holdout. No tag, release, or remote publication is part of candidate preparation.
 
+### Release candidate 0.1.8
+
+Status: candidate preparation uses the integrated Phase 6.12 commit
+`f627c2ab35d060cf402c5a539f062efd260111ba` as its sole parent. Version and Fedora metadata move to
+0.1.8 while secure-json-v1, Evidence Contract v2, taxonomy 1.0.0, SARIF 2.1.0, rule IDs, unaffected
+fingerprints, CLI/desktop parity, local product state, and disabled-by-default AI remain compatible.
+The private parse cache remains v14, with v13 and older entries treated as safe misses.
+
+The candidate contains only the already integrated Phase 6.12 RC2, RC3, RC4, and RC5 refinements.
+RC1 remains a retired-corpus erratum outside a sound Engine data-flow boundary. Version 0.1.8 has
+not received an independent holdout evaluation and supports no ranking, superiority, production
+readiness, or complete-coverage claim. Two clean detached Fedora 44 builds, their staged and
+extracted binaries, logs, checksums, metadata, and provenance are frozen outside Git. No tag,
+release, installation, or remote publication is part of candidate preparation.
+
 ### Phase 7 - Distribution
 
 - Produce RPM, AppImage, and release archives.

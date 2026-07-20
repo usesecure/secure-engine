@@ -2,22 +2,24 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-version="0.1.7"
-target="${SECURE_RPM_TARGET:-$root/target/v0.1.7-rc1-rpm}"
+version="0.1.8"
+target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc1-rpm}"
 topdir="$target/rpmbuild"
+cargo_target="$target/cargo-target"
 stage_parent="$target/stage"
 stage="$stage_parent/secure-engine-$version"
 source_date_epoch="$(git -C "$root" show -s --format=%ct HEAD)"
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 
 rm -rf -- "$target"
-mkdir -p -- "$target/tmp" "$topdir/BUILD" "$topdir/BUILDROOT" "$topdir/RPMS" "$topdir/SOURCES" "$topdir/SPECS" "$topdir/SRPMS" "$stage"
+mkdir -p -- "$target/tmp" "$cargo_target" "$topdir/BUILD" "$topdir/BUILDROOT" "$topdir/RPMS" "$topdir/SOURCES" "$topdir/SPECS" "$topdir/SRPMS" "$stage"
+export TMPDIR="$target/tmp"
 
-CARGO_TARGET_DIR="$root/target" \
-  RUSTFLAGS="--remap-path-prefix=$root=/usr/src/secure-engine-$version" \
+CARGO_TARGET_DIR="$cargo_target" \
+  RUSTFLAGS="--remap-path-prefix=$root=/usr/src/secure-engine-$version --remap-path-prefix=$cargo_target=/usr/lib/secure-engine-build/target" \
   cargo build --manifest-path "$root/Cargo.toml" --release --locked --offline -p secure-cli -p secure-desktop
-install -m0755 "$root/target/release/secure" "$stage/secure"
-install -m0755 "$root/target/release/secure-desktop" "$stage/secure-desktop"
+install -m0755 "$cargo_target/release/secure" "$stage/secure"
+install -m0755 "$cargo_target/release/secure-desktop" "$stage/secure-desktop"
 install -m0644 "$root/packaging/fedora/dev.usesecure.SecureEngine.desktop" "$stage/dev.usesecure.SecureEngine.desktop"
 install -m0644 "$root/packaging/fedora/dev.usesecure.SecureEngine.metainfo.xml" "$stage/dev.usesecure.SecureEngine.metainfo.xml"
 install -m0644 "$root/packaging/fedora/dev.usesecure.SecureEngine.svg" "$stage/dev.usesecure.SecureEngine.svg"

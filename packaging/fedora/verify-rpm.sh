@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/v0.1.7-rc1-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc1-rpm}"
 rpm_path="${1:-}"
 if test -z "$rpm_path"; then
   rpm_path="$(find "$target/rpmbuild/RPMS" -type f -name 'secure-engine-*.rpm' -print -quit)"
@@ -42,7 +42,7 @@ cmp "$expected_ownership" "$ownership"
 rpm -qpi "$rpm_path" >"$target/package-metadata.txt"
 rpm -qplv "$rpm_path" >"$target/package-files-detailed.txt"
 test "$(rpm -qp --qf '%{NAME}' "$rpm_path")" = secure-engine
-test "$(rpm -qp --qf '%{VERSION}' "$rpm_path")" = 0.1.7
+test "$(rpm -qp --qf '%{VERSION}' "$rpm_path")" = 0.1.8
 test "$(rpm -qp --qf '%{RELEASE}' "$rpm_path")" = 1.fc44
 test "$(rpm -qp --qf '%{ARCH}' "$rpm_path")" = x86_64
 test "$(rpm -qp --qf '%{LICENSE}' "$rpm_path")" = MIT
@@ -53,18 +53,18 @@ rm -rf -- "$extract"
 mkdir -p -- "$extract"
 (cd "$extract" && rpm2cpio "$rpm_path" | cpio -idm --quiet)
 "$extract/usr/bin/secure" --version >"$target/cli-version.txt"
-test "$(cat "$target/cli-version.txt")" = "secure 0.1.7"
+test "$(cat "$target/cli-version.txt")" = "secure 0.1.8"
 "$extract/usr/bin/secure" doctor --format secure-json-v1 >"$target/doctor.json"
 "$extract/usr/bin/secure" rules list >"$target/rules.json"
 "$extract/usr/bin/secure" ai providers >"$target/ai-providers.json"
 "$extract/usr/bin/secure" schema print secure-json-v1 >"$target/secure-json-v1.schema.json"
-jq -e '.schema_version == "secure-json-v1" and .engine_version == "0.1.7" and .healthy == true' "$target/doctor.json" >/dev/null
+jq -e '.schema_version == "secure-json-v1" and .engine_version == "0.1.8" and .healthy == true' "$target/doctor.json" >/dev/null
 jq -e 'length == 7 and map(.rule_id) == ["SE1001", "SE1002", "SE1003", "SE1004", "SE1005", "SE1006", "SE1007"]' "$target/rules.json" >/dev/null
 jq -e 'length == 3 and all(.credentials == "none" or .credentials == "environment-only")' "$target/ai-providers.json" >/dev/null
 jq -e '.title == "Secure Engine secure-json-v1 document"' "$target/secure-json-v1.schema.json" >/dev/null
 desktop-file-validate "$extract/usr/share/applications/dev.usesecure.SecureEngine.desktop"
 appstreamcli validate --no-net "$extract/usr/share/metainfo/dev.usesecure.SecureEngine.metainfo.xml"
-grep -F '<release version="0.1.7" date="2026-07-19" />' \
+grep -F '<release version="0.1.8" date="2026-07-20" />' \
   "$extract/usr/share/metainfo/dev.usesecure.SecureEngine.metainfo.xml" >/dev/null
 
 if test "${SECURE_SKIP_DESKTOP_SMOKE:-0}" != 1; then
@@ -74,6 +74,8 @@ if test "${SECURE_SKIP_DESKTOP_SMOKE:-0}" != 1; then
   status=$?
   set -e
   test "$status" -eq 124
+  printf 'status=%s\nexpected_timeout_status=124\nduration_seconds=5\n' "$status" \
+    >"$target/desktop-smoke-result.txt"
 fi
 
 printf '%s\n' "$rpm_path"

@@ -4,7 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use secure_engine::{
-    CancellationToken, SECURE_JSON_V1_SCHEMA, ScanReport, ScanRequest, scan_repository,
+    CancellationToken, ENGINE_VERSION, SECURE_JSON_V1_SCHEMA, ScanReport, ScanRequest,
+    scan_repository,
 };
 
 fn workspace_path(path: &str) -> PathBuf {
@@ -41,6 +42,12 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     assert!(validator.is_valid(&phase_three));
     assert!(!validator.is_valid(&malformed));
     assert!(!validator.is_valid(&incompatible));
+    assert_eq!(ENGINE_VERSION, "0.1.8");
+    let mut previous_release = valid.clone();
+    previous_release["engine_version"] = serde_json::Value::String("0.1.7".into());
+    assert!(validator.is_valid(&previous_release));
+    let previous_report: ScanReport = serde_json::from_value(previous_release)?;
+    assert_eq!(previous_report.engine_version, "0.1.7");
     let legacy_report: ScanReport = serde_json::from_value(valid)?;
     assert_eq!(
         legacy_report.configuration.max_total_bytes,

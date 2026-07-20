@@ -32,6 +32,10 @@ to one exact static property of one exact object literal. Private evaluation ord
 direct literal is evaluated before its pattern bindings without changing the public source spans.
 Computed, dynamic, mutated, shadowed, escaped, or otherwise ambiguous objects do not create proof.
 
+Secure Engine 0.1.8 publishes the already integrated Phase 6.12 proof refinements without changing
+the public evidence semantics, taxonomy, Evidence Contract, secure-json-v1, SARIF, or rule IDs. The
+private parse cache remains v14; 0.1.7 structured reports remain valid secure-json-v1 inputs.
+
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
 Each finding may carry `semantic_fingerprint`, a `secure-semantic-fingerprint-v1` digest of the rule and demonstrated source/sink semantic identities. It is stable across local renames, harmless statements, aliases, and helper extraction when the invariant is unchanged. The original finding fingerprint, ID, rule IDs, taxonomy coordinates, severity, and confidence remain unchanged. Report fingerprints intentionally change because new semantic evidence is part of the deterministic report; this is additive report content, not a legacy finding-identity change.
