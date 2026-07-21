@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
-target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc1-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc2-rpm}"
 rpm_path="${1:-}"
 if test -z "$rpm_path"; then
   rpm_path="$(find "$target/rpmbuild/RPMS" -type f -name 'secure-engine-*.rpm' -print -quit)"
@@ -64,7 +64,7 @@ jq -e 'length == 3 and all(.credentials == "none" or .credentials == "environmen
 jq -e '.title == "Secure Engine secure-json-v1 document"' "$target/secure-json-v1.schema.json" >/dev/null
 desktop-file-validate "$extract/usr/share/applications/dev.usesecure.SecureEngine.desktop"
 appstreamcli validate --no-net "$extract/usr/share/metainfo/dev.usesecure.SecureEngine.metainfo.xml"
-grep -F '<release version="0.1.8" date="2026-07-20" />' \
+grep -F '<release version="0.1.8" date="2026-07-21" />' \
   "$extract/usr/share/metainfo/dev.usesecure.SecureEngine.metainfo.xml" >/dev/null
 
 if test "${SECURE_SKIP_DESKTOP_SMOKE:-0}" != 1; then

@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)"
 version="0.1.8"
-target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc1-rpm}"
+target="${SECURE_RPM_TARGET:-$root/target/v0.1.8-rc2-rpm}"
 topdir="$target/rpmbuild"
 cargo_target="$target/cargo-target"
 stage_parent="$target/stage"

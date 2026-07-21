@@ -32,14 +32,15 @@ to one exact static property of one exact object literal. Private evaluation ord
 direct literal is evaluated before its pattern bindings without changing the public source spans.
 Computed, dynamic, mutated, shadowed, escaped, or otherwise ambiguous objects do not create proof.
 
-Secure Engine 0.1.8 publishes the already integrated Phase 6.12 proof refinements without changing
-the public evidence semantics, taxonomy, Evidence Contract, secure-json-v1, SARIF, or rule IDs. The
-private parse cache remains v14; 0.1.7 structured reports remain valid secure-json-v1 inputs.
+Secure Engine 0.1.8 publishes the already integrated Phase 6.12 and Phase 6.13 proof refinements
+without changing the public evidence semantics, taxonomy, Evidence Contract, secure-json-v1,
+SARIF, or rule IDs. The private parse cache is v16; older envelopes produce safe misses, and 0.1.7
+structured reports remain valid secure-json-v1 inputs.
 
 Phase 6.13 tranche 1 retains those public contracts while allowing only proven earlier
 assignment/property records to feed the current deterministic forward pass. Local value
 propagation stops after 16 non-repeating records, opaque calls consume only proven call outputs,
-and ambiguous mutation remains unresolved. Development cache v15 treats historical v14 entries as
+and ambiguous mutation remains unresolved. Cache v15 treats historical v14 entries as
 safe misses; the v0.1.8-rc1 cache and artifacts remain historical.
 
 Phase 6.13 tranche 2 does not change analysis semantics. Generic `Map.set`, `Set.add`, property
@@ -53,7 +54,7 @@ protocol and hostname/host are constrained by fixed structural evidence. The pro
 the same unmodified URL or its exact `href`; mutable collections, names, shadowed built-ins,
 ambiguous wrappers, different objects, mutation, exceptional continuation, cycles, and exhausted
 depth reject it. Parser recovery remains orthogonal and never suppresses a finding by itself.
-Development cache v16 treats v15 and older entries as safe misses.
+Cache v16 treats v15 and older entries as safe misses.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
