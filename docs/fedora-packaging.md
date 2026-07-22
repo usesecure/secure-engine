@@ -1,6 +1,6 @@
 # Fedora RPM packaging
 
-The Fedora-first package contains `secure`, `secure-desktop`, desktop launcher metadata, AppStream metadata, a scalable icon, README, and MIT license. The default candidate build is contained below `target/v0.1.8-rc2-rpm`; `SECURE_RPM_TARGET` selects an isolated root for reproducibility checks. Each invocation creates a clean private Cargo target below that root, so reproducibility builds cannot reuse compiled artifacts. Neither build nor verification installs a system package or changes host configuration.
+The Fedora-first package contains `secure`, `secure-desktop`, desktop launcher metadata, AppStream metadata, a scalable icon, README, and MIT license. The default candidate build is contained below `target/v0.1.9-rc1-rpm`; `SECURE_RPM_TARGET` selects an isolated root for reproducibility checks. Each invocation creates a clean private Cargo target below that root, so reproducibility builds cannot reuse compiled artifacts. Neither build nor verification installs a system package or changes host configuration.
 
 ## Build and automated verification
 
@@ -14,7 +14,7 @@ The verifier compares the exact RPM file list, inspects package metadata, extrac
 ## Installation
 
 ```bash
-sudo dnf install ./target/v0.1.8-rc2-rpm/rpmbuild/RPMS/x86_64/secure-engine-0.1.8-1.fc*.x86_64.rpm
+sudo dnf install ./target/v0.1.9-rc1-rpm/rpmbuild/RPMS/x86_64/secure-engine-0.1.9-1.fc*.x86_64.rpm
 ```
 
 ## Upgrade

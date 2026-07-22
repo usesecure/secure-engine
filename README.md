@@ -13,7 +13,7 @@ Secure Engine follows untrusted values across files and helpers, then reports re
 
 ## What it detects
 
-Version 0.1.8 ships seven deterministic rule families:
+Version 0.1.9 ships seven deterministic rule families:
 
 - `SE1001`: untrusted input reaching command execution;
 - `SE1002`: untrusted input reaching dynamically constructed or raw SQL;
@@ -25,22 +25,18 @@ Version 0.1.8 ships seven deterministic rule families:
 
 The analyzer supports bounded inter-file propagation, value-preserving helpers, static-property identity, shell program-text classification, exact path and URL policy projection, and principal/resource-aware authorization evidence. Ambiguous flows fail conservatively instead of inventing proof.
 
-## Install v0.1.8
+## Install v0.1.9
 
-The current release provides a Fedora 44 x86_64 RPM. Download the RPM and `SHA256SUMS` from [GitHub Releases](https://github.com/usesecure/secure-engine/releases/tag/v0.1.8), then verify before installation:
+The current release provides a Fedora 44 x86_64 RPM. Download the RPM and `SHA256SUMS` from [GitHub Releases](https://github.com/usesecure/secure-engine/releases/tag/v0.1.9), then verify before installation:
 
 ```bash
 sha256sum -c SHA256SUMS
-sudo dnf install ./secure-engine-0.1.8-1.fc44.x86_64.rpm
-```
-
-Published RPM SHA-256:
-
-```text
-fa01b2e3bce2c80df01512ea23682905e330c2369dbc4b657d93e57d8685ea21
+sudo dnf install ./secure-engine-0.1.9-1.fc44.x86_64.rpm
 ```
 
 The release was produced twice from independent clean targets; the RPM and staged/extracted CLI and desktop binaries were byte-identical.
+
+Version 0.1.9 preserves the complete 0.1.8 analysis semantics while indexing repeated graph lookups. On the documented OpenStatus large-repository benchmark, internal scan time fell from 115.061 seconds to a median 11.403 seconds across three optimized runs, with identical facts, graph, findings, evidence, ordering, and report fingerprint. Results depend on repository and hardware; this is a bounded performance measurement, not a security-coverage claim.
 
 ## Quick start
 

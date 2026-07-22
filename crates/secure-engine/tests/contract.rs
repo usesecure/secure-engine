@@ -42,7 +42,7 @@ fn committed_fixtures_enforce_compatibility() -> Result<(), Box<dyn std::error::
     assert!(validator.is_valid(&phase_three));
     assert!(!validator.is_valid(&malformed));
     assert!(!validator.is_valid(&incompatible));
-    assert_eq!(ENGINE_VERSION, "0.1.8");
+    assert_eq!(ENGINE_VERSION, "0.1.9");
     let mut previous_release = valid.clone();
     previous_release["engine_version"] = serde_json::Value::String("0.1.7".into());
     assert!(validator.is_valid(&previous_release));

@@ -1,5 +1,5 @@
 Name:           secure-engine
-Version:        0.1.8
+Version:        0.1.9
 Release:        1%{?dist}
 Summary:        Local deterministic security analysis CLI and native desktop
 License:        MIT
@@ -45,6 +45,9 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 %{_datadir}/icons/hicolor/scalable/apps/dev.usesecure.SecureEngine.svg
 
 %changelog
+* Wed Jul 22 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.9-1
+- Preserve 0.1.8 semantics while indexing repeated large-repository graph lookups
+
 * Tue Jul 21 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.8-1
 - Phase 6.12-6.13 bounded proof refinements; private parse cache v16
 
