@@ -1,18 +1,105 @@
 # Secure Engine
 
-Local-first security analysis for entire codebases.
+Local-first static security analysis for JavaScript and TypeScript codebases.
 
 [![CI](https://github.com/usesecure/secure-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/usesecure/secure-engine/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/usesecure/secure-engine)](https://github.com/usesecure/secure-engine/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+Secure Engine follows untrusted values across files and helpers, then reports reproducible source-to-sink evidence through a CLI, native desktop UI, `secure-json-v1`, and SARIF 2.1.0. Analysis runs locally; AI validation is optional and disabled by default.
+
 > [!IMPORTANT]
-> Secure Engine is experimental pre-1.0 software. Findings require human validation, and a clean report is not proof that a codebase is secure.
+> Secure Engine is experimental pre-1.0 software. Every finding requires human validation, and a clean report is not proof that a codebase is secure.
 
-Secure Engine is the local Rust analysis core of the Secure project family. Public version 0.1.8 freezes the already integrated Phase 6.12 and Phase 6.13 development tranches: bounded value-preserving summaries and propagation, exact guard/resource and static-property identity, shell program-text classification, conservative authorization boundaries, and exact outbound URL/`href` policy projection. The engine retains the Phase 6.11 generalizations and the tool-neutral taxonomy 1.0.0, Evidence Contract v2, secure-json-v1, SARIF 2.1.0, rule IDs, CLI/desktop parity, baselines/history/suppressions, and disabled-by-default AI. The private parse cache is v16, with older envelopes producing safe misses; historical v0.1.8-rc1 artifacts remain cache v14.
+## What it detects
 
-Version 0.1.8 has not received an independent holdout evaluation and makes no benchmark, superiority, production-readiness, or complete-coverage claim. RC1 remains a retired-corpus erratum outside the Engine's sound data-flow boundary. Computed dispatch and properties, reflection, ambiguous calls/imports, unresolved callbacks, and unproven runtime filesystem state remain conservative limits.
+Version 0.1.8 ships seven deterministic rule families:
 
-Start with [GOAL.md](./GOAL.md), then read the full [PLAN.md](./PLAN.md). Phase 6.13 tranche 1 is documented in [docs/phase613-tranche1-retired-holdout-v3-propagation.md](./docs/phase613-tranche1-retired-holdout-v3-propagation.md), the tranche 2 authorization boundary in [docs/phase613-tranche2-authorization-contract-boundary.md](./docs/phase613-tranche2-authorization-contract-boundary.md), and the tranche 3 false-positive analysis in [docs/phase613-tranche3-retired-holdout-v3-false-positive-analysis.md](./docs/phase613-tranche3-retired-holdout-v3-false-positive-analysis.md). The current candidate is summarized in [docs/release-notes-v0.1.8-rc2.md](./docs/release-notes-v0.1.8-rc2.md); the RC1 notes remain historical in [docs/release-notes-v0.1.8-rc1.md](./docs/release-notes-v0.1.8-rc1.md). The stable public projection remains documented in [docs/evidence-contract-v2.md](./docs/evidence-contract-v2.md). Fedora operations are documented in [docs/fedora-packaging.md](./docs/fedora-packaging.md); historical release verification remains frozen in its versioned documents.
+- `SE1001`: untrusted input reaching command execution;
+- `SE1002`: untrusted input reaching dynamically constructed or raw SQL;
+- `SE1003`: untrusted paths reaching filesystem operations;
+- `SE1004`: untrusted URLs reaching outbound requests;
+- `SE1005`: untrusted URLs reaching redirects;
+- `SE1006`: untrusted input reaching dynamic code execution;
+- `SE1007`: exposed handlers reaching sensitive operations without a dominating authorization guard.
+
+The analyzer supports bounded inter-file propagation, value-preserving helpers, static-property identity, shell program-text classification, exact path and URL policy projection, and principal/resource-aware authorization evidence. Ambiguous flows fail conservatively instead of inventing proof.
+
+## Install v0.1.8
+
+The current release provides a Fedora 44 x86_64 RPM. Download the RPM and `SHA256SUMS` from [GitHub Releases](https://github.com/usesecure/secure-engine/releases/tag/v0.1.8), then verify before installation:
+
+```bash
+sha256sum -c SHA256SUMS
+sudo dnf install ./secure-engine-0.1.8-1.fc44.x86_64.rpm
+```
+
+Published RPM SHA-256:
+
+```text
+fa01b2e3bce2c80df01512ea23682905e330c2369dbc4b657d93e57d8685ea21
+```
+
+The release was produced twice from independent clean targets; the RPM and staged/extracted CLI and desktop binaries were byte-identical.
+
+## Quick start
+
+Scan a repository with the installed CLI:
+
+```bash
+secure scan .
+secure scan . --format secure-json-v1 --output report.json
+secure scan . --format sarif --output report.sarif
+secure scan . --include 'src/**' --exclude 'src/generated/**' --max-files 50000
+secure rules list
+secure explain fd_FINDING_ID --report report.json
+```
+
+Launch the native desktop UI:
+
+```bash
+secure-desktop .
+```
+
+Run from source instead:
+
+```bash
+cargo run -p secure-cli -- scan . --format secure-json-v1 --output report.json
+cargo run -p secure-desktop -- .
+```
+
+Additional workflows include baselines, history, suppressions, cache control, schema export, diagnostics, cancellation, and bounded scans. Run `secure --help` or `secure <command> --help` for the complete interface.
+
+## Independent evaluation
+
+Secure Engine 0.1.8 was evaluated once against a newly frozen Secure Bench v4 holdout containing 28 vulnerable cases and 28 paired controls. The campaign completed all attempts without retries or operational failures. A post-open certification corrected a location-matching defect in the benchmark scorer by recomputing metrics from the immutable raw evidence without replaying scanners.
+
+| Scanner / lane | TP | FP | TN | FN | Precision | Recall | F1 | Balanced accuracy |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Secure Engine 0.1.8 / native | 15 | 6 | 22 | 13 | 71.43% | 53.57% | 61.22% | 66.07% |
+| OpenGrep 1.22.0 / capability-normalized | 4 | 4 | 24 | 24 | 50.00% | 14.29% | 22.22% | 50.00% |
+| Semgrep CE 1.170.0 / capability-normalized | 4 | 4 | 24 | 24 | 50.00% | 14.29% | 22.22% | 50.00% |
+
+These lanes use different capabilities and are not a global ranking. The figures describe one bounded holdout and do not establish superiority, production readiness, or complete coverage. Full frozen evidence and the scoring correction are scheduled for the next Secure Bench release.
+
+## Known limits
+
+Secure Engine deliberately remains conservative around:
+
+- computed dispatch and computed properties;
+- reflection and ambiguous calls/imports;
+- unresolved callbacks and runtime-only framework behavior;
+- mutation whose order or identity cannot be proven;
+- application-specific protected operations without an explicit domain contract;
+- unproven runtime filesystem state.
+
+These limits can produce false negatives. Parser recovery and framework conventions can also affect results, so validate findings against the application’s actual deployment and trust boundaries.
+
+## Structured evidence and privacy
+
+The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v16. Older cache envelopes produce safe misses.
+
+AI validation never originates, deletes, or rewrites a finding. It requires project configuration, an exact redacted payload preview, and per-operation consent. Provider credentials are read only from the configured environment variable and are never serialized. See [AI validation](./docs/ai-validation.md) and [Evidence Contract v2](./docs/evidence-contract-v2.md).
 
 ## Project family
 
@@ -23,31 +110,10 @@ Secure
 `- secure-bench    Independent, evidence-aware benchmark harness
 ```
 
-The skill and engine are complementary but independent. Secure Engine must remain useful without an AI model, and Secure Skill must remain installable without the desktop application.
+The components remain independently useful and communicate through versioned contracts. Secure Engine does not require an AI model, and Secure Skill retains a skill-only fallback when the binary is unavailable.
 
-They integrate through a versioned CLI and JSON report contract. Secure Skill may invoke an installed Secure Engine and reason over its structured evidence, but it must keep a functional skill-only fallback when the binary is unavailable.
+## Development
 
-## Commands
+Architecture and release history are documented in [PLAN.md](./PLAN.md), the [ADR index](./docs/adr/), and the versioned Phase 6.11–6.13 documents under [`docs/`](./docs/). Fedora packaging and reproducible-build operations are documented in [docs/fedora-packaging.md](./docs/fedora-packaging.md).
 
-```bash
-cargo run -p secure-cli -- scan . --format secure-json-v1 --output report.json
-cargo run -p secure-cli -- scan . --include 'src/**' --exclude 'src/generated/**' --max-files 50000
-cargo run -p secure-cli -- scan . --cache-dir /tmp/secure-engine-cache --clear-cache
-cargo run -p secure-cli -- scan . --format sarif --output report.sarif
-cargo run -p secure-cli -- rules list
-cargo run -p secure-cli -- explain fd_FINDING_ID --report report.json
-cargo run -p secure-cli -- baseline create report.json --output baseline.json
-cargo run -p secure-cli -- baseline compare baseline.json report.json
-cargo run -p secure-cli -- history list
-cargo run -p secure-cli -- ai providers
-cargo run -p secure-cli -- ai preview fd_FINDING_ID --report report.json --provider recorded --config secure-ai.json
-cargo run -p secure-cli -- ai validate fd_FINDING_ID --report report.json --provider recorded --config secure-ai.json --consent CONSENT_FINGERPRINT
-cargo run -p secure-cli -- ai cache clear
-cargo run -p secure-cli -- doctor --format secure-json-v1
-cargo run -p secure-cli -- schema print secure-json-v1
-cargo run -p secure-desktop -- .
-```
-
-AI validation never originates, deletes, or rewrites a finding. It requires an enabled project configuration, an exact redacted payload preview, and per-operation consent. Provider credentials are read only from the named environment variable and are never serialized. See [docs/ai-validation.md](./docs/ai-validation.md).
-
-Licensed under the MIT License. Contributions use the Developer Certificate of Origin; see [CONTRIBUTING.md](./CONTRIBUTING.md). Report security concerns through [SECURITY.md](./SECURITY.md).
+Licensed under the MIT License. Contributions use the Developer Certificate of Origin; see [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately through [SECURITY.md](./SECURITY.md).
