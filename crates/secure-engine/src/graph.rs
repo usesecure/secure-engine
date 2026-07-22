@@ -166,6 +166,82 @@ struct ImportBinding {
     module: String,
 }
 
+struct RecordIndex<'a> {
+    by_path_output: BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a ProgramRecord>>>,
+    by_function_output: BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a ProgramRecord>>>,
+    function_binding_records: BTreeSet<&'a str>,
+}
+
+impl<'a> RecordIndex<'a> {
+    fn new(records: &[&'a ProgramRecord]) -> Self {
+        let mut by_path_output = BTreeMap::new();
+        let mut by_function_output = BTreeMap::new();
+        let mut function_declarations = BTreeMap::<(&str, &str), Vec<&ProgramRecord>>::new();
+        for record in records {
+            if matches!(record.kind.as_str(), "function" | "handler")
+                && let Some(name) = record.name.as_deref()
+            {
+                function_declarations
+                    .entry((&record.location.path, name))
+                    .or_default()
+                    .push(record);
+            }
+            if let Some(output) = record.output.as_deref() {
+                by_path_output
+                    .entry(record.location.path.as_str())
+                    .or_insert_with(BTreeMap::new)
+                    .entry(output)
+                    .or_insert_with(Vec::new)
+                    .push(*record);
+                if let Some(function) = record.function.as_deref() {
+                    by_function_output
+                        .entry(function)
+                        .or_insert_with(BTreeMap::new)
+                        .entry(output)
+                        .or_insert_with(Vec::new)
+                        .push(*record);
+                }
+            }
+        }
+        let function_binding_records = records
+            .iter()
+            .copied()
+            .filter(|record| record.kind == "assignment")
+            .filter_map(|record| {
+                let output = record.output.as_deref()?;
+                function_declarations
+                    .get(&(record.location.path.as_str(), output))
+                    .is_some_and(|declarations| {
+                        declarations.iter().any(|candidate| {
+                            candidate.location.span.start_byte >= record.location.span.start_byte
+                                && candidate.location.span.end_byte <= record.location.span.end_byte
+                        })
+                    })
+                    .then_some(record.record_id.as_str())
+            })
+            .collect();
+        Self {
+            by_path_output,
+            by_function_output,
+            function_binding_records,
+        }
+    }
+
+    fn output_in_path(&self, path: &str, output: &str) -> &[&'a ProgramRecord] {
+        self.by_path_output
+            .get(path)
+            .and_then(|outputs| outputs.get(output))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    fn output_in_function(&self, function: &str, output: &str) -> &[&'a ProgramRecord] {
+        self.by_function_output
+            .get(function)
+            .and_then(|outputs| outputs.get(output))
+            .map_or(&[], Vec::as_slice)
+    }
+}
+
 type AliasMap = BTreeMap<(String, String), BTreeSet<String>>;
 
 struct GraphBuilder {
@@ -504,6 +580,7 @@ pub(crate) fn analyze(
                 &right.record_id,
             ))
     });
+    let record_index = RecordIndex::new(&all_records);
     let mut records_by_function = BTreeMap::<String, Vec<&ProgramRecord>>::new();
     for record in &all_records {
         if let Some(function) = &record.function {
@@ -613,6 +690,7 @@ pub(crate) fn analyze(
         .collect::<BTreeMap<_, _>>();
     let authorization_summaries = authorization_summaries(
         &all_records,
+        &record_index,
         &raw_functions,
         &import_bindings,
         &parameter_records,
@@ -661,6 +739,7 @@ pub(crate) fn analyze(
         .collect::<Vec<_>>();
     propagated_guards.extend(summary_authorization_guards(
         &all_records,
+        &record_index,
         &authorization_summaries,
         &raw_functions,
         &import_bindings,
@@ -720,6 +799,7 @@ pub(crate) fn analyze(
                 &dominant,
                 record,
                 &all_records,
+                &record_index,
                 &authorization_summary_set,
                 &raw_functions,
                 &import_bindings,
@@ -901,6 +981,7 @@ pub(crate) fn analyze(
                         record_node,
                         &snapshot,
                         &mut taints,
+                        &record_index,
                         &raw_functions,
                         &import_bindings,
                         &guards,
@@ -1065,12 +1146,15 @@ pub(crate) fn analyze(
                     let authorization_trace = tainted_trace
                         .as_ref()
                         .or_else(|| handler_traces.get(&function));
+                    let function_records = records_by_function
+                        .get(&function)
+                        .map_or(&[][..], Vec::as_slice);
                     let resource_identity_scope = record.name.as_deref()
                         == Some("sensitive-mutation")
                         && function_has_resource_identity_before(
                             &function,
                             record.location.span.start_byte,
-                            &all_records,
+                            function_records,
                         );
                     let has_effective_authorization = authorization_trace.is_some_and(|trace| {
                         trace.sanitizers.iter().any(|policy| {
@@ -2866,6 +2950,7 @@ fn propagate_local_call(
     record_node: &str,
     taints: &BTreeMap<(String, String), Trace>,
     updates: &mut BTreeMap<(String, String), Trace>,
+    record_index: &RecordIndex<'_>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
     guards: &BTreeMap<String, Vec<&ProgramRecord>>,
@@ -2875,7 +2960,7 @@ fn propagate_local_call(
     builder: &mut GraphBuilder,
     max_interprocedural_depth: usize,
 ) {
-    if !local_call_target_is_stable(record, records) {
+    if !local_call_target_is_stable(record, record_index) {
         return;
     }
     let Some(callee_function) = record
@@ -2978,36 +3063,24 @@ fn propagate_local_call(
     }
 }
 
-fn local_call_target_is_stable(call: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
+fn local_call_target_is_stable(call: &ProgramRecord, record_index: &RecordIndex<'_>) -> bool {
     let Some(callee) = call.callee.as_deref() else {
         return false;
     };
     let leaf = terminal_identifier(call.raw_callee.as_deref().unwrap_or(callee));
-    !records.iter().any(|candidate| {
-        if candidate.location.path != call.location.path
-            || candidate.location.span.start_byte >= call.location.span.start_byte
-            || candidate.kind == "import-binding"
-            || !(candidate.function == call.function || candidate.function.is_none())
-            || candidate.output.as_deref() != Some(leaf)
-        {
-            return false;
-        }
-        !record_declares_function_binding(candidate, leaf, records)
-    })
-}
-
-fn record_declares_function_binding(
-    binding: &ProgramRecord,
-    name: &str,
-    records: &[&ProgramRecord],
-) -> bool {
-    binding.kind == "assignment"
-        && records.iter().any(|candidate| {
-            matches!(candidate.kind.as_str(), "function" | "handler")
-                && candidate.location.path == binding.location.path
-                && candidate.name.as_deref() == Some(name)
-                && candidate.location.span.start_byte >= binding.location.span.start_byte
-                && candidate.location.span.end_byte <= binding.location.span.end_byte
+    !record_index
+        .output_in_path(&call.location.path, leaf)
+        .iter()
+        .any(|candidate| {
+            if candidate.location.span.start_byte >= call.location.span.start_byte
+                || candidate.kind == "import-binding"
+                || !(candidate.function == call.function || candidate.function.is_none())
+            {
+                return false;
+            }
+            !record_index
+                .function_binding_records
+                .contains(candidate.record_id.as_str())
         })
 }
 
@@ -3683,6 +3756,7 @@ fn required_sanitizer_policy(rule_id: &str) -> Option<&'static str> {
 
 fn authorization_summaries(
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
     parameters: &BTreeMap<String, Vec<&ProgramRecord>>,
@@ -3709,6 +3783,7 @@ fn authorization_summaries(
                     value,
                     candidate.location.span.end_byte,
                     records,
+                    record_index,
                     &summaries,
                     functions,
                     import_bindings,
@@ -3729,6 +3804,7 @@ fn authorization_summaries(
                         value,
                         candidate.location.span.end_byte,
                         records,
+                        record_index,
                         &summaries,
                         functions,
                         import_bindings,
@@ -3813,6 +3889,7 @@ fn trusted_principal_bindings(
     value: &str,
     before: u64,
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &BTreeSet<AuthorizationSummary>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -3827,12 +3904,12 @@ fn trusted_principal_bindings(
     } else {
         value.split(['.', '[']).next().unwrap_or(value)
     };
-    let origin = records
+    let origin = record_index
+        .output_in_function(function, lookup)
         .iter()
+        .copied()
         .filter(|record| {
-            record.function.as_deref() == Some(function)
-                && (record.location.span.end_byte <= before || lookup.starts_with("@call:"))
-                && record.output.as_deref() == Some(lookup)
+            (record.location.span.end_byte <= before || lookup.starts_with("@call:"))
                 && !matches!(
                     record.kind.as_str(),
                     "argument" | "source" | "authorization-candidate" | "control-gate"
@@ -3868,6 +3945,7 @@ fn trusted_principal_bindings(
             input,
             origin.location.span.start_byte,
             records,
+            record_index,
             summaries,
             functions,
             import_bindings,
@@ -3981,6 +4059,7 @@ fn matching_call_record<'a>(
 
 fn summary_authorization_guards(
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &[AuthorizationSummary],
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -3989,6 +4068,7 @@ fn summary_authorization_guards(
     let summary_set = summaries.iter().cloned().collect::<BTreeSet<_>>();
     let mut guards = direct_structural_authorization_guards(
         records,
+        record_index,
         &summary_set,
         functions,
         import_bindings,
@@ -4012,6 +4092,7 @@ fn summary_authorization_guards(
 
 fn direct_structural_authorization_guards(
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &BTreeSet<AuthorizationSummary>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -4030,6 +4111,7 @@ fn direct_structural_authorization_guards(
             if identity_candidate_is_trusted(
                 candidate,
                 records,
+                record_index,
                 summaries,
                 functions,
                 import_bindings,
@@ -4054,6 +4136,7 @@ fn direct_structural_authorization_guards(
                             value,
                             candidate.location.span.end_byte,
                             records,
+                            record_index,
                             summaries,
                             functions,
                             import_bindings,
@@ -4264,6 +4347,7 @@ fn value_originates_from_call(
 fn identity_candidate_is_trusted(
     candidate: &ProgramRecord,
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &BTreeSet<AuthorizationSummary>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -4280,6 +4364,7 @@ fn identity_candidate_is_trusted(
             value,
             candidate.location.span.end_byte,
             records,
+            record_index,
             summaries,
             functions,
             import_bindings,
@@ -4294,6 +4379,7 @@ fn identity_candidate_is_trusted(
             value,
             candidate.location.span.end_byte,
             records,
+            record_index,
             summaries,
             functions,
             import_bindings,
@@ -5179,6 +5265,7 @@ fn derived_resource_authorization_applies_to_sink(
     guards: &[&ProgramRecord],
     sink: &ProgramRecord,
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &BTreeSet<AuthorizationSummary>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -5255,6 +5342,7 @@ fn derived_resource_authorization_applies_to_sink(
                 resource,
                 guards,
                 records,
+                record_index,
                 summaries,
                 functions,
                 import_bindings,
@@ -5265,6 +5353,7 @@ fn derived_resource_authorization_applies_to_sink(
                 resource,
                 guards,
                 records,
+                record_index,
                 summaries,
                 functions,
                 import_bindings,
@@ -5307,6 +5396,7 @@ fn matching_resource_guard<'a>(
     resource: &str,
     guards: &'a [&'a ProgramRecord],
     records: &[&ProgramRecord],
+    record_index: &RecordIndex<'_>,
     summaries: &BTreeSet<AuthorizationSummary>,
     functions: &BTreeMap<String, Vec<String>>,
     import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
@@ -5356,6 +5446,7 @@ fn matching_resource_guard<'a>(
                 input,
                 guard.location.span.end_byte,
                 records,
+                record_index,
                 summaries,
                 functions,
                 import_bindings,
@@ -9916,5 +10007,288 @@ fn check_cancelled(cancellation: &CancellationToken) -> Result<(), ScanError> {
         Err(ScanError::Cancelled)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+
+    fn provenance() -> ParserProvenance {
+        ParserProvenance {
+            parser: "test-parser".into(),
+            parser_version: "1".into(),
+            grammar: "test-grammar".into(),
+            extractor_version: GRAPH_EXTRACTOR_VERSION.into(),
+        }
+    }
+
+    fn location(path: &str, start: u64, end: u64) -> SourceLocation {
+        SourceLocation {
+            path: path.into(),
+            span: SourceSpan {
+                start_byte: start,
+                end_byte: end,
+                start_line: 1,
+                start_column: u32::try_from(start).unwrap_or(u32::MAX),
+                end_line: 1,
+                end_column: u32::try_from(end).unwrap_or(u32::MAX),
+            },
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn test_record(
+        kind: &str,
+        name: Option<&str>,
+        function: Option<&str>,
+        output: Option<&str>,
+        callee: Option<&str>,
+        path: &str,
+        start: u64,
+        end: u64,
+    ) -> ProgramRecord {
+        record(
+            kind,
+            name,
+            function,
+            Vec::new(),
+            output,
+            callee,
+            location(path, start, end),
+            &provenance(),
+        )
+    }
+
+    fn reference_function_binding(
+        binding: &ProgramRecord,
+        name: &str,
+        records: &[&ProgramRecord],
+    ) -> bool {
+        binding.kind == "assignment"
+            && records.iter().any(|candidate| {
+                matches!(candidate.kind.as_str(), "function" | "handler")
+                    && candidate.location.path == binding.location.path
+                    && candidate.name.as_deref() == Some(name)
+                    && candidate.location.span.start_byte >= binding.location.span.start_byte
+                    && candidate.location.span.end_byte <= binding.location.span.end_byte
+            })
+    }
+
+    fn reference_call_target_is_stable(call: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
+        let Some(callee) = call.callee.as_deref() else {
+            return false;
+        };
+        let leaf = terminal_identifier(call.raw_callee.as_deref().unwrap_or(callee));
+        !records.iter().any(|candidate| {
+            candidate.location.path == call.location.path
+                && candidate.location.span.start_byte < call.location.span.start_byte
+                && candidate.kind != "import-binding"
+                && (candidate.function == call.function || candidate.function.is_none())
+                && candidate.output.as_deref() == Some(leaf)
+                && !reference_function_binding(candidate, leaf, records)
+        })
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn indexed_fixture() -> Vec<ProgramRecord> {
+        vec![
+            test_record(
+                "assignment",
+                None,
+                None,
+                Some("declared"),
+                None,
+                "src/a.ts",
+                5,
+                45,
+            ),
+            test_record(
+                "function",
+                Some("declared"),
+                Some("src/a.ts::declared"),
+                None,
+                None,
+                "src/a.ts",
+                10,
+                40,
+            ),
+            test_record(
+                "call",
+                None,
+                Some("src/a.ts::caller"),
+                None,
+                Some("declared"),
+                "src/a.ts",
+                50,
+                51,
+            ),
+            test_record(
+                "assignment",
+                None,
+                Some("src/a.ts::caller"),
+                Some("mutable"),
+                None,
+                "src/a.ts",
+                60,
+                61,
+            ),
+            test_record(
+                "call",
+                None,
+                Some("src/a.ts::caller"),
+                None,
+                Some("mutable"),
+                "src/a.ts",
+                70,
+                71,
+            ),
+            test_record(
+                "assignment",
+                None,
+                Some("src/a.ts::caller"),
+                Some("mutable"),
+                None,
+                "src/a.ts",
+                80,
+                81,
+            ),
+            test_record(
+                "assignment",
+                None,
+                None,
+                Some("unrelated"),
+                None,
+                "src/b.ts",
+                1,
+                2,
+            ),
+            test_record(
+                "call",
+                None,
+                Some("src/a.ts::caller"),
+                None,
+                Some("unrelated"),
+                "src/a.ts",
+                90,
+                91,
+            ),
+            test_record(
+                "import-binding",
+                Some("imported"),
+                None,
+                Some("imported"),
+                Some("dependency"),
+                "src/a.ts",
+                1,
+                2,
+            ),
+            test_record(
+                "call",
+                None,
+                Some("src/a.ts::caller"),
+                None,
+                Some("imported"),
+                "src/a.ts",
+                100,
+                101,
+            ),
+        ]
+    }
+
+    #[test]
+    fn indexed_binding_checks_match_the_reference_semantics() {
+        let mut records = indexed_fixture();
+        records.sort_by(|left, right| {
+            (
+                &left.location.path,
+                left.location.span.start_byte,
+                &left.record_id,
+            )
+                .cmp(&(
+                    &right.location.path,
+                    right.location.span.start_byte,
+                    &right.record_id,
+                ))
+        });
+        let records = records.iter().collect::<Vec<_>>();
+        let index = RecordIndex::new(&records);
+        let calls = records
+            .iter()
+            .copied()
+            .filter(|record| record.kind == "call")
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 4);
+        for call in calls {
+            assert_eq!(
+                local_call_target_is_stable(call, &index),
+                reference_call_target_is_stable(call, &records),
+                "indexed binding decision changed for {}",
+                call.callee.as_deref().unwrap_or_default()
+            );
+        }
+    }
+
+    #[test]
+    fn record_indexes_preserve_deterministic_reference_order() {
+        let mut records = indexed_fixture();
+        records.sort_by(|left, right| {
+            (
+                &left.location.path,
+                left.location.span.start_byte,
+                &left.record_id,
+            )
+                .cmp(&(
+                    &right.location.path,
+                    right.location.span.start_byte,
+                    &right.record_id,
+                ))
+        });
+        let records = records.iter().collect::<Vec<_>>();
+        let first = RecordIndex::new(&records);
+        let second = RecordIndex::new(&records);
+        for record in &records {
+            let Some(output) = record.output.as_deref() else {
+                continue;
+            };
+            let expected_path = records
+                .iter()
+                .copied()
+                .filter(|candidate| {
+                    candidate.location.path == record.location.path
+                        && candidate.output.as_deref() == Some(output)
+                })
+                .map(|candidate| candidate.record_id.as_str())
+                .collect::<Vec<_>>();
+            let first_path = first
+                .output_in_path(&record.location.path, output)
+                .iter()
+                .map(|candidate| candidate.record_id.as_str())
+                .collect::<Vec<_>>();
+            let second_path = second
+                .output_in_path(&record.location.path, output)
+                .iter()
+                .map(|candidate| candidate.record_id.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(first_path, expected_path);
+            assert_eq!(second_path, expected_path);
+            if let Some(function) = record.function.as_deref() {
+                let expected_function = records
+                    .iter()
+                    .copied()
+                    .filter(|candidate| {
+                        candidate.function.as_deref() == Some(function)
+                            && candidate.output.as_deref() == Some(output)
+                    })
+                    .map(|candidate| candidate.record_id.as_str())
+                    .collect::<Vec<_>>();
+                let indexed_function = first
+                    .output_in_function(function, output)
+                    .iter()
+                    .map(|candidate| candidate.record_id.as_str())
+                    .collect::<Vec<_>>();
+                assert_eq!(indexed_function, expected_function);
+            }
+        }
     }
 }
