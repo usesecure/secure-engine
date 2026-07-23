@@ -3868,13 +3868,12 @@ fn sanitizer_policies(record: &ProgramRecord) -> Vec<&'static str> {
 
 fn required_sanitizer_policy(rule_id: &str) -> Option<&'static str> {
     match rule_id {
-        "SE1001" => Some("command-control-data-separation"),
+        "SE1001" | "SE1008" => Some("command-control-data-separation"),
         "SE1002" => Some("sql-control-data-separation"),
         "SE1003" => Some("filesystem-path-confinement"),
         "SE1004" => Some("outbound-destination-policy"),
         "SE1005" => Some("redirect-destination-policy"),
         "SE1006" => Some("dynamic-code-control-data-separation"),
-        "SE1008" => Some("command-control-data-separation"),
         _ => None,
     }
 }
