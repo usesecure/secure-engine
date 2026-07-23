@@ -32,3 +32,19 @@ Symlink-target policy, PAX parser synchronization, descriptor-relative extractio
 check-then-use TOCTOU remain deferred: the present facts do not model filesystem object identity,
 open descriptors, archive parser state, or concurrent mutation strongly enough for a
 high-confidence finding.
+
+## Tranche 3: CLI, SQL structure, and prototypes
+
+`SE1008` is a new, deliberately separate CLI-option rule. It applies to fixed executable APIs with
+shell processing disabled when a dynamic array element can reach option parsing before a literal
+`--`. Literal arguments and dynamic values after `--` are controls. Whether a particular
+executable supports the delimiter remains an explicit prerequisite.
+
+`SE1002` continues to distinguish constant parameterized query text from attacker-controlled SQL
+structure. Interpolation into statement options such as COPY configuration remains raw structure;
+bound values remain controls.
+
+`SE1009` is a new shared-prototype rule for tainted values reaching `Object.assign`,
+`Object.defineProperty`, `Reflect.defineProperty`, or direct assignments whose target is
+structurally an intrinsic prototype or `__proto__`. Dynamic deep-merge implementations, library
+semantics, getters, proxies, and computed prototype aliases remain deferred.

@@ -33,6 +33,8 @@ Phase 6.15 tranche 1 advances the private cache envelope to `secure-parse-cache-
 effective async-guard and post-authorization identity semantics change. V16 entries safely miss.
 Tranche 2 advances it to `secure-parse-cache-v18` for structurally recognized archive-entry path
 sources and extraction sinks. V17 entries safely miss.
+Tranche 3 advances it to `secure-parse-cache-v19` for CLI option-boundary and shared-prototype
+mutation sinks. V18 entries safely miss.
 
 - Rust extraction does not expand procedural macros, generated code, trait-object dispatch, or runtime framework layers. Axum/Actix route registration, request extractors, local guards, SQLx/raw query shapes, `Command`, filesystem, Reqwest, redirect, and deserialization calls are recognized conservatively.
 - Python extraction does not execute decorators or resolve monkey patching, metaclasses, dynamic attributes, or runtime imports. FastAPI/Flask/Django routes, request objects and dependencies/decorators, subprocess and dynamic-code calls, raw SQL, filesystem, Requests/HTTPX, redirects, templates, and pickle shapes are recognized conservatively.

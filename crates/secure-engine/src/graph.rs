@@ -1293,7 +1293,7 @@ impl RuleDefinition {
     }
 }
 
-const RULES: [RuleDefinition; 7] = [
+const RULES: [RuleDefinition; 9] = [
     RuleDefinition {
         id: "SE1001",
         title: "Untrusted input reaches command execution",
@@ -1388,6 +1388,34 @@ const RULES: [RuleDefinition; 7] = [
         ],
         impact: "Unauthenticated access to a sensitive operation",
         remediation: "Require an explicit authentication or authorization guard before the sink",
+    },
+    RuleDefinition {
+        id: "SE1008",
+        title: "Untrusted input reaches a CLI option parser",
+        category: "cli-option-injection",
+        severity: "high",
+        confidence: "high",
+        invariant: "Untrusted positional CLI values must be separated from options",
+        prerequisites: &[
+            "The invoked executable interprets option-like positional values",
+            "An attacker can control the demonstrated argument",
+        ],
+        impact: "Attacker-selected executable behavior through injected command-line options",
+        remediation: "Insert a supported end-of-options delimiter or use an API without option parsing",
+    },
+    RuleDefinition {
+        id: "SE1009",
+        title: "Untrusted input reaches a shared prototype mutation",
+        category: "prototype-pollution",
+        severity: "high",
+        confidence: "high",
+        invariant: "Attacker-controlled keys or values must not mutate shared prototypes",
+        prerequisites: &[
+            "The mutated prototype is reachable by application objects",
+            "An attacker can control the demonstrated key or value",
+        ],
+        impact: "Inherited application behavior or policy values can be modified",
+        remediation: "Never merge into shared prototypes; use own-property allowlists and null-prototype maps",
     },
 ];
 
@@ -1714,6 +1742,22 @@ fn extract_record_for_node(
                 .and_then(|item| expression_name(item, content));
             let value = node.child_by_field_name("right");
             if let (Some(output), Some(value)) = (output, value) {
+                if shared_prototype_target(node, content) {
+                    let mut inputs =
+                        value_names(node.child_by_field_name("left").unwrap_or(node), content);
+                    inputs.extend(value_names(value, content));
+                    records.push(record(
+                        "sink",
+                        Some("prototype-mutation"),
+                        function_name,
+                        inputs,
+                        None,
+                        None,
+                        location_for_node(path, content, node),
+                        provenance,
+                    ));
+                    return;
+                }
                 let callee = call_callee(value, content);
                 let inputs = if node.kind() == "augmented_assignment_expression"
                     || callee.as_deref().is_some_and(transparent_value_coercion)
@@ -1794,11 +1838,36 @@ fn extract_record_for_node(
             } else {
                 sink_kind(&callee)
             };
+            if shared_prototype_call(node, content, &callee) {
+                sink = Some("prototype-mutation");
+            }
             if sink == Some("process-execution")
                 && shell_program.is_none()
                 && fixed_executable_without_shell(node, content, &callee)
             {
-                sink = Some("process-argument-execution");
+                sink = if cli_option_boundary_is_ambiguous(node, content) {
+                    Some("cli-option-injection")
+                } else {
+                    Some("process-argument-execution")
+                };
+            }
+            if sink == Some("cli-option-injection")
+                && let Some(array) = node
+                    .child_by_field_name("arguments")
+                    .and_then(|arguments| arguments.named_child(1))
+            {
+                inputs.extend(value_names(array, content));
+            }
+            if sink == Some("prototype-mutation")
+                && let Some(arguments) = node.child_by_field_name("arguments")
+            {
+                for index in 1..arguments.named_child_count() {
+                    if let Some(argument) =
+                        arguments.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+                    {
+                        inputs.extend(value_names(argument, content));
+                    }
+                }
             }
             if matches!(sink, Some("redirect" | "network-request"))
                 && destination_has_safe_fallback(node, content)
@@ -5815,6 +5884,8 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
         "network-request" => Some("SE1004"),
         "redirect" => Some("SE1005"),
         "dynamic-code-execution" => Some("SE1006"),
+        "cli-option-injection" => Some("SE1008"),
+        "prototype-mutation" => Some("SE1009"),
         _ => None,
     }
 }
@@ -6148,6 +6219,67 @@ fn fixed_executable_without_shell(call: Node<'_>, content: &[u8], callee: &str) 
         return true;
     };
     object_property_is_absent_or_false(options, content, "shell")
+}
+
+fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8]) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let Some(array) = arguments.named_child(1) else {
+        return false;
+    };
+    if !matches!(array.kind(), "array" | "array_expression") {
+        return false;
+    }
+    let Some(elements) = unambiguous_array_elements(array) else {
+        return true;
+    };
+    let mut options_terminated = false;
+    for element in elements {
+        if static_string_expression(call, element, content, &mut BTreeSet::new(), 8)
+            .as_deref()
+            == Some("--")
+        {
+            options_terminated = true;
+            continue;
+        }
+        if !options_terminated && !is_fixed_string_literal(element, content) {
+            return true;
+        }
+    }
+    false
+}
+
+fn shared_prototype_call(call: Node<'_>, content: &[u8], callee: &str) -> bool {
+    if !matches!(
+        callee.to_ascii_lowercase().as_str(),
+        "object.assign" | "object.defineproperty" | "reflect.defineproperty"
+    ) {
+        return false;
+    }
+    call.child_by_field_name("arguments")
+        .and_then(|arguments| arguments.named_child(0))
+        .is_some_and(|target| prototype_expression(target, content))
+}
+
+fn shared_prototype_target(assignment: Node<'_>, content: &[u8]) -> bool {
+    assignment
+        .child_by_field_name("left")
+        .is_some_and(|target| prototype_expression(target, content))
+}
+
+fn prototype_expression(node: Node<'_>, content: &[u8]) -> bool {
+    let text = node
+        .utf8_text(content)
+        .unwrap_or_default()
+        .replace(char::is_whitespace, "")
+        .to_ascii_lowercase();
+    text.starts_with("object.prototype")
+        || text.starts_with("function.prototype")
+        || text.starts_with("array.prototype")
+        || text.contains(".__proto__")
+        || text.contains("[\"__proto__\"]")
+        || text.contains("['__proto__']")
 }
 
 fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -> bool {
@@ -9502,13 +9634,17 @@ fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
         .unwrap_or_default();
     let all_arguments_are_sensitive = (record.name.as_deref() == Some("dynamic-code-execution")
         && leaf == "function")
-        || (record.name.as_deref() == Some("filesystem-operation") && leaf == "rename");
+        || (record.name.as_deref() == Some("filesystem-operation") && leaf == "rename")
+        || record.name.as_deref() == Some("prototype-mutation");
     if all_arguments_are_sensitive {
         return slots.into_iter().flatten().collect();
     }
     let mut slots = slots.drain(..);
     let mut sensitive = slots.next().unwrap_or_default();
-    let shell_array_api = record.name.as_deref() == Some("process-execution")
+    let shell_array_api = matches!(
+        record.name.as_deref(),
+        Some("process-execution" | "cli-option-injection")
+    )
         && matches!(
             leaf.as_str(),
             "spawn" | "spawnsync" | "execfile" | "execfilesync"

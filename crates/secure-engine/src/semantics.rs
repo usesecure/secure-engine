@@ -244,6 +244,8 @@ fn sink_identity(value: &str) -> &'static str {
         "redirect" => "sink.redirect",
         "dynamic-code-execution" => "sink.dynamic-code-execution",
         "sensitive-mutation" => "sink.sensitive-mutation",
+        "cli-option-injection" => "sink.cli-option-parser",
+        "prototype-mutation" => "sink.prototype-mutation",
         _ => "sink.sensitive-operation",
     }
 }
