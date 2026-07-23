@@ -1633,6 +1633,19 @@ fn extract_record_for_node(
                     location_for_node(path, content, node),
                     provenance,
                 ));
+            } else if let Some(name) = expression_name(node, content)
+                && archive_entry_path_is_untrusted(node, content, &name)
+            {
+                records.push(record(
+                    "source",
+                    Some("archive-entry-path"),
+                    function_name,
+                    Vec::new(),
+                    Some(&name),
+                    None,
+                    location_for_node(path, content, node),
+                    provenance,
+                ));
             }
         }
         "variable_declarator" => {
@@ -6044,6 +6057,13 @@ fn sink_kind(callee: &str) -> Option<&'static str> {
     {
         return Some("filesystem-operation");
     }
+    if matches!(leaf, "extract" | "extractall" | "unpack" | "unpackin")
+        && ["archive", "tar", "zip"]
+            .iter()
+            .any(|marker| lower.contains(marker))
+    {
+        return Some("filesystem-operation");
+    }
     if leaf == "fetch"
         || lower.starts_with("axios.")
         || matches!(
@@ -6128,6 +6148,39 @@ fn fixed_executable_without_shell(call: Node<'_>, content: &[u8], callee: &str) 
         return true;
     };
     object_property_is_absent_or_false(options, content, "shell")
+}
+
+fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -> bool {
+    let Some((binding, field)) = name.rsplit_once('.') else {
+        return false;
+    };
+    if binding.contains('.') || !matches!(field, "path" | "name" | "linkpath") {
+        return false;
+    }
+    let mut ancestor = node.parent();
+    while let Some(candidate) = ancestor {
+        if candidate.kind() == "for_in_statement" || candidate.kind() == "for_of_statement" {
+            let loop_text = candidate
+                .utf8_text(content)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let binding = binding.to_ascii_lowercase();
+            let binding_shape = ["const", "let", "var"].iter().any(|keyword| {
+                loop_text.contains(&format!("{keyword} {binding} of"))
+                    || loop_text.contains(&format!("{keyword} {binding} in"))
+            });
+            return binding_shape
+                && ["archive", "tar", "zip"].iter().any(|item| {
+                    loop_text.contains(item)
+                        && (loop_text.contains("entr") || loop_text.contains("member"))
+                });
+        }
+        if is_function(candidate) {
+            break;
+        }
+        ancestor = candidate.parent();
+    }
+    false
 }
 
 fn shell_program_text<'tree>(

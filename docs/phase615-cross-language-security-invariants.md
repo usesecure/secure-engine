@@ -17,3 +17,18 @@ transformation. Dynamic callees, opaque imported wrappers, mutation through refl
 aliases, and analysis beyond configured depth do not earn authorization credit. General
 exception-to-success recovery and semantic state-machine validity remain deferred because the
 current normalized facts do not prove success semantics or legal transition graphs.
+
+## Tranche 2: path and archive confinement
+
+`SE1003` now treats archive member `path`, `name`, and `linkpath` values as untrusted only when the
+binding is structurally introduced by iteration over an archive/tar/zip entry or member
+collection. Explicit `extract`, `extractAll`, `unpack`, and `unpackIn` calls on archive-like
+receivers are filesystem sinks. This detects archive traversal without repository, filename, CVE,
+or fixture exceptions and avoids treating unrelated `entry.path` properties as attacker input.
+
+Lexical joins and canonicalization names alone do not prove confinement. Safe controls must avoid
+attacker-controlled destination paths or establish an already supported exact confinement proof.
+Symlink-target policy, PAX parser synchronization, descriptor-relative extraction, and
+check-then-use TOCTOU remain deferred: the present facts do not model filesystem object identity,
+open descriptors, archive parser state, or concurrent mutation strongly enough for a
+high-confidence finding.
