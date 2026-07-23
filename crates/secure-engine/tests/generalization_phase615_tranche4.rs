@@ -10,7 +10,11 @@ fn scan(source: &str) -> Result<ScanReport, Box<dyn std::error::Error>> {
     fs::write(repository.path().join("provider.ts"), source)?;
     let mut request = ScanRequest::new(repository.path());
     request.configuration.parse_cache_enabled = false;
-    Ok(scan_repository(&request, &CancellationToken::new(), |_| {})?)
+    Ok(scan_repository(
+        &request,
+        &CancellationToken::new(),
+        |_| {},
+    )?)
 }
 
 fn count(report: &ScanReport) -> usize {
@@ -22,8 +26,8 @@ fn count(report: &ScanReport) -> usize {
 }
 
 #[test]
-fn secret_environment_value_to_log_and_model_is_reported()
--> Result<(), Box<dyn std::error::Error>> {
+fn secret_environment_value_to_log_and_model_is_reported() -> Result<(), Box<dyn std::error::Error>>
+{
     let report = scan(
         "async function run() { const token = process.env.MODEL_API_TOKEN; \
          console.error('failed', token); return llm.generate({ token }); }",
@@ -45,9 +49,8 @@ fn redacted_metadata_and_prompt_are_controls() -> Result<(), Box<dyn std::error:
 #[test]
 fn non_secret_environment_configuration_is_not_a_secret_source()
 -> Result<(), Box<dyn std::error::Error>> {
-    let report = scan(
-        "function run() { const region = process.env.PUBLIC_REGION; console.info(region); }",
-    )?;
+    let report =
+        scan("function run() { const region = process.env.PUBLIC_REGION; console.info(region); }")?;
     assert_eq!(count(&report), 0);
     Ok(())
 }

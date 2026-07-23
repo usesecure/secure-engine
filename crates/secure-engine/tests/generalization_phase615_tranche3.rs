@@ -10,7 +10,11 @@ fn scan(source: &str) -> Result<ScanReport, Box<dyn std::error::Error>> {
     fs::write(repository.path().join("service.ts"), source)?;
     let mut request = ScanRequest::new(repository.path());
     request.configuration.parse_cache_enabled = false;
-    Ok(scan_repository(&request, &CancellationToken::new(), |_| {})?)
+    Ok(scan_repository(
+        &request,
+        &CancellationToken::new(),
+        |_| {},
+    )?)
 }
 
 fn has(report: &ScanReport, rule: &str) -> bool {
@@ -57,8 +61,8 @@ fn structured_sql_and_bound_sql_are_distinguished() -> Result<(), Box<dyn std::e
 }
 
 #[test]
-fn shared_prototype_merge_is_reported_but_null_map_is_not()
--> Result<(), Box<dyn std::error::Error>> {
+fn shared_prototype_merge_is_reported_but_null_map_is_not() -> Result<(), Box<dyn std::error::Error>>
+{
     let vulnerable = scan(
         "'use server'; export async function merge(form) { const body = form.get('settings'); \
          Object.assign(Object.prototype, body); }",

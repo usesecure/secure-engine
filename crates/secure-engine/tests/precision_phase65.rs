@@ -181,9 +181,7 @@ fn frozen_taxonomy_maps_every_rule_and_finding_exactly() -> Result<(), Box<dyn s
         assert_eq!(taxonomy.as_object().map(serde_json::Map::len), Some(3));
     }
     assert!(rule_catalog.iter().skip(7).all(|rule| {
-        rule.taxonomy.is_none()
-            && rule.primary_cwe.is_none()
-            && rule.taxonomy_provenance.is_none()
+        rule.taxonomy.is_none() && rule.primary_cwe.is_none() && rule.taxonomy_provenance.is_none()
     }));
 
     let report = precision_report()?;
@@ -216,22 +214,27 @@ fn sarif_baseline_and_legacy_json_preserve_taxonomy_compatibly()
         .as_array()
         .ok_or("SARIF results missing")?;
     assert_eq!(results.len(), report.findings.len());
-    assert!(results.iter().zip(&report.findings).all(|(result, finding)| {
-        if finding.taxonomy.is_some() {
-            result["properties"]["taxonomy"]
-                .as_object()
-                .is_some_and(|taxonomy| taxonomy.len() == 3)
-                && result["properties"]["primaryCwe"]["id"]
-                    .as_str()
-                    .is_some_and(|id| id.starts_with("CWE-"))
-                && result["properties"]["taxonomyProvenance"]["source_commit"]
-                    == TAXONOMY_SOURCE_COMMIT
-        } else {
-            result["properties"]["taxonomy"].is_null()
-                && result["properties"]["primaryCwe"].is_null()
-                && result["properties"]["taxonomyProvenance"].is_null()
-        }
-    }));
+    assert!(
+        results
+            .iter()
+            .zip(&report.findings)
+            .all(|(result, finding)| {
+                if finding.taxonomy.is_some() {
+                    result["properties"]["taxonomy"]
+                        .as_object()
+                        .is_some_and(|taxonomy| taxonomy.len() == 3)
+                        && result["properties"]["primaryCwe"]["id"]
+                            .as_str()
+                            .is_some_and(|id| id.starts_with("CWE-"))
+                        && result["properties"]["taxonomyProvenance"]["source_commit"]
+                            == TAXONOMY_SOURCE_COMMIT
+                } else {
+                    result["properties"]["taxonomy"].is_null()
+                        && result["properties"]["primaryCwe"].is_null()
+                        && result["properties"]["taxonomyProvenance"].is_null()
+                }
+            })
+    );
     assert_eq!(
         sarif["runs"][0]["properties"]["secureTaxonomyCatalog"][0]["taxonomy_version"],
         TAXONOMY_VERSION

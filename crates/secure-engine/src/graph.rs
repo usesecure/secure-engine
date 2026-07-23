@@ -6342,7 +6342,9 @@ fn sensitive_disclosure_call(callee: &str) -> bool {
     let lower = callee.to_ascii_lowercase();
     let leaf = terminal_identifier(&lower);
     let logging = lower.starts_with("console.")
-        || (["logger", "logging", "log"].iter().any(|item| lower.contains(item))
+        || (["logger", "logging", "log"]
+            .iter()
+            .any(|item| lower.contains(item))
             && matches!(leaf, "log" | "info" | "warn" | "error" | "debug" | "trace"));
     let model_provider = ["openai", "anthropic", "llm", "model", "completion", "chat"]
         .iter()
@@ -9719,11 +9721,10 @@ fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
     let shell_array_api = matches!(
         record.name.as_deref(),
         Some("process-execution" | "cli-option-injection")
-    )
-        && matches!(
-            leaf.as_str(),
-            "spawn" | "spawnsync" | "execfile" | "execfilesync"
-        );
+    ) && matches!(
+        leaf.as_str(),
+        "spawn" | "spawnsync" | "execfile" | "execfilesync"
+    );
     if shell_array_api && let Some(arguments) = slots.next() {
         sensitive.extend(arguments);
     }

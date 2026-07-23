@@ -10,7 +10,11 @@ fn scan(source: &str) -> Result<ScanReport, Box<dyn std::error::Error>> {
     fs::write(repository.path().join("actions.ts"), source)?;
     let mut request = ScanRequest::new(repository.path());
     request.configuration.parse_cache_enabled = false;
-    Ok(scan_repository(&request, &CancellationToken::new(), |_| {})?)
+    Ok(scan_repository(
+        &request,
+        &CancellationToken::new(),
+        |_| {},
+    )?)
 }
 
 fn findings(report: &ScanReport) -> usize {

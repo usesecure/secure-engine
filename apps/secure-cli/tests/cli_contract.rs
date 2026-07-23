@@ -268,7 +268,11 @@ fn policy_exit_and_finding_explanation_use_the_shared_report()
     let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
     let finding_id = report["findings"]
         .as_array()
-        .and_then(|findings| findings.iter().find(|finding| finding["taxonomy"].is_object()))
+        .and_then(|findings| {
+            findings
+                .iter()
+                .find(|finding| finding["taxonomy"].is_object())
+        })
         .and_then(|finding| finding["finding_id"].as_str())
         .ok_or("missing finding ID")?;
     let explained = secure()
