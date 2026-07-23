@@ -933,6 +933,16 @@ pub(crate) fn analyze(
                             {
                                 trace.sanitizers.remove("filesystem-path-confinement");
                             }
+                            if record.kind == "transformation"
+                                && record
+                                    .callee
+                                    .as_deref()
+                                    .is_some_and(identity_changing_transformation)
+                            {
+                                trace.sanitizers.retain(|policy| {
+                                    !crate::semantics::is_operation_authorization(policy)
+                                });
+                            }
                             trace.local_value_depth = trace.local_value_depth.saturating_add(1);
                             trace.values.insert(output.clone());
                             insert_trace(&mut taints, (function.clone(), output.clone()), trace);
@@ -1789,9 +1799,11 @@ fn extract_record_for_node(
             {
                 inputs.extend(url_relative_identity_markers(destination, content));
             }
+            let ineffective_async_guard =
+                is_guard_name(&callee) && async_guard_result_is_ignored(node, content, &callee);
             let kind = if sink.is_some() {
                 "sink"
-            } else if is_guard_name(&callee) {
+            } else if is_guard_name(&callee) && !ineffective_async_guard {
                 "guard"
             } else if is_sanitizer_name(&callee) {
                 "sanitizer"
@@ -6555,6 +6567,66 @@ fn is_guard_name(name: &str) -> bool {
     ]
     .iter()
     .any(|token| lower.contains(token))
+}
+
+fn identity_changing_transformation(name: &str) -> bool {
+    let leaf = terminal_identifier(&name.to_ascii_lowercase()).to_owned();
+    [
+        "canonicalize",
+        "decode",
+        "decodeuri",
+        "decodeuricomponent",
+        "normalize",
+        "resolve",
+        "tolowercase",
+        "touppercase",
+        "trim",
+    ]
+    .contains(&leaf.as_str())
+}
+
+fn async_guard_result_is_ignored(call: Node<'_>, content: &[u8], callee: &str) -> bool {
+    if call_is_awaited_or_returned(call) {
+        return false;
+    }
+    let leaf = terminal_identifier(callee);
+    leaf.to_ascii_lowercase().ends_with("async") || local_function_is_async(call, content, leaf)
+}
+
+fn call_is_awaited_or_returned(mut call: Node<'_>) -> bool {
+    while let Some(parent) = call.parent() {
+        match parent.kind() {
+            "await_expression" | "return_statement" => return true,
+            "parenthesized_expression" | "as_expression" | "satisfies_expression" => {
+                call = parent;
+            }
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn local_function_is_async(anchor: Node<'_>, content: &[u8], target: &str) -> bool {
+    let Some(root) = program_root(anchor) else {
+        return false;
+    };
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if is_function(node)
+            && function_name(node, content).as_deref() == Some(target)
+            && node
+                .utf8_text(content)
+                .is_ok_and(|text| text.trim_start().starts_with("async "))
+        {
+            return true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    false
 }
 
 fn authorization_policy_name(name: &str) -> &'static str {

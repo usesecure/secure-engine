@@ -29,6 +29,9 @@ The cache is enabled by default and repository-specific. CLI and desktop can dis
 
 ## Language boundaries
 
+Phase 6.15 tranche 1 advances the private cache envelope to `secure-parse-cache-v17` because
+effective async-guard and post-authorization identity semantics change. V16 entries safely miss.
+
 - Rust extraction does not expand procedural macros, generated code, trait-object dispatch, or runtime framework layers. Axum/Actix route registration, request extractors, local guards, SQLx/raw query shapes, `Command`, filesystem, Reqwest, redirect, and deserialization calls are recognized conservatively.
 - Python extraction does not execute decorators or resolve monkey patching, metaclasses, dynamic attributes, or runtime imports. FastAPI/Flask/Django routes, request objects and dependencies/decorators, subprocess and dynamic-code calls, raw SQL, filesystem, Requests/HTTPX, redirects, templates, and pickle shapes are recognized conservatively.
 - Go extraction does not resolve ambiguous interfaces, callbacks, reflection, or generated code. `net/http`, Gin, Chi, and Echo routes, request/context values, local middleware/guards, `os/exec`, `database/sql`, filesystem, HTTP clients, redirects, templates, and deserialization calls are recognized conservatively.
