@@ -149,6 +149,8 @@ fn source_identity(value: &str) -> &'static str {
     let lower = compact(value);
     if lower.contains("formdata") {
         "untrusted.form-data-value"
+    } else if lower.contains("sensitiveconfiguration") {
+        "sensitive.configuration-value"
     } else if lower.contains("httpbody") || lower.contains("requestbody") {
         "untrusted.http-body-field"
     } else if lower.contains("header") {
@@ -246,6 +248,7 @@ fn sink_identity(value: &str) -> &'static str {
         "sensitive-mutation" => "sink.sensitive-mutation",
         "cli-option-injection" => "sink.cli-option-parser",
         "prototype-mutation" => "sink.prototype-mutation",
+        "sensitive-data-disclosure" => "sink.sensitive-data-disclosure",
         _ => "sink.sensitive-operation",
     }
 }

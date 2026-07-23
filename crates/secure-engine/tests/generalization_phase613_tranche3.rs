@@ -241,6 +241,6 @@ fn cache_v16_safely_misses_v15_and_reports_remain_deterministic()
     assert!(cold.parsing.cache_misses > 0);
     assert!(warm.parsing.cache_hits > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v16").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v20").is_dir());
     Ok(())
 }

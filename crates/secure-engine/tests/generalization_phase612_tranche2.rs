@@ -176,6 +176,6 @@ fn tranche2_spans_fingerprints_and_cache_are_deterministic()
     assert_eq!(cold.findings, warm.findings);
     assert!(cold.parsing.cache_writes > 0);
     assert!(warm.parsing.cache_hits > 0);
-    assert!(cache.path().join("secure-parse-cache-v16").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v20").is_dir());
     Ok(())
 }

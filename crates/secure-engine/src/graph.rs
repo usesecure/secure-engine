@@ -1293,7 +1293,7 @@ impl RuleDefinition {
     }
 }
 
-const RULES: [RuleDefinition; 9] = [
+const RULES: [RuleDefinition; 10] = [
     RuleDefinition {
         id: "SE1001",
         title: "Untrusted input reaches command execution",
@@ -1416,6 +1416,20 @@ const RULES: [RuleDefinition; 9] = [
         ],
         impact: "Inherited application behavior or policy values can be modified",
         remediation: "Never merge into shared prototypes; use own-property allowlists and null-prototype maps",
+    },
+    RuleDefinition {
+        id: "SE1010",
+        title: "Sensitive configuration reaches an external disclosure sink",
+        category: "sensitive-data-exposure",
+        severity: "high",
+        confidence: "high",
+        invariant: "Secrets must not be sent to logs or model-provider payloads",
+        prerequisites: &[
+            "The named configuration value contains a live secret",
+            "The log or external provider receives the demonstrated value",
+        ],
+        impact: "Credentials can persist in logs, traces, model inputs, or provider retention systems",
+        remediation: "Remove secrets from payloads and log only explicit redacted metadata",
     },
 ];
 
@@ -1662,6 +1676,19 @@ fn extract_record_for_node(
                     provenance,
                 ));
             } else if let Some(name) = expression_name(node, content)
+                && sensitive_environment_value(&name)
+            {
+                records.push(record(
+                    "source",
+                    Some("sensitive-configuration"),
+                    function_name,
+                    Vec::new(),
+                    Some(&name),
+                    None,
+                    location_for_node(path, content, node),
+                    provenance,
+                ));
+            } else if let Some(name) = expression_name(node, content)
                 && archive_entry_path_is_untrusted(node, content, &name)
             {
                 records.push(record(
@@ -1840,6 +1867,9 @@ fn extract_record_for_node(
             };
             if shared_prototype_call(node, content, &callee) {
                 sink = Some("prototype-mutation");
+            }
+            if sensitive_disclosure_call(&callee) {
+                sink = Some("sensitive-data-disclosure");
             }
             if sink == Some("process-execution")
                 && shell_program.is_none()
@@ -3844,6 +3874,7 @@ fn required_sanitizer_policy(rule_id: &str) -> Option<&'static str> {
         "SE1004" => Some("outbound-destination-policy"),
         "SE1005" => Some("redirect-destination-policy"),
         "SE1006" => Some("dynamic-code-control-data-separation"),
+        "SE1008" => Some("command-control-data-separation"),
         _ => None,
     }
 }
@@ -5886,6 +5917,7 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
         "dynamic-code-execution" => Some("SE1006"),
         "cli-option-injection" => Some("SE1008"),
         "prototype-mutation" => Some("SE1009"),
+        "sensitive-data-disclosure" => Some("SE1010"),
         _ => None,
     }
 }
@@ -6235,17 +6267,20 @@ fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8]) -> bool {
         return true;
     };
     let mut options_terminated = false;
+    let mut previous_was_fixed_option = false;
     for element in elements {
-        if static_string_expression(call, element, content, &mut BTreeSet::new(), 8)
-            .as_deref()
-            == Some("--")
+        if let Some(literal) =
+            static_string_expression(call, element, content, &mut BTreeSet::new(), 8)
         {
-            options_terminated = true;
+            options_terminated |= literal == "--";
+            previous_was_fixed_option =
+                !options_terminated && literal.starts_with('-') && literal != "-";
             continue;
         }
-        if !options_terminated && !is_fixed_string_literal(element, content) {
+        if !options_terminated && !previous_was_fixed_option {
             return true;
         }
+        previous_was_fixed_option = false;
     }
     false
 }
@@ -6280,6 +6315,43 @@ fn prototype_expression(node: Node<'_>, content: &[u8]) -> bool {
         || text.contains(".__proto__")
         || text.contains("[\"__proto__\"]")
         || text.contains("['__proto__']")
+}
+
+fn sensitive_environment_value(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let environment = lower.starts_with("process.env.")
+        || lower.starts_with("deno.env.")
+        || lower.starts_with("bun.env.");
+    environment
+        && [
+            "token",
+            "secret",
+            "password",
+            "passwd",
+            "api_key",
+            "apikey",
+            "private_key",
+            "credential",
+            "cookie",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+fn sensitive_disclosure_call(callee: &str) -> bool {
+    let lower = callee.to_ascii_lowercase();
+    let leaf = terminal_identifier(&lower);
+    let logging = lower.starts_with("console.")
+        || (["logger", "logging", "log"].iter().any(|item| lower.contains(item))
+            && matches!(leaf, "log" | "info" | "warn" | "error" | "debug" | "trace"));
+    let model_provider = ["openai", "anthropic", "llm", "model", "completion", "chat"]
+        .iter()
+        .any(|item| lower.contains(item))
+        && matches!(
+            leaf,
+            "create" | "generate" | "complete" | "completion" | "invoke" | "send"
+        );
+    logging || model_provider
 }
 
 fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -> bool {
@@ -9635,7 +9707,10 @@ fn sensitive_sink_inputs(record: &ProgramRecord) -> Vec<String> {
     let all_arguments_are_sensitive = (record.name.as_deref() == Some("dynamic-code-execution")
         && leaf == "function")
         || (record.name.as_deref() == Some("filesystem-operation") && leaf == "rename")
-        || record.name.as_deref() == Some("prototype-mutation");
+        || matches!(
+            record.name.as_deref(),
+            Some("prototype-mutation" | "sensitive-data-disclosure")
+        );
     if all_arguments_are_sensitive {
         return slots.into_iter().flatten().collect();
     }

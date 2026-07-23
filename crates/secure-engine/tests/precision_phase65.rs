@@ -160,15 +160,17 @@ fn frozen_taxonomy_maps_every_rule_and_finding_exactly() -> Result<(), Box<dyn s
 
     let mappings = taxonomy_mappings();
     assert_eq!(mappings.len(), 7);
-    assert_eq!(rules().len(), 7);
+    let rule_catalog = rules();
+    assert_eq!(rule_catalog.len(), 10);
     let mappings_by_rule = mappings
         .iter()
         .map(|mapping| (mapping.rule_id.as_str(), mapping))
         .collect::<BTreeMap<_, _>>();
-    for rule in rules() {
-        let mapping = mappings_by_rule
-            .get(rule.rule_id.as_str())
-            .ok_or("rule was not mapped")?;
+    for mapping in &mappings {
+        let rule = rule_catalog
+            .iter()
+            .find(|rule| rule.rule_id == mapping.rule_id)
+            .ok_or("taxonomy mapping referenced an unknown rule")?;
         assert_eq!(rule.taxonomy.as_ref(), Some(&mapping.taxonomy));
         assert_eq!(rule.primary_cwe.as_ref(), Some(&mapping.primary_cwe));
         assert_eq!(
@@ -178,17 +180,27 @@ fn frozen_taxonomy_maps_every_rule_and_finding_exactly() -> Result<(), Box<dyn s
         let taxonomy = serde_json::to_value(mapping.taxonomy.clone())?;
         assert_eq!(taxonomy.as_object().map(serde_json::Map::len), Some(3));
     }
+    assert!(rule_catalog.iter().skip(7).all(|rule| {
+        rule.taxonomy.is_none()
+            && rule.primary_cwe.is_none()
+            && rule.taxonomy_provenance.is_none()
+    }));
 
     let report = precision_report()?;
     assert_eq!(report.taxonomy_catalog, vec![descriptor]);
     assert!(report.findings.iter().all(|finding| {
-        mappings_by_rule
-            .get(finding.rule_id.as_str())
-            .is_some_and(|mapping| {
+        mappings_by_rule.get(finding.rule_id.as_str()).map_or_else(
+            || {
+                finding.taxonomy.is_none()
+                    && finding.primary_cwe.is_none()
+                    && finding.taxonomy_provenance.is_none()
+            },
+            |mapping| {
                 finding.taxonomy.as_ref() == Some(&mapping.taxonomy)
                     && finding.primary_cwe.as_ref() == Some(&mapping.primary_cwe)
                     && finding.taxonomy_provenance.as_ref() == Some(&mapping.taxonomy_provenance)
-            })
+            },
+        )
     }));
     let schema: serde_json::Value = serde_json::from_str(SECURE_JSON_V1_SCHEMA)?;
     assert!(jsonschema::validator_for(&schema)?.is_valid(&serde_json::to_value(&report)?));
@@ -204,14 +216,21 @@ fn sarif_baseline_and_legacy_json_preserve_taxonomy_compatibly()
         .as_array()
         .ok_or("SARIF results missing")?;
     assert_eq!(results.len(), report.findings.len());
-    assert!(results.iter().all(|result| {
-        result["properties"]["taxonomy"]
-            .as_object()
-            .is_some_and(|taxonomy| taxonomy.len() == 3)
-            && result["properties"]["primaryCwe"]["id"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("CWE-"))
-            && result["properties"]["taxonomyProvenance"]["source_commit"] == TAXONOMY_SOURCE_COMMIT
+    assert!(results.iter().zip(&report.findings).all(|(result, finding)| {
+        if finding.taxonomy.is_some() {
+            result["properties"]["taxonomy"]
+                .as_object()
+                .is_some_and(|taxonomy| taxonomy.len() == 3)
+                && result["properties"]["primaryCwe"]["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("CWE-"))
+                && result["properties"]["taxonomyProvenance"]["source_commit"]
+                    == TAXONOMY_SOURCE_COMMIT
+        } else {
+            result["properties"]["taxonomy"].is_null()
+                && result["properties"]["primaryCwe"].is_null()
+                && result["properties"]["taxonomyProvenance"].is_null()
+        }
     }));
     assert_eq!(
         sarif["runs"][0]["properties"]["secureTaxonomyCatalog"][0]["taxonomy_version"],
@@ -221,12 +240,20 @@ fn sarif_baseline_and_legacy_json_preserve_taxonomy_compatibly()
     let baseline = create_baseline(&report)?;
     assert_eq!(baseline.taxonomy_catalog, report.taxonomy_catalog);
     assert!(baseline.findings.iter().all(|finding| {
-        finding.taxonomy.is_some()
-            && finding.primary_cwe.is_some()
-            && finding.taxonomy_provenance.is_some()
+        let present = [
+            finding.taxonomy.is_some(),
+            finding.primary_cwe.is_some(),
+            finding.taxonomy_provenance.is_some(),
+        ];
+        present.iter().all(|value| *value) || present.iter().all(|value| !*value)
     }));
     let mut partial = baseline.clone();
-    partial.findings[0].primary_cwe = None;
+    let mapped = partial
+        .findings
+        .iter_mut()
+        .find(|finding| finding.taxonomy.is_some())
+        .ok_or("baseline had no mapped finding")?;
+    mapped.primary_cwe = None;
     assert!(validate_baseline(&partial).is_err());
 
     let legacy: ScanReport = serde_json::from_slice(&std::fs::read(workspace_path(

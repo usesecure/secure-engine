@@ -235,9 +235,12 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let catalog: Vec<secure_engine::RuleMetadata> = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(catalog.len(), 7);
-    assert!(catalog.iter().all(|rule| {
+    assert_eq!(catalog.len(), 10);
+    assert!(catalog.iter().take(7).all(|rule| {
         rule.taxonomy.is_some() && rule.primary_cwe.is_some() && rule.taxonomy_provenance.is_some()
+    }));
+    assert!(catalog.iter().skip(7).all(|rule| {
+        rule.taxonomy.is_none() && rule.primary_cwe.is_none() && rule.taxonomy_provenance.is_none()
     }));
     assert_eq!(
         catalog.first().map(|rule| rule.rule_id.as_str()),
@@ -245,7 +248,7 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     );
     assert_eq!(
         catalog.last().map(|rule| rule.rule_id.as_str()),
-        Some("SE1007")
+        Some("SE1010")
     );
     Ok(())
 }
@@ -263,8 +266,10 @@ fn policy_exit_and_finding_explanation_use_the_shared_report()
     assert_eq!(scan.status.code(), Some(1));
     assert!(scan.stdout.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
-    let finding_id = report["findings"][0]["finding_id"]
-        .as_str()
+    let finding_id = report["findings"]
+        .as_array()
+        .and_then(|findings| findings.iter().find(|finding| finding["taxonomy"].is_object()))
+        .and_then(|finding| finding["finding_id"].as_str())
         .ok_or("missing finding ID")?;
     let explained = secure()
         .args(["explain", finding_id, "--report"])

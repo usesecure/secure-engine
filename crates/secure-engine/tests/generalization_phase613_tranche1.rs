@@ -193,7 +193,7 @@ fn evidence_contracts_are_deterministic_and_cache_v16_safely_misses_v14()
     assert_eq!(cold.parsing.cache_hits, 0);
     assert!(cold.parsing.cache_misses > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v16").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v20").is_dir());
     assert!(warm.parsing.cache_hits > 0);
     Ok(())
 }
