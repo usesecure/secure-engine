@@ -45,6 +45,85 @@ fn end_of_options_delimiter_is_a_control() -> Result<(), Box<dyn std::error::Err
 }
 
 #[test]
+fn fixed_format_argv_separates_exact_data_operands_only() -> Result<(), Box<dyn std::error::Error>>
+{
+    let controls = [
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('printf', ['%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/usr/bin/printf', ['%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/bin/printf', ['%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.spawn('printf', ['%%:%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.spawn('/usr/bin/printf', ['label=%s:%s', 'fixed', value], \
+         { shell: false }); }",
+    ];
+    for source in controls {
+        assert!(!has(&scan(source)?, "SE1008"), "control: {source}");
+    }
+
+    let adversarial = [
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/usr/local/bin/printf', ['%s', value], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/tmp/printf', ['%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/opt/tools/printf', ['%s', value], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { \
+         const attackerInput = String(form.get('value')); \
+         return child_process.execFile(\"/opt/render\", [\"%s\", attackerInput], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/usr/bin/printf', [value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/usr/bin/printf', ['%s', value, value], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         const format = '%s'; \
+         return child_process.execFile('/usr/bin/printf', [format, value], { shell: false }); }",
+        "'use server'; export async function run(form) { \
+         const format = String(form.get('format')); \
+         return child_process.execFile('/usr/bin/printf', [format, 'fixed'], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         const values = [value]; \
+         return child_process.execFile('/usr/bin/printf', ['%s', ...values], \
+         { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('./printf', ['%s', value], { shell: false }); }",
+    ];
+    for source in adversarial {
+        assert!(has(&scan(source)?, "SE1008"), "adversarial: {source}");
+    }
+
+    let conservative_shapes = [
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         const executable = '/usr/bin/printf'; \
+         return child_process.execFile(executable, ['%s', value], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         const argv = ['%s', value]; \
+         return child_process.execFile('/usr/bin/printf', argv, { shell: false }); }",
+        "'use server'; export async function run(form) { \
+         const argv = form.get('argv'); \
+         return child_process.execFile('/usr/bin/printf', argv, { shell: false }); }",
+        "'use server'; export async function run(form) { \
+         const executable = String(form.get('executable')); \
+         return child_process.execFile(executable, ['%s', 'fixed'], { shell: false }); }",
+        "'use server'; export async function run(form) { const value = String(form.get('value')); \
+         return child_process.execFile('/usr/bin/printf', ['%s', value], \
+         { shell: true }); }",
+    ];
+    for source in conservative_shapes {
+        assert!(!scan(source)?.findings.is_empty(), "conservative: {source}");
+    }
+    Ok(())
+}
+
+#[test]
 fn structured_sql_and_bound_sql_are_distinguished() -> Result<(), Box<dyn std::error::Error>> {
     let vulnerable = scan(
         "'use server'; export async function copy(form, db) { \

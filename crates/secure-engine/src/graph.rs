@@ -1875,7 +1875,7 @@ fn extract_record_for_node(
                 && shell_program.is_none()
                 && fixed_executable_without_shell(node, content, &callee)
             {
-                sink = if cli_option_boundary_is_ambiguous(node, content) {
+                sink = if cli_option_boundary_is_ambiguous(node, content, &callee) {
                     Some("cli-option-injection")
                 } else {
                     Some("process-argument-execution")
@@ -6252,7 +6252,7 @@ fn fixed_executable_without_shell(call: Node<'_>, content: &[u8], callee: &str) 
     object_property_is_absent_or_false(options, content, "shell")
 }
 
-fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8]) -> bool {
+fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8], callee: &str) -> bool {
     let Some(arguments) = call.child_by_field_name("arguments") else {
         return false;
     };
@@ -6265,6 +6265,9 @@ fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8]) -> bool {
     let Some(elements) = unambiguous_array_elements(array) else {
         return true;
     };
+    if fixed_printf_argv_has_exact_data_operands(call, &elements, content, callee) {
+        return false;
+    }
     let mut options_terminated = false;
     let mut previous_was_fixed_option = false;
     for element in elements {
@@ -6282,6 +6285,60 @@ fn cli_option_boundary_is_ambiguous(call: Node<'_>, content: &[u8]) -> bool {
         previous_was_fixed_option = false;
     }
     false
+}
+
+fn fixed_printf_argv_has_exact_data_operands(
+    call: Node<'_>,
+    elements: &[Node<'_>],
+    content: &[u8],
+    callee: &str,
+) -> bool {
+    if !fixed_executable_without_shell(call, content, callee) {
+        return false;
+    }
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return false;
+    };
+    let Some(executable) = arguments.named_child(0) else {
+        return false;
+    };
+    if !literal_printf_executable(executable, content) {
+        return false;
+    }
+    let Some(format) = elements
+        .first()
+        .filter(|element| is_fixed_string_literal(**element, content))
+        .and_then(|element| string_value(*element, content))
+    else {
+        return false;
+    };
+    fixed_string_data_slots(&format).is_some_and(|slots| slots == elements.len().saturating_sub(1))
+}
+
+fn literal_printf_executable(executable: Node<'_>, content: &[u8]) -> bool {
+    if !is_fixed_string_literal(executable, content) {
+        return false;
+    }
+    let Some(value) = string_value(executable, content) else {
+        return false;
+    };
+    matches!(value.as_str(), "printf" | "/usr/bin/printf" | "/bin/printf")
+}
+
+fn fixed_string_data_slots(format: &str) -> Option<usize> {
+    let mut characters = format.chars();
+    let mut slots = 0_usize;
+    while let Some(character) = characters.next() {
+        if character != '%' {
+            continue;
+        }
+        match characters.next()? {
+            '%' => {}
+            's' => slots = slots.saturating_add(1),
+            _ => return None,
+        }
+    }
+    (slots > 0).then_some(slots)
 }
 
 fn shared_prototype_call(call: Node<'_>, content: &[u8], callee: &str) -> bool {
