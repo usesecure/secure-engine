@@ -46,6 +46,10 @@ appstreamcli validate --no-net %{buildroot}%{_metainfodir}/dev.usesecure.SecureE
 
 %changelog
 * Fri Jul 31 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.10-1
+- Qualify RC2 with the bounded SE1008 printf argv correction and full public CI regression
+- Preserve conservative SE1008 handling for unrecognized executables and paths
+
+* Fri Jul 31 2026 Secure Engine maintainers <security@usesecure.dev> - 0.1.10-1
 - Add Phase 6.15 rules SE1008-SE1010 while preserving SE1001-SE1007 compatibility
 - Preserve private parse cache v20 and safe misses for older cache envelopes
 
