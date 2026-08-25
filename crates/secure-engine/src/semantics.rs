@@ -1,6 +1,6 @@
 use crate::{
-    AuthorizationKind, DisclosureLocality, EvidenceDataClass, EvidenceSemantic,
-    EvidenceSemanticRole,
+    AuthorizationKind, ConfigurationProvenance, DisclosureLocality, EvidenceDataClass,
+    EvidenceSemantic, EvidenceSemanticRole, ExecutionBoundaryKind,
 };
 
 /// Engine-owned graph vocabulary. Contract-v2 projections remain frozen at semantics v2.
@@ -131,6 +131,56 @@ pub(crate) fn classified_disclosure_sink(locality: DisclosureLocality) -> Eviden
     value
 }
 
+pub(crate) fn classified_configuration_source(
+    provenance: ConfigurationProvenance,
+) -> EvidenceSemantic {
+    let identity = match provenance {
+        ConfigurationProvenance::Global => "configuration.global-value",
+        ConfigurationProvenance::User => "configuration.user-value",
+        ConfigurationProvenance::Workspace => "configuration.workspace-value",
+        ConfigurationProvenance::WorkspaceFolder => "configuration.workspace-folder-value",
+        ConfigurationProvenance::Environment => "configuration.environment-value",
+        ConfigurationProvenance::ManifestDefault => "configuration.manifest-default-value",
+        ConfigurationProvenance::RuntimeMutation => "configuration.runtime-mutation",
+        ConfigurationProvenance::Unknown => "configuration.unknown-value",
+    };
+    let certainty = if provenance == ConfigurationProvenance::Unknown {
+        "uncertain"
+    } else {
+        "proven"
+    };
+    let mut value = semantic(
+        EvidenceSemanticRole::ConfigurationSource,
+        identity,
+        None,
+        None,
+        certainty,
+    );
+    value.configuration_provenance = Some(provenance);
+    value
+}
+
+pub(crate) fn classified_execution_boundary(kind: ExecutionBoundaryKind) -> EvidenceSemantic {
+    let identity = match kind {
+        ExecutionBoundaryKind::Binary => "sink.process-binary-selection",
+        ExecutionBoundaryKind::ShellProgram => "sink.process-shell-program",
+        ExecutionBoundaryKind::Argv => "sink.process-argv-element",
+        ExecutionBoundaryKind::Environment => "sink.process-environment-value",
+        ExecutionBoundaryKind::WorkingDirectory => "sink.process-working-directory",
+        ExecutionBoundaryKind::ShellMode => "sink.process-shell-mode",
+    };
+    let mut value = semantic(
+        EvidenceSemanticRole::SensitiveSink,
+        identity,
+        None,
+        None,
+        "proven",
+    );
+    value.execution_boundary = Some(kind);
+    value.locality = Some(DisclosureLocality::Unknown);
+    value
+}
+
 pub(crate) fn authorization_kind(value: &str) -> Option<AuthorizationKind> {
     let lower = compact(value);
     if lower == "platformworkspacetrust" {
@@ -209,6 +259,8 @@ fn semantic(
         policy: policy.map(str::to_owned),
         authorization,
         data_class: None,
+        configuration_provenance: None,
+        execution_boundary: None,
         locality: None,
         certainty: certainty.into(),
     }

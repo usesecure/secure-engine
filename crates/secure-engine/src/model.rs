@@ -494,6 +494,8 @@ pub enum EvidenceSemanticRole {
     UntrustedSource,
     /// Data classified as sensitive independently of attacker control.
     SensitiveSource,
+    /// Configuration data with explicit authority and precedence provenance.
+    ConfigurationSource,
     /// A value-preserving or value-changing operation in a data-flow path.
     Transformation,
     /// A control-flow predicate that may constrain a later operation.
@@ -522,6 +524,46 @@ pub enum EvidenceDataClass {
     PersonallyIdentifiableInformation,
     /// A sensitive candidate whose narrower class is not proven statically.
     UnknownSensitive,
+}
+
+/// Proven authority or precedence layer for one configuration value.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConfigurationProvenance {
+    /// Machine- or application-global configuration.
+    Global,
+    /// User-owned configuration, including editor user settings.
+    User,
+    /// Repository or workspace-owned configuration.
+    Workspace,
+    /// Configuration owned by one folder in a multi-root workspace.
+    WorkspaceFolder,
+    /// Process environment inherited or supplied at runtime.
+    Environment,
+    /// Static default declared by an application or extension manifest.
+    ManifestDefault,
+    /// A value overwritten by runtime mutation after configuration loading.
+    RuntimeMutation,
+    /// Static analysis cannot resolve the effective provenance.
+    Unknown,
+}
+
+/// Exact component of a process creation boundary.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionBoundaryKind {
+    /// Executable or interpreter selected for a process.
+    Binary,
+    /// Program text consumed by an implicit or explicit shell.
+    ShellProgram,
+    /// One exact argv element supplied without shell text semantics.
+    Argv,
+    /// One exact environment value supplied to the child.
+    Environment,
+    /// Child-process working directory.
+    WorkingDirectory,
+    /// Shell enablement or interpreter mode.
+    ShellMode,
 }
 
 /// Where a sink or receiver is observable relative to the analyzed process.
@@ -574,6 +616,12 @@ pub struct EvidenceSemantic {
     /// Data classification, when this node carries or receives classified data.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_class: Option<EvidenceDataClass>,
+    /// Proven configuration authority or precedence layer, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration_provenance: Option<ConfigurationProvenance>,
+    /// Exact process-boundary component, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_boundary: Option<ExecutionBoundaryKind>,
     /// Disclosure or receiver locality, when statically distinguishable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locality: Option<DisclosureLocality>,

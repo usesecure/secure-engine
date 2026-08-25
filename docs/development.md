@@ -34,6 +34,7 @@ secure scan fixtures/phase3-rules --cache-dir /tmp/secure-engine-phase3-cache --
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --clear-cache --output phase5-cold.json || test $? = 1
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --output phase5-warm.json || test $? = 1
 secure scan fixtures/lead-quality-vscode-go --no-cache --output lead-quality.json || test $? = 1
+secure scan fixtures/trust-composition-execution-boundaries --no-cache --output trust-composition.json || test $? = 1
 secure rules list
 secure explain fd_FINDING_ID --report phase3-cold.json
 ```

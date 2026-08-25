@@ -243,6 +243,7 @@ fn contract_step(rule_id: &str, step: &EvidencePathStep) -> Option<EvidenceContr
             EvidenceEffectV2::PreservesInfluence,
             false,
         ),
+        EvidenceSemanticRole::ConfigurationSource | EvidenceSemanticRole::Receiver => return None,
         EvidenceSemanticRole::Transformation => (
             EvidenceContractRoleV2::Propagation,
             if semantic.certainty == "proven" {
@@ -272,7 +273,6 @@ fn contract_step(rule_id: &str, step: &EvidencePathStep) -> Option<EvidenceContr
             EvidenceEffectV2::PreservesInfluence,
             false,
         ),
-        EvidenceSemanticRole::Receiver => return None,
     };
     let source_kind =
         (role == EvidenceContractRoleV2::Source).then(|| source_kind(rule_id, &semantic.identity));

@@ -236,7 +236,7 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let catalog: Vec<secure_engine::RuleMetadata> = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(catalog.len(), 11);
+    assert_eq!(catalog.len(), 12);
     assert!(catalog.iter().take(7).all(|rule| {
         rule.taxonomy.is_some() && rule.primary_cwe.is_some() && rule.taxonomy_provenance.is_some()
     }));
@@ -249,7 +249,7 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     );
     assert_eq!(
         catalog.last().map(|rule| rule.rule_id.as_str()),
-        Some("SE1011")
+        Some("SE1012")
     );
     Ok(())
 }

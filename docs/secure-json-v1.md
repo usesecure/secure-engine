@@ -111,6 +111,19 @@ The lead-quality milestone keeps the `secure-json-v1` identifier and adds option
 
 Earlier reports deserialize with defaults. Normal CLI reports use `finding-evidence`; `--full-graph` preserves the complete graph. Both modes retain the same findings and full analysis counts, but their report fingerprints differ because the serialized evidence differs. Unchanged graph and finding identifiers remain in the v1 compatibility hash domain even though extraction provenance advances to `secure-evidence-graph-v2`.
 
+## Trust-composition additive fields
+
+The trust-composition milestone keeps `secure-json-v1` and adds two optional semantic fields:
+
+- `semantic.configuration_provenance` distinguishes global, user, workspace, workspace-folder,
+  environment, manifest-default, runtime-mutation, and unknown configuration authority;
+- `semantic.execution_boundary` distinguishes binary, shell-program, argv, child environment,
+  working-directory, and shell-mode components.
+
+It also adds the `configuration-source` semantic role and additive `SE1012` rule metadata. Earlier
+reports remain valid. `SE1012` intentionally has no Evidence Contract v2 or frozen taxonomy mapping;
+the public v2 contract remains unchanged.
+
 ## Exit codes
 
 | Code | Meaning |

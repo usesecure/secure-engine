@@ -58,3 +58,22 @@ Report per-task distributions and paired differences with confidence intervals, 
 ## Decision rule
 
 A bounded superiority claim is allowed only if its direction, minimum effect size, confidence level, and multiplicity handling were preregistered and the holdout meets them without post-hoc exclusions. Precision and recall must both clear their thresholds; speed alone is insufficient. Publish negative and inconclusive outcomes inside the local benchmark record. Any material tool, corpus, rubric, or workflow change requires a new preregistration and run.
+
+## Trust-composition tranche preregistration
+
+Before scoring `SE1012`, freeze a disjoint Secure Bench tranche that crosses configuration authority,
+workspace state, scope identity, invalidating transitions, and exact execution components. Include
+single- and multi-root workspaces; global/user, workspace, workspace-folder, environment, default,
+mutation, and unresolved provenance; exact- and wrong-value guards; fresh and stale decisions;
+binary, shell program, argv, environment, cwd, and shell-mode boundaries; stable and ambiguous
+imports, helpers, callbacks, closures, aliases, and cache keys. Pair every semantic positive with a
+control that changes only the adjudicated invariant, then add natural negative repositories and
+independently sourced historical cases.
+
+Preregister per-stratum precision and recall thresholds, the abstention confusion matrix, median and
+tail false-positive review time, time to first subsequently validated lead, exact-run
+reproducibility, CPU time, peak RSS, report and cache bytes, and total human labor. Compare the
+frozen Engine commit with a blinded skilled-human cohort under equal task scopes and time budgets.
+Report paired task-level results and confidence intervals, including negative or inconclusive
+outcomes. Development fixtures and the vscode-go observation are not scored benchmark cases and
+must never be relabeled as independent holdout evidence.

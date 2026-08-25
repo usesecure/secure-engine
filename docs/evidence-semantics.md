@@ -73,3 +73,12 @@ The analyzer resolves deterministic imports, destructuring and direct aliases th
 Filesystem policy requires lexical normalization plus a separator-aware root boundary. This does not prove symlink, junction, mount, race, or filesystem permission safety. Outbound and redirect policies require parsed destination components or structurally proven exact fixed membership and a safe fixed fallback. Fixed executable/argument-array invocation through supported APIs is no-shell by default unless an options object explicitly enables shell processing or the executable is itself a structurally proven supported shell with an exact `-c` program argument. In that explicit-shell case only the program argument is shell code; later elements remain positional argv. Executable-specific argument injection remains unresolved.
 
 The following remain explicitly bounded: dynamic imports, ambiguous aliases, callbacks, recursion, runtime middleware, reflection, generated code, framework-specific implicit authorization, OS/filesystem state, and analysis beyond configured graph, candidate-path, finding, and inter-procedural limits. Reports expose those uncertainties as limitations instead of inferring safety.
+
+The trust-composition milestone adds configuration-source provenance and exact process-boundary
+components without changing Evidence Contract v2. Supported VS Code `inspect` projections distinguish
+user/global, workspace, workspace-folder, and manifest-default layers; unshadowed `process.env`
+access identifies environment provenance. Workspace and workspace-folder trust proof must dominate,
+bind the same scope, and remain fresh through the sink. Binary, shell-program, argv, child
+environment, cwd, and shell-mode evidence uses the exact expression span. Dynamic effective
+configuration, callback lifecycle, cache keys without complete scope provenance, and platform
+runtime behavior abstain explicitly.

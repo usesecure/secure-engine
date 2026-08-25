@@ -13,7 +13,7 @@ Secure Engine follows untrusted values across files and helpers, then reports re
 
 ## What it detects
 
-The current development tree defines eleven deterministic rule families:
+The current development tree defines twelve deterministic rule families:
 
 - `SE1001`: untrusted input reaching command execution;
 - `SE1002`: untrusted input reaching dynamically constructed or raw SQL;
@@ -26,6 +26,7 @@ The current development tree defines eleven deterministic rule families:
 - `SE1009`: untrusted input reaching a shared prototype mutation;
 - `SE1010`: classified sensitive data reaching local diagnostic output or a remote provider boundary;
 - `SE1011`: a proven Node `net.Server` receiver calling `listen(port)` without an explicit host, emitted as a qualified network-exposure lead rather than a vulnerability verdict.
+- `SE1012`: workspace, workspace-folder, or environment configuration reaching an exact process binary, shell program, argv, environment, cwd, or shell-mode boundary without a fresh same-scope trust proof.
 
 The analyzer supports bounded inter-file propagation, value-preserving helpers, static-property identity, shell program-text classification, exact path and URL policy projection, and principal/resource-aware authorization evidence. Ambiguous flows fail conservatively instead of inventing proof.
 
@@ -100,7 +101,7 @@ These limits can produce false negatives. Parser recovery and framework conventi
 
 ## Structured evidence and privacy
 
-The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v20. Older cache envelopes produce safe misses.
+The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v21. Older cache envelopes produce safe misses.
 
 AI validation never originates, deletes, or rewrites a finding. It requires project configuration, an exact redacted payload preview, and per-operation consent. Provider credentials are read only from the configured environment variable and are never serialized. See [AI validation](./docs/ai-validation.md) and [Evidence Contract v2](./docs/evidence-contract-v2.md).
 

@@ -1,0 +1,7 @@
+{
+  "name": "neutral-trust-composition-fixtures",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  }
+}

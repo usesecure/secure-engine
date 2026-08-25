@@ -6,10 +6,11 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::Node;
 
 use crate::{
-    AnalysisSummary, CancellationToken, DisclosureLocality, EvidenceDataClass, EvidenceEdge,
-    EvidenceGraph, EvidenceNode, EvidencePathStep, EvidenceSemantic, EvidenceSemanticRole,
-    EvidenceState, EvidenceStateKind, Finding, LeadContext, NormalizedFact, ParserProvenance,
-    RuleMetadata, ScanConfiguration, ScanError, SourceLocation, SourceSpan, SuppressionDiagnostic,
+    AnalysisSummary, CancellationToken, ConfigurationProvenance, DisclosureLocality,
+    EvidenceDataClass, EvidenceEdge, EvidenceGraph, EvidenceNode, EvidencePathStep,
+    EvidenceSemantic, EvidenceSemanticRole, EvidenceState, EvidenceStateKind,
+    ExecutionBoundaryKind, Finding, LeadContext, NormalizedFact, ParserProvenance, RuleMetadata,
+    ScanConfiguration, ScanError, SourceLocation, SourceSpan, SuppressionDiagnostic,
 };
 
 pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v2";
@@ -33,7 +34,22 @@ const NETWORK_RECEIVER_MARKER: &str = "@receiver:";
 const NETWORK_HOST_OMITTED_MARKER: &str = "@bind:host-omitted";
 const DATA_CLASS_MARKER: &str = "@data-class:";
 const DISCLOSURE_LOCALITY_MARKER: &str = "@disclosure-locality:";
+const CONFIGURATION_PROVENANCE_MARKER: &str = "@configuration-provenance:";
+const CONFIGURATION_SCOPE_MARKER: &str = "@configuration-scope:";
+const CONFIGURATION_PROVIDER_MARKER: &str = "@configuration-provider:";
+const CONFIGURATION_KEY_MARKER: &str = "@configuration-key:";
+const EXECUTION_BOUNDARY_MARKER: &str = "@execution-boundary:";
+const TRUST_SCOPE_MARKER: &str = "@trust-scope:";
+const TRUST_STATE_MARKER: &str = "@trust-state:trusted";
 const GRAPH_FINGERPRINT_COMPATIBILITY_VERSION: &str = "secure-evidence-graph-v1";
+
+struct ConfigurationProjection<'tree> {
+    provenance: ConfigurationProvenance,
+    scope: String,
+    provider: String,
+    key: String,
+    evidence: Node<'tree>,
+}
 
 struct ShellProgramText<'tree> {
     interpreter: &'static str,
@@ -859,6 +875,16 @@ pub(crate) fn analyze(
             match record.kind.as_str() {
                 "source" => {
                     if let Some(output) = &record.output {
+                        let mut source_values = BTreeSet::from([output.clone()]);
+                        if record.name.as_deref() == Some("execution-configuration") {
+                            source_values.extend(
+                                record
+                                    .inputs
+                                    .iter()
+                                    .filter(|input| input.starts_with('@'))
+                                    .cloned(),
+                            );
+                        }
                         insert_trace(
                             &mut taints,
                             (function.clone(), output.clone()),
@@ -873,7 +899,7 @@ pub(crate) fn analyze(
                                 value_identity: String::new(),
                                 field_sensitive: source_is_field_container(record),
                                 sanitizers: BTreeSet::new(),
-                                values: BTreeSet::from([output.clone()]),
+                                values: source_values,
                                 source_specificity: if matches!(
                                     record.name.as_deref(),
                                     Some("request-parameter" | "server-action-parameter")
@@ -1171,6 +1197,44 @@ pub(crate) fn analyze(
                             );
                         }
                     }
+                    if record.name.as_deref() == Some("configuration-process-boundary")
+                        && let Some(trace) = tainted_trace.as_ref()
+                        && configuration_trace_is_risky(trace, &builder)
+                        && configuration_source_is_proven(trace, &import_bindings, &all_records)
+                        && child_process_boundary_is_proven(record, &import_bindings, &all_records)
+                        && !configuration_composition_abstains(record, &all_records)
+                    {
+                        let dominant = dominating_guard_records(record, &guards);
+                        if matching_fresh_trust_guard(trace, record, &dominant, &all_records) {
+                            candidates.remove(&format!("SE1012:{record_node}"));
+                        } else if extended_round_candidate_allowed(
+                            "SE1012",
+                            pass,
+                            legacy_passes,
+                            candidates.contains_key(&format!("SE1012:{record_node}")),
+                        ) {
+                            let guard_nodes = dominant
+                                .iter()
+                                .filter(|guard| {
+                                    guard.name.as_deref()
+                                        == Some(crate::semantics::POLICY_WORKSPACE_TRUST)
+                                })
+                                .filter_map(|guard| record_nodes.get(&guard.record_id).cloned())
+                                .collect();
+                            candidate_limit_reached |= add_candidate(
+                                "SE1012",
+                                trace,
+                                CandidateTarget {
+                                    node: record_node,
+                                    guards: guard_nodes,
+                                    record,
+                                },
+                                &mut builder,
+                                &mut candidates,
+                                candidate_budget,
+                            );
+                        }
+                    }
                     let authorization_trace = tainted_trace
                         .as_ref()
                         .or_else(|| handler_traces.get(&function));
@@ -1314,7 +1378,7 @@ impl RuleDefinition {
     }
 }
 
-const RULES: [RuleDefinition; 11] = [
+const RULES: [RuleDefinition; 12] = [
     RuleDefinition {
         id: "SE1001",
         title: "Untrusted input reaches command execution",
@@ -1466,6 +1530,21 @@ const RULES: [RuleDefinition; 11] = [
         ],
         impact: "A reachable peer could connect to a transient process-local protocol endpoint",
         remediation: "Pass an explicit loopback host and retain protocol-level peer validation where supported",
+    },
+    RuleDefinition {
+        id: "SE1012",
+        title: "Configuration crosses a process boundary without matching trust proof",
+        category: "trust-composition",
+        severity: "medium",
+        confidence: "medium",
+        invariant: "Repository- or runtime-controlled configuration must not select process behavior without a fresh trust proof for the same scope",
+        prerequisites: &[
+            "The effective configuration is controlled by the workspace, workspace folder, or process environment",
+            "The enclosing launch path is reachable in the supported runtime configuration",
+            "The selected process component changes executable behavior",
+        ],
+        impact: "A less-trusted configuration authority could influence which process runs or how it executes",
+        remediation: "Use fixed process components or require a fresh same-scope trust decision before launch",
     },
 ];
 
@@ -1728,6 +1807,28 @@ fn extract_record_for_node(
     match node.kind() {
         "member_expression" | "subscript_expression" => {
             if let Some(name) = expression_name(node, content)
+                && environment_configuration_name(&name).is_some()
+                && sensitive_environment_data_class(&name).is_none()
+            {
+                records.push(record(
+                    "source",
+                    Some("execution-configuration"),
+                    function_name,
+                    vec![
+                        format!("{CONFIGURATION_PROVENANCE_MARKER}environment"),
+                        format!("{CONFIGURATION_SCOPE_MARKER}process"),
+                        format!(
+                            "{CONFIGURATION_KEY_MARKER}{}",
+                            environment_configuration_name(&name).unwrap_or_default()
+                        ),
+                    ],
+                    Some(&name),
+                    None,
+                    location_for_node(path, content, node),
+                    provenance,
+                ));
+            }
+            if let Some(name) = expression_name(node, content)
                 && let Some(source_kind) =
                     framework_member_source(function, &resolve_alias(&name, function, aliases))
                 && !nested_in_more_specific_source(node, content, function)
@@ -1774,6 +1875,44 @@ fn extract_record_for_node(
             let name_node = node.child_by_field_name("name");
             let output = name_node.and_then(|item| expression_name(item, content));
             let value = node.child_by_field_name("value");
+            if let (Some(output), Some(value)) = (output.as_deref(), value)
+                && let Some(projection) = configuration_projection(value, content)
+            {
+                records.push(record(
+                    "source",
+                    Some("execution-configuration"),
+                    function_name,
+                    vec![
+                        format!(
+                            "{CONFIGURATION_PROVENANCE_MARKER}{}",
+                            configuration_provenance_marker(&projection.provenance)
+                        ),
+                        format!("{CONFIGURATION_SCOPE_MARKER}{}", projection.scope),
+                        format!("{CONFIGURATION_PROVIDER_MARKER}{}", projection.provider),
+                        format!("{CONFIGURATION_KEY_MARKER}{}", projection.key),
+                    ],
+                    Some(output),
+                    None,
+                    location_for_node(path, content, projection.evidence),
+                    provenance,
+                ));
+                return;
+            }
+            if let (Some(output), Some(value)) = (output.as_deref(), value)
+                && unresolved_effective_configuration(value, content)
+            {
+                records.push(record(
+                    "configuration-abstention",
+                    Some("effective-provenance-unresolved"),
+                    function_name,
+                    value_names(value, content),
+                    Some(output),
+                    None,
+                    location_for_node(path, content, value),
+                    provenance,
+                ));
+                return;
+            }
             if let (Some(pattern), Some(value)) = (name_node, value)
                 && matches!(pattern.kind(), "object_pattern" | "array_pattern")
             {
@@ -2045,6 +2184,16 @@ fn extract_record_for_node(
             );
             call_record.raw_callee = (!raw_callee.is_empty()).then_some(raw_callee.clone());
             records.push(call_record);
+            append_process_boundary_records(
+                path,
+                content,
+                node,
+                &raw_callee,
+                &callee,
+                function_name,
+                provenance,
+                records,
+            );
             if let Some(receiver) = network_server_receiver {
                 let mut receiver_record = record(
                     "receiver",
@@ -2081,6 +2230,27 @@ fn extract_record_for_node(
         }
         "return_statement" => {
             if let Some(value) = node.named_child(0) {
+                if let Some(projection) = configuration_projection(value, content) {
+                    records.push(record(
+                        "source",
+                        Some("execution-configuration"),
+                        function_name,
+                        vec![
+                            format!(
+                                "{CONFIGURATION_PROVENANCE_MARKER}{}",
+                                configuration_provenance_marker(&projection.provenance)
+                            ),
+                            format!("{CONFIGURATION_SCOPE_MARKER}{}", projection.scope),
+                            format!("{CONFIGURATION_PROVIDER_MARKER}{}", projection.provider),
+                            format!("{CONFIGURATION_KEY_MARKER}{}", projection.key),
+                        ],
+                        Some("@return"),
+                        None,
+                        location_for_node(path, content, projection.evidence),
+                        provenance,
+                    ));
+                    return;
+                }
                 let mut inputs = summary_return_inputs(value, content).unwrap_or_default();
                 inputs.extend(url_relative_identity_markers(value, content));
                 records.push(record(
@@ -2098,8 +2268,31 @@ fn extract_record_for_node(
         "arrow_function" => {
             if let Some(body) = node.child_by_field_name("body")
                 && body.kind() != "statement_block"
-                && let Some(inputs) = summary_return_inputs(body, content)
             {
+                if let Some(projection) = configuration_projection(body, content) {
+                    records.push(record(
+                        "source",
+                        Some("execution-configuration"),
+                        function_name,
+                        vec![
+                            format!(
+                                "{CONFIGURATION_PROVENANCE_MARKER}{}",
+                                configuration_provenance_marker(&projection.provenance)
+                            ),
+                            format!("{CONFIGURATION_SCOPE_MARKER}{}", projection.scope),
+                            format!("{CONFIGURATION_PROVIDER_MARKER}{}", projection.provider),
+                            format!("{CONFIGURATION_KEY_MARKER}{}", projection.key),
+                        ],
+                        Some("@return"),
+                        None,
+                        location_for_node(path, content, projection.evidence),
+                        provenance,
+                    ));
+                    return;
+                }
+                let Some(inputs) = summary_return_inputs(body, content) else {
+                    return;
+                };
                 let mut inputs = inputs;
                 inputs.extend(url_relative_identity_markers(body, content));
                 records.push(record(
@@ -2143,12 +2336,14 @@ fn extract_record_for_node(
         "if_statement" => {
             if let Some(condition) = node.child_by_field_name("condition") {
                 let mut inputs = value_names(condition, content);
+                inputs.extend(trust_scope_markers(condition, content));
                 if condition_contains_conjunction(condition, content) {
                     inputs.push("@conditional-conjunction".into());
                 }
                 if let Some(dominance) = if_guard_dominance(node, condition, content, function)
                     && function.is_some_and(|function| {
                         authorization_guard_survives_try_context(node, function, content)
+                            || loop_exit_guard_survives_context(node, function, content)
                     })
                 {
                     inputs.extend(filesystem_confinement_markers(node, condition, content));
@@ -2156,6 +2351,23 @@ fn extract_record_for_node(
                     let outbound_markers =
                         outbound_destination_markers(node, condition, content, &inputs);
                     inputs.extend(outbound_markers);
+                    let condition_text = condition
+                        .utf8_text(content)
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    if condition_text.contains("cache") && condition_text.contains(".get(") {
+                        records.push(record_with_dominance(
+                            "configuration-abstention",
+                            Some("decision-cache-scope-unresolved"),
+                            function_name,
+                            inputs.clone(),
+                            None,
+                            None,
+                            location_for_node(path, content, condition),
+                            provenance,
+                            Some(dominance),
+                        ));
+                    }
                     records.push(record_with_dominance(
                         "control-gate",
                         None,
@@ -2183,8 +2395,461 @@ fn extract_record_for_node(
                 }
             }
         }
+        "await_expression" => {
+            records.push(record(
+                "trust-transition",
+                Some("async-state-boundary"),
+                function_name,
+                Vec::new(),
+                None,
+                None,
+                location_for_node(path, content, node),
+                provenance,
+            ));
+        }
         _ => {}
     }
+}
+
+fn configuration_projection<'tree>(
+    mut value: Node<'tree>,
+    content: &[u8],
+) -> Option<ConfigurationProjection<'tree>> {
+    while matches!(
+        value.kind(),
+        "parenthesized_expression" | "as_expression" | "satisfies_expression"
+    ) {
+        value = value.named_child(0)?;
+    }
+    if value.kind() != "member_expression" {
+        return None;
+    }
+    let property = value
+        .child_by_field_name("property")
+        .and_then(|node| expression_name(node, content))?;
+    let provenance = match property.as_str() {
+        "globalValue" => ConfigurationProvenance::User,
+        "workspaceValue" => ConfigurationProvenance::Workspace,
+        "workspaceFolderValue" => ConfigurationProvenance::WorkspaceFolder,
+        "defaultValue" => ConfigurationProvenance::ManifestDefault,
+        _ => return None,
+    };
+    let inspect = value.child_by_field_name("object")?;
+    let inspect_function = (inspect.kind() == "call_expression")
+        .then(|| inspect.child_by_field_name("function"))
+        .flatten()?;
+    if inspect_function.kind() != "member_expression"
+        || inspect_function
+            .child_by_field_name("property")
+            .and_then(|node| expression_name(node, content))
+            .as_deref()
+            != Some("inspect")
+    {
+        return None;
+    }
+    let key = inspect
+        .child_by_field_name("arguments")
+        .and_then(|arguments| arguments.named_child(0))
+        .and_then(|argument| string_value(argument, content))?;
+    let configuration = inspect_function.child_by_field_name("object")?;
+    let configuration_function = (configuration.kind() == "call_expression")
+        .then(|| configuration.child_by_field_name("function"))
+        .flatten()?;
+    if configuration_function.kind() != "member_expression"
+        || configuration_function
+            .child_by_field_name("property")
+            .and_then(|node| expression_name(node, content))
+            .as_deref()
+            != Some("getConfiguration")
+    {
+        return None;
+    }
+    let provider = configuration_function
+        .child_by_field_name("object")
+        .and_then(|node| expression_name(node, content))?;
+    let arguments = configuration.child_by_field_name("arguments")?;
+    let section = arguments
+        .named_child(0)
+        .and_then(|argument| string_value(argument, content))
+        .unwrap_or_default();
+    let scope = match provenance {
+        ConfigurationProvenance::WorkspaceFolder => arguments
+            .named_child(1)
+            .and_then(|argument| expression_name(argument, content))?,
+        ConfigurationProvenance::Workspace => "workspace".into(),
+        ConfigurationProvenance::Global => "global".into(),
+        ConfigurationProvenance::User => "user".into(),
+        ConfigurationProvenance::ManifestDefault => "manifest".into(),
+        ConfigurationProvenance::Environment
+        | ConfigurationProvenance::RuntimeMutation
+        | ConfigurationProvenance::Unknown => return None,
+    };
+    let key = if section.is_empty() {
+        key
+    } else {
+        format!("{section}.{key}")
+    };
+    Some(ConfigurationProjection {
+        provenance,
+        scope,
+        provider,
+        key,
+        evidence: value,
+    })
+}
+
+fn unresolved_effective_configuration(value: Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![value];
+    let mut saw_get = false;
+    let mut saw_configuration = false;
+    while let Some(node) = stack.pop() {
+        if node.kind() == "call_expression"
+            && let Some(callee) = call_callee(node, content)
+        {
+            let leaf = terminal_identifier(&callee);
+            saw_get |= leaf == "get";
+            saw_configuration |= leaf == "getConfiguration";
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    saw_get && saw_configuration
+}
+
+fn environment_configuration_name(name: &str) -> Option<&str> {
+    let mut parts = name.split('.');
+    (parts.next() == Some("process") && parts.next() == Some("env"))
+        .then(|| parts.next())
+        .flatten()
+        .filter(|name| !name.is_empty() && parts.next().is_none())
+}
+
+fn configuration_provenance_marker(provenance: &ConfigurationProvenance) -> &'static str {
+    match provenance {
+        ConfigurationProvenance::Global => "global",
+        ConfigurationProvenance::User => "user",
+        ConfigurationProvenance::Workspace => "workspace",
+        ConfigurationProvenance::WorkspaceFolder => "workspace-folder",
+        ConfigurationProvenance::Environment => "environment",
+        ConfigurationProvenance::ManifestDefault => "manifest-default",
+        ConfigurationProvenance::RuntimeMutation => "runtime-mutation",
+        ConfigurationProvenance::Unknown => "unknown",
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_process_boundary_records(
+    path: &str,
+    content: &[u8],
+    call: Node<'_>,
+    raw_callee: &str,
+    resolved_callee: &str,
+    function: Option<&str>,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    let operation = terminal_identifier(resolved_callee).to_ascii_lowercase();
+    if !matches!(
+        operation.as_str(),
+        "exec" | "execsync" | "execfile" | "execfilesync" | "spawn" | "spawnsync" | "fork"
+    ) {
+        return;
+    }
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return;
+    };
+    let vector_api = matches!(
+        operation.as_str(),
+        "execfile" | "execfilesync" | "spawn" | "spawnsync" | "fork"
+    );
+    let options_index = if vector_api { 2 } else { 1 };
+    let options = arguments.named_child(options_index);
+    let shell_enabled = options
+        .and_then(|options| object_property_value(options, content, "shell"))
+        .and_then(|value| static_boolean(value, content))
+        == Some(true);
+    if let Some(program) = arguments.named_child(0) {
+        let boundary = if vector_api {
+            ExecutionBoundaryKind::Binary
+        } else {
+            ExecutionBoundaryKind::ShellProgram
+        };
+        append_process_boundary_record(
+            path,
+            content,
+            program,
+            boundary,
+            raw_callee,
+            resolved_callee,
+            function,
+            provenance,
+            records,
+        );
+    }
+    if vector_api
+        && let Some(argv) = arguments.named_child(1)
+        && matches!(argv.kind(), "array" | "array_expression")
+    {
+        for index in 0..argv.named_child_count() {
+            if let Some(value) = argv.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                append_process_boundary_record(
+                    path,
+                    content,
+                    value,
+                    if shell_enabled {
+                        ExecutionBoundaryKind::ShellProgram
+                    } else {
+                        ExecutionBoundaryKind::Argv
+                    },
+                    raw_callee,
+                    resolved_callee,
+                    function,
+                    provenance,
+                    records,
+                );
+            }
+        }
+    }
+    let Some(options) =
+        options.filter(|node| matches!(node.kind(), "object" | "object_expression"))
+    else {
+        return;
+    };
+    append_process_option_boundary_records(
+        path,
+        content,
+        options,
+        raw_callee,
+        resolved_callee,
+        function,
+        provenance,
+        records,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_process_option_boundary_records(
+    path: &str,
+    content: &[u8],
+    options: Node<'_>,
+    raw_callee: &str,
+    resolved_callee: &str,
+    function: Option<&str>,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    if let Some(cwd) = object_property_value(options, content, "cwd") {
+        append_process_boundary_record(
+            path,
+            content,
+            cwd,
+            ExecutionBoundaryKind::WorkingDirectory,
+            raw_callee,
+            resolved_callee,
+            function,
+            provenance,
+            records,
+        );
+    }
+    if let Some(shell) = object_property_value(options, content, "shell") {
+        append_process_boundary_record(
+            path,
+            content,
+            shell,
+            ExecutionBoundaryKind::ShellMode,
+            raw_callee,
+            resolved_callee,
+            function,
+            provenance,
+            records,
+        );
+    }
+    if let Some(environment) = object_property_value(options, content, "env")
+        && matches!(environment.kind(), "object" | "object_expression")
+    {
+        for index in 0..environment.named_child_count() {
+            let Some(property) = environment.named_child(u32::try_from(index).unwrap_or(u32::MAX))
+            else {
+                continue;
+            };
+            if matches!(property.kind(), "spread_element" | "spread_property") {
+                continue;
+            }
+            let value = property.child_by_field_name("value").or_else(|| {
+                matches!(
+                    property.kind(),
+                    "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+                )
+                .then_some(property)
+            });
+            if let Some(value) = value {
+                append_process_boundary_record(
+                    path,
+                    content,
+                    value,
+                    ExecutionBoundaryKind::Environment,
+                    raw_callee,
+                    resolved_callee,
+                    function,
+                    provenance,
+                    records,
+                );
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_process_boundary_record(
+    path: &str,
+    content: &[u8],
+    value: Node<'_>,
+    boundary: ExecutionBoundaryKind,
+    raw_callee: &str,
+    resolved_callee: &str,
+    function: Option<&str>,
+    provenance: &ParserProvenance,
+    records: &mut Vec<ProgramRecord>,
+) {
+    let inputs = if value.kind() == "call_expression" {
+        vec![call_output_key(value)]
+    } else if let Some(name) = expression_name(value, content) {
+        vec![name]
+    } else {
+        value_names(value, content)
+    };
+    if inputs.is_empty() || fixed_process_component(value, content) {
+        return;
+    }
+    let mut inputs = inputs;
+    inputs.push(format!(
+        "{EXECUTION_BOUNDARY_MARKER}{}",
+        execution_boundary_marker(boundary)
+    ));
+    let mut boundary_record = record(
+        "sink",
+        Some("configuration-process-boundary"),
+        function,
+        inputs,
+        None,
+        Some(resolved_callee),
+        location_for_node(path, content, value),
+        provenance,
+    );
+    boundary_record.raw_callee = (!raw_callee.is_empty()).then(|| raw_callee.to_owned());
+    records.push(boundary_record);
+}
+
+fn fixed_process_component(value: Node<'_>, content: &[u8]) -> bool {
+    matches!(
+        value.kind(),
+        "string" | "string_fragment" | "number" | "true" | "false" | "null" | "undefined"
+    ) || fixed_string(value, content)
+}
+
+fn execution_boundary_marker(boundary: ExecutionBoundaryKind) -> &'static str {
+    match boundary {
+        ExecutionBoundaryKind::Binary => "binary",
+        ExecutionBoundaryKind::ShellProgram => "shell-program",
+        ExecutionBoundaryKind::Argv => "argv",
+        ExecutionBoundaryKind::Environment => "environment",
+        ExecutionBoundaryKind::WorkingDirectory => "working-directory",
+        ExecutionBoundaryKind::ShellMode => "shell-mode",
+    }
+}
+
+fn object_property_value<'tree>(
+    object: Node<'tree>,
+    content: &[u8],
+    requested: &str,
+) -> Option<Node<'tree>> {
+    if !matches!(object.kind(), "object" | "object_expression") {
+        return None;
+    }
+    (0..object.named_child_count()).find_map(|index| {
+        let property = object.named_child(u32::try_from(index).ok()?)?;
+        if matches!(
+            property.kind(),
+            "shorthand_property_identifier" | "shorthand_property_identifier_pattern"
+        ) && expression_name(property, content).as_deref() == Some(requested)
+        {
+            return Some(property);
+        }
+        (static_property_key(property, content).as_deref() == Some(requested))
+            .then(|| {
+                property
+                    .child_by_field_name("value")
+                    .or_else(|| property.named_child(1))
+            })
+            .flatten()
+    })
+}
+
+fn static_boolean(node: Node<'_>, content: &[u8]) -> Option<bool> {
+    match node.kind() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => node
+            .utf8_text(content)
+            .ok()
+            .and_then(|text| match text.trim() {
+                "true" => Some(true),
+                "false" => Some(false),
+                _ => None,
+            }),
+    }
+}
+
+fn trust_scope_markers(condition: Node<'_>, content: &[u8]) -> Vec<String> {
+    let mut scopes = BTreeSet::new();
+    let mut stack = vec![condition];
+    while let Some(node) = stack.pop() {
+        if matches!(node.kind(), "member_expression" | "subscript_expression")
+            && expression_name(node, content)
+                .as_deref()
+                .is_some_and(|name| terminal_identifier(name).eq_ignore_ascii_case("isTrusted"))
+        {
+            scopes.insert("workspace".to_owned());
+        }
+        if node.kind() == "call_expression"
+            && let Some(callee) = call_callee(node, content)
+            && matches!(
+                compact_identifier(terminal_identifier(&callee)).as_str(),
+                "istrustedscope" | "isworkspacetrusted"
+            )
+            && let Some(scope) = node
+                .child_by_field_name("arguments")
+                .and_then(|arguments| arguments.named_child(0))
+                .and_then(|argument| expression_name(argument, content))
+        {
+            scopes.insert(scope);
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    scopes
+        .into_iter()
+        .flat_map(|scope| {
+            [
+                format!("{TRUST_SCOPE_MARKER}{scope}"),
+                TRUST_STATE_MARKER.into(),
+            ]
+        })
+        .collect()
+}
+
+fn compact_identifier(value: &str) -> String {
+    value
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3017,6 +3682,16 @@ fn record_semantic(
     callee: Option<&str>,
     inputs: &[String],
 ) -> Option<EvidenceSemantic> {
+    if kind == "source" && name == Some("execution-configuration") {
+        let provenance = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(CONFIGURATION_PROVENANCE_MARKER))
+            .and_then(configuration_provenance_from_marker)
+            .unwrap_or(ConfigurationProvenance::Unknown);
+        return Some(crate::semantics::classified_configuration_source(
+            provenance,
+        ));
+    }
     if kind == "source" && name == Some("sensitive-configuration") {
         let data_class = inputs
             .iter()
@@ -3033,7 +3708,40 @@ fn record_semantic(
             .unwrap_or(DisclosureLocality::Unknown);
         return Some(crate::semantics::classified_disclosure_sink(locality));
     }
+    if kind == "sink" && name == Some("configuration-process-boundary") {
+        let boundary = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(EXECUTION_BOUNDARY_MARKER))
+            .and_then(execution_boundary_from_marker)?;
+        return Some(crate::semantics::classified_execution_boundary(boundary));
+    }
     crate::semantics::for_record(kind, name, callee)
+}
+
+fn configuration_provenance_from_marker(value: &str) -> Option<ConfigurationProvenance> {
+    match value {
+        "global" => Some(ConfigurationProvenance::Global),
+        "user" => Some(ConfigurationProvenance::User),
+        "workspace" => Some(ConfigurationProvenance::Workspace),
+        "workspace-folder" => Some(ConfigurationProvenance::WorkspaceFolder),
+        "environment" => Some(ConfigurationProvenance::Environment),
+        "manifest-default" => Some(ConfigurationProvenance::ManifestDefault),
+        "runtime-mutation" => Some(ConfigurationProvenance::RuntimeMutation),
+        "unknown" => Some(ConfigurationProvenance::Unknown),
+        _ => None,
+    }
+}
+
+fn execution_boundary_from_marker(value: &str) -> Option<ExecutionBoundaryKind> {
+    match value {
+        "binary" => Some(ExecutionBoundaryKind::Binary),
+        "shell-program" => Some(ExecutionBoundaryKind::ShellProgram),
+        "argv" => Some(ExecutionBoundaryKind::Argv),
+        "environment" => Some(ExecutionBoundaryKind::Environment),
+        "working-directory" => Some(ExecutionBoundaryKind::WorkingDirectory),
+        "shell-mode" => Some(ExecutionBoundaryKind::ShellMode),
+        _ => None,
+    }
 }
 
 fn add_control_and_call_edges(
@@ -3525,6 +4233,190 @@ fn receiver_binding_is_stable(
     })
 }
 
+fn configuration_trace_is_risky(trace: &Trace, builder: &GraphBuilder) -> bool {
+    builder
+        .nodes
+        .get(&trace.source_node)
+        .and_then(|node| node.semantic.as_ref())
+        .is_some_and(|semantic| {
+            semantic.role == EvidenceSemanticRole::ConfigurationSource
+                && matches!(
+                    semantic.configuration_provenance,
+                    Some(
+                        ConfigurationProvenance::Workspace
+                            | ConfigurationProvenance::WorkspaceFolder
+                            | ConfigurationProvenance::Environment
+                    )
+                )
+        })
+}
+
+fn configuration_source_is_proven(
+    trace: &Trace,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    records: &[&ProgramRecord],
+) -> bool {
+    let provenance = trace_marker(&trace.values, CONFIGURATION_PROVENANCE_MARKER);
+    if provenance == Some("environment") {
+        return !records.iter().any(|record| {
+            record.location.path == trace.source_path
+                && record.function == trace.source_function
+                && record.location.span.start_byte < trace.source_start
+                && record.output.as_deref() == Some("process")
+        });
+    }
+    let Some(provider) = trace_marker(&trace.values, CONFIGURATION_PROVIDER_MARKER) else {
+        return false;
+    };
+    let Some(bindings) = import_bindings.get(&trace.source_path) else {
+        return false;
+    };
+    let (local, namespace) = provider
+        .strip_suffix(".workspace")
+        .map_or((provider, false), |local| (local, true));
+    let matching = bindings
+        .iter()
+        .filter(|binding| binding.module == "vscode")
+        .filter(|binding| {
+            binding.local == local
+                && if namespace {
+                    matches!(binding.imported.as_str(), "*" | "default")
+                } else {
+                    binding.imported == "workspace"
+                }
+        })
+        .filter(|_| {
+            import_binding_is_stable_before(
+                &trace.source_path,
+                trace.source_function.as_deref(),
+                local,
+                trace.source_start,
+                records,
+            )
+        })
+        .count();
+    matching == 1
+}
+
+fn child_process_boundary_is_proven(
+    boundary: &ProgramRecord,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    records: &[&ProgramRecord],
+) -> bool {
+    let Some(raw_callee) = boundary.raw_callee.as_deref() else {
+        return false;
+    };
+    let parts = raw_callee.split('.').collect::<Vec<_>>();
+    let (local, imported) = match parts.as_slice() {
+        [local] => (
+            *local,
+            terminal_identifier(boundary.callee.as_deref().unwrap_or_default()),
+        ),
+        [namespace, operation] => (*namespace, *operation),
+        _ => return false,
+    };
+    if !matches!(
+        imported.to_ascii_lowercase().as_str(),
+        "exec" | "execsync" | "execfile" | "execfilesync" | "spawn" | "spawnsync" | "fork"
+    ) {
+        return false;
+    }
+    let Some(bindings) = import_bindings.get(&boundary.location.path) else {
+        return false;
+    };
+    let matching = bindings
+        .iter()
+        .filter(|binding| {
+            matches!(
+                binding.module.as_str(),
+                "child_process" | "node:child_process"
+            )
+        })
+        .filter(|binding| {
+            binding.local == local
+                && (binding.imported == imported
+                    || (parts.len() == 2 && matches!(binding.imported.as_str(), "*" | "default")))
+        })
+        .filter(|_| {
+            import_binding_is_stable_before(
+                &boundary.location.path,
+                boundary.function.as_deref(),
+                local,
+                boundary.location.span.start_byte,
+                records,
+            )
+        })
+        .count();
+    matching == 1
+}
+
+fn import_binding_is_stable_before(
+    path: &str,
+    function: Option<&str>,
+    local: &str,
+    before: u64,
+    records: &[&ProgramRecord],
+) -> bool {
+    !records.iter().any(|record| {
+        record.location.path == path
+            && record.location.span.start_byte < before
+            && record.kind != "import-binding"
+            && (record.function.as_deref() == function || record.function.is_none())
+            && record.output.as_deref() == Some(local)
+    })
+}
+
+fn matching_fresh_trust_guard(
+    trace: &Trace,
+    sink: &ProgramRecord,
+    guards: &[&ProgramRecord],
+    records: &[&ProgramRecord],
+) -> bool {
+    let provenance = trace_marker(&trace.values, CONFIGURATION_PROVENANCE_MARKER);
+    if provenance == Some("environment") {
+        return false;
+    }
+    if !matches!(provenance, Some("workspace" | "workspace-folder")) {
+        return false;
+    }
+    let Some(scope) = trace_marker(&trace.values, CONFIGURATION_SCOPE_MARKER) else {
+        return false;
+    };
+    let expected_scope = format!("{TRUST_SCOPE_MARKER}{scope}");
+    guards.iter().copied().any(|guard| {
+        guard.name.as_deref() == Some(crate::semantics::POLICY_WORKSPACE_TRUST)
+            && guard.inputs.iter().any(|input| input == TRUST_STATE_MARKER)
+            && guard.inputs.iter().any(|input| input == &expected_scope)
+            && !records.iter().any(|transition| {
+                transition.kind == "trust-transition"
+                    && transition.location.path == sink.location.path
+                    && transition.function == sink.function
+                    && transition.location.span.start_byte >= guard.location.span.end_byte
+                    && transition.location.span.start_byte < sink.location.span.start_byte
+            })
+    })
+}
+
+fn configuration_composition_abstains(sink: &ProgramRecord, records: &[&ProgramRecord]) -> bool {
+    records.iter().any(|record| {
+        record.kind == "configuration-abstention"
+            && record.location.path == sink.location.path
+            && record.function == sink.function
+            && record.location.span.start_byte < sink.location.span.start_byte
+            && (record.name.as_deref() == Some("decision-cache-scope-unresolved")
+                || record.dominance_start.is_some_and(|start| {
+                    start <= sink.location.span.start_byte
+                        && record
+                            .dominance_end
+                            .is_some_and(|end| sink.location.span.start_byte < end)
+                }))
+    })
+}
+
+fn trace_marker<'a>(values: &'a BTreeSet<String>, prefix: &str) -> Option<&'a str> {
+    values.iter().find_map(|value| value.strip_prefix(prefix))
+}
+
 fn add_candidate(
     rule_id: &'static str,
     trace: &Trace,
@@ -3778,6 +4670,11 @@ fn finding_limitations(rule_id: &str, locality: Option<&DisclosureLocality>) -> 
             "Static analysis does not prove feature reachability, port discovery, connection-race success, exposure duration, firewall behavior, protocol impact, or exploitability".into(),
             "This is a network-exposure lead for manual validation, not a vulnerability verdict".into(),
         ],
+        ("SE1012", _) => vec![
+            "Static analysis does not prove effective runtime configuration precedence, feature reachability, executable resolution, platform behavior, or security impact".into(),
+            "Executable-specific argv, environment, cwd, shell, and inherited-state semantics require human validation".into(),
+            "This is a trust-composition lead for manual validation, not a vulnerability verdict".into(),
+        ],
         _ => vec![
             "Bounded static analysis does not model runtime framework middleware".into(),
         ],
@@ -3819,6 +4716,18 @@ fn lead_context_for(rule_id: &str, locality: Option<&DisclosureLocality>) -> Opt
                 "Runtime address-family defaults may vary by Node.js version and platform".into(),
                 "Host firewall, namespace, container, VPN, and routing policy may prevent peer reachability".into(),
                 "A peer must discover the port and connect before the intended client or shutdown".into(),
+            ],
+        }),
+        ("SE1012", _) => Some(LeadContext {
+            actor: "Workspace, workspace-folder, or runtime environment authority controlling the demonstrated configuration layer".into(),
+            trust_boundary: "Configuration authority to child-process execution boundary".into(),
+            receiver: "Process binary, shell program, argv, environment, working directory, or shell mode".into(),
+            locality: DisclosureLocality::Unknown,
+            activation: "The enclosing feature path must load the demonstrated configuration value and launch the child process".into(),
+            exposure_window: "Begins when configuration is resolved and ends at process creation; intervening state changes and lifecycle reachability require validation".into(),
+            environmental_constraints: vec![
+                "Effective configuration precedence and supported workspace trust behavior must be confirmed".into(),
+                "Executable resolution, operating-system policy, inherited state, and executable-specific semantics vary by runtime and platform".into(),
             ],
         }),
         _ => None,
@@ -3892,6 +4801,11 @@ fn analysis_limitations(
         crate::Limitation { code: "semantic-resolution-bounded".into(), message: "Semantic identities, aliases, guards, and value correspondence are resolved only from deterministic local syntax within configured graph and inter-procedural bounds".into() },
         crate::Limitation { code: "framework-middleware-not-modeled".into(), message: "Authentication supplied only by external framework middleware is not proven by this phase".into() },
     ];
+    let records = units
+        .iter()
+        .flat_map(|unit| &unit.records)
+        .collect::<Vec<_>>();
+    limitations.extend(trust_composition_limitations(&records));
     if units
         .iter()
         .flat_map(|unit| &unit.records)
@@ -3953,6 +4867,44 @@ fn analysis_limitations(
         limitations.push(crate::Limitation {
             code: "go-interface-callback-limited".into(),
             message: "Ambiguous interface dispatch, callbacks, reflection, and generated Go are not resolved".into(),
+        });
+    }
+    limitations
+}
+
+fn trust_composition_limitations(records: &[&ProgramRecord]) -> Vec<crate::Limitation> {
+    let mut limitations = Vec::new();
+    if records
+        .iter()
+        .any(|record| record.kind == "configuration-abstention")
+    {
+        limitations.push(crate::Limitation {
+            code: "trust-composition-abstained".into(),
+            message: "Effective configuration precedence, dynamic projection, mutation, lifecycle reachability, or same-scope trust could not be proven; no trust-composition proof was invented".into(),
+        });
+    }
+    if records.iter().any(|record| {
+        record
+            .raw_callee
+            .as_deref()
+            .or(record.callee.as_deref())
+            .is_some_and(|callee| {
+                terminal_identifier(callee).eq_ignore_ascii_case("get")
+                    && callee.to_ascii_lowercase().contains("cache")
+            })
+    }) {
+        limitations.push(crate::Limitation {
+            code: "decision-cache-scope-unresolved".into(),
+            message: "Cache or memoization decisions are not trusted unless repository, workspace, tenant, scope, and state-transition provenance are explicit in the supported key shape".into(),
+        });
+    }
+    if records
+        .iter()
+        .any(|record| record.name.as_deref() == Some("configuration-process-boundary"))
+    {
+        limitations.push(crate::Limitation {
+            code: "process-runtime-state-not-proven".into(),
+            message: "Static process-boundary evidence does not prove platform executable resolution, inherited descriptors or environment, permissions, lifecycle reachability, or executable-specific argv behavior".into(),
         });
     }
     limitations
@@ -6329,6 +7281,14 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
 }
 
 fn rule_accepts_trace_source(rule_id: &str, trace: &Trace, builder: &GraphBuilder) -> bool {
+    if builder
+        .nodes
+        .get(&trace.source_node)
+        .and_then(|node| node.semantic.as_ref())
+        .is_some_and(|semantic| semantic.role == EvidenceSemanticRole::ConfigurationSource)
+    {
+        return rule_id == "SE1012";
+    }
     if rule_id != "SE1010" {
         return true;
     }
@@ -7604,7 +8564,10 @@ fn direct_call_dominance(call: Node<'_>, function: Option<&FunctionInfo>) -> Opt
 
 fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Option<&'static str> {
     let lower = condition.utf8_text(content).ok()?.to_ascii_lowercase();
-    if lower.contains("vscode.workspace.istrusted") || lower.contains("workspace.istrusted") {
+    if inputs.iter().any(|input| input == TRUST_STATE_MARKER)
+        || lower.contains("vscode.workspace.istrusted")
+        || lower.contains("workspace.istrusted")
+    {
         return Some(crate::semantics::POLICY_WORKSPACE_TRUST);
     }
     if [
@@ -8053,6 +9016,33 @@ fn authorization_guard_survives_try_context(
     try_context_preserves_exit(node, function, content, exits)
 }
 
+fn loop_exit_guard_survives_context(
+    node: Node<'_>,
+    function: &FunctionInfo,
+    content: &[u8],
+) -> bool {
+    if !node
+        .child_by_field_name("consequence")
+        .is_some_and(|branch| branch_ends_with_loop_exit(branch, content))
+    {
+        return false;
+    }
+    let mut current = node.parent();
+    while let Some(ancestor) = current {
+        if ancestor.kind() == "try_statement" {
+            return false;
+        }
+        if u64::try_from(ancestor.start_byte()).unwrap_or(u64::MAX)
+            <= function.location.span.start_byte
+            && u64::try_from(ancestor.end_byte()).unwrap_or(0) >= function.location.span.end_byte
+        {
+            break;
+        }
+        current = ancestor.parent();
+    }
+    true
+}
+
 fn return_survives_try_context(node: Node<'_>, function: &FunctionInfo, content: &[u8]) -> bool {
     try_context_preserves_exit(node, function, content, Some(ExitKinds::returning()))
 }
@@ -8419,7 +9409,14 @@ fn branch_returns_nullish(node: Node<'_>, content: &[u8]) -> bool {
 }
 
 fn branch_fails_closed(node: Node<'_>, content: &[u8]) -> bool {
-    if matches!(node.kind(), "return_statement" | "throw_statement") {
+    if matches!(
+        node.kind(),
+        "return_statement" | "throw_statement" | "continue_statement" | "break_statement"
+    ) {
+        return true;
+    }
+    let text = node.utf8_text(content).unwrap_or_default().trim();
+    if text.starts_with("continue") || text.starts_with("break") {
         return true;
     }
     if node.kind() == "expression_statement"
@@ -8737,10 +9734,15 @@ fn if_guard_dominance(
     let consequence = statement.child_by_field_name("consequence")?;
     let condition_text = condition.utf8_text(content).ok()?;
     if condition_rejects_invalid(condition_text) && branch_fails_closed(consequence, content) {
-        return Some((
-            u64::try_from(statement.end_byte()).ok()?,
-            function.location.span.end_byte,
-        ));
+        let dominance_end = if branch_ends_with_loop_exit(consequence, content) {
+            statement
+                .parent()
+                .and_then(|parent| u64::try_from(parent.end_byte()).ok())
+                .unwrap_or(function.location.span.end_byte)
+        } else {
+            function.location.span.end_byte
+        };
+        return Some((u64::try_from(statement.end_byte()).ok()?, dominance_end));
     }
     if !condition_rejects_invalid(condition_text) {
         return Some((
@@ -8749,6 +9751,24 @@ fn if_guard_dominance(
         ));
     }
     None
+}
+
+fn branch_ends_with_loop_exit(node: Node<'_>, content: &[u8]) -> bool {
+    if matches!(node.kind(), "continue_statement" | "break_statement") {
+        return true;
+    }
+    let text = node.utf8_text(content).unwrap_or_default().trim();
+    if text.starts_with("continue") || text.starts_with("break") {
+        return true;
+    }
+    if node.kind() == "statement_block" {
+        return node
+            .named_child_count()
+            .checked_sub(1)
+            .and_then(|index| node.named_child(u32::try_from(index).ok()?))
+            .is_some_and(|last| branch_ends_with_loop_exit(last, content));
+    }
+    false
 }
 
 fn condition_contains_conjunction(condition: Node<'_>, content: &[u8]) -> bool {
@@ -11282,5 +12302,32 @@ mod performance_tests {
                 assert_eq!(indexed_function, expected_function);
             }
         }
+    }
+
+    #[test]
+    fn scoped_trust_continue_dominates_only_the_current_loop_iteration()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = b"declare function isTrustedScope(value: unknown): boolean; declare function use(value: unknown): void; export function run(items: Array<{ uri: unknown }>) { for (const item of items) { if (!isTrustedScope(item.uri)) continue; use(item.uri); } }";
+        let output = crate::parser::parse_source(
+            "loop.ts",
+            source,
+            crate::parser::ParserMode::TypeScript,
+            &ScanConfiguration::default(),
+            &CancellationToken::new(),
+        )?;
+        let guards = output
+            .program
+            .records
+            .iter()
+            .filter(|record| record.kind == "guard")
+            .collect::<Vec<_>>();
+        assert_eq!(guards.len(), 1, "records: {:#?}", output.program.records);
+        assert_eq!(
+            guards[0].name.as_deref(),
+            Some(crate::semantics::POLICY_WORKSPACE_TRUST)
+        );
+        assert!(guards[0].dominance_start.is_some());
+        assert!(guards[0].dominance_end.is_some());
+        Ok(())
     }
 }

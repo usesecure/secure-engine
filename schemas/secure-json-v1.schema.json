@@ -397,11 +397,13 @@
       "required": ["role", "identity", "certainty"],
       "properties": {
         "semantics_version": { "type": "string", "minLength": 1 },
-        "role": { "enum": ["untrusted-source", "sensitive-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink", "receiver"] },
-        "identity": { "type": "string", "pattern": "^(untrusted|sensitive|transformation|guard|sanitizer|sink|receiver)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "role": { "enum": ["untrusted-source", "sensitive-source", "configuration-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink", "receiver"] },
+        "identity": { "type": "string", "pattern": "^(untrusted|sensitive|configuration|transformation|guard|sanitizer|sink|receiver)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
         "policy": { "type": "string", "minLength": 1 },
         "authorization": { "enum": ["authentication", "role", "ownership", "tenant", "general"] },
         "data_class": { "enum": ["ordinary-configuration", "credential", "token", "personally-identifiable-information", "unknown-sensitive"] },
+        "configuration_provenance": { "enum": ["global", "user", "workspace", "workspace-folder", "environment", "manifest-default", "runtime-mutation", "unknown"] },
+        "execution_boundary": { "enum": ["binary", "shell-program", "argv", "environment", "working-directory", "shell-mode"] },
         "locality": { "enum": ["local-diagnostic", "remote-service", "network-listener", "unknown"] },
         "certainty": { "enum": ["proven", "uncertain"] }
       }
