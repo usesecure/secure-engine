@@ -10,11 +10,11 @@ use secure_engine::{
     AiCache, AiError, AiProjectConfiguration, AiValidationDocument, Baseline, CacheControl,
     CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ExportFormat, HistoryStore,
     ProgressEvent, SCHEMA_VERSION, SECURE_AI_ASSESSMENT_V1_SCHEMA, SECURE_JSON_V1_SCHEMA,
-    ScanError, ScanReport, ScanRequest, Suppression, compare_baseline, configured_provider,
-    create_baseline, default_ai_cache_directory, default_history_directory, explain_finding,
-    preview_finding, provider_descriptors, read_ai_configuration, rules, scan_repository,
-    serialize_export, validate_baseline, validate_finding_with_ai, validation_document,
-    write_export, write_json_artifact,
+    ScanError, ScanReport, ScanRequest, Suppression, compact_report_graph, compare_baseline,
+    configured_provider, create_baseline, default_ai_cache_directory, default_history_directory,
+    explain_finding, preview_finding, provider_descriptors, read_ai_configuration, rules,
+    scan_repository, serialize_export, validate_baseline, validate_finding_with_ai,
+    validation_document, write_export, write_json_artifact,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -231,6 +231,9 @@ struct ScanArgs {
     /// Maximum findings retained after deduplication.
     #[arg(long, default_value_t = 10_000)]
     max_findings: usize,
+    /// Retain the complete global evidence graph instead of the finding-evidence projection.
+    #[arg(long)]
+    full_graph: bool,
     /// Exact suppression: `RULE_ID:RELATIVE_PATH:START_BYTE:REASON`. Repeatable.
     #[arg(long = "suppress", value_name = "RULE:PATH:BYTE:REASON")]
     suppressions: Vec<String>,
@@ -425,12 +428,15 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     let quiet = arguments.quiet;
     let verbose = arguments.verbose;
     let repository_path = request.repository.clone();
-    let report = scan_repository(&request, &cancellation, |event| {
+    let mut report = scan_repository(&request, &cancellation, |event| {
         print_progress(&event, quiet, verbose);
     })
     .map_err(scan_error)?;
     if cancellation.is_cancelled() {
         return Err((EXIT_CANCELLED, "scan cancelled".into()));
+    }
+    if !arguments.full_graph {
+        compact_report_graph(&mut report).map_err(scan_error)?;
     }
 
     if let Some(output) = arguments.output {

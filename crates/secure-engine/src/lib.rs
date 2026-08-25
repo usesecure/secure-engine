@@ -33,7 +33,8 @@ pub use graph::rules;
 pub use history::*;
 pub use model::*;
 pub use sarif::*;
-pub use scan::{CancellationToken, ScanError, scan_repository};
+pub use scan::{CancellationToken, ScanError, compact_report_graph, scan_repository};
+pub use semantics::GRAPH_EVIDENCE_SEMANTICS_VERSION;
 pub use source::*;
 pub use taxonomy::*;
 
@@ -45,6 +46,9 @@ pub fn explain_finding<'a>(report: &'a ScanReport, finding_id: &str) -> Option<&
 
 /// Public schema identifier implemented by this engine release.
 pub const SCHEMA_VERSION: &str = "secure-json-v1";
+
+/// Versioned lead-evidence maturity taxonomy used by deterministic findings.
+pub const EVIDENCE_STATE_TAXONOMY_VERSION: &str = "secure-evidence-state-v1";
 
 /// Engine version embedded in every machine-readable document.
 pub const ENGINE_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -6,12 +6,13 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::Node;
 
 use crate::{
-    AnalysisSummary, CancellationToken, EvidenceEdge, EvidenceGraph, EvidenceNode,
-    EvidencePathStep, EvidenceSemantic, Finding, NormalizedFact, ParserProvenance, RuleMetadata,
-    ScanConfiguration, ScanError, SourceLocation, SourceSpan, SuppressionDiagnostic,
+    AnalysisSummary, CancellationToken, DisclosureLocality, EvidenceDataClass, EvidenceEdge,
+    EvidenceGraph, EvidenceNode, EvidencePathStep, EvidenceSemantic, EvidenceSemanticRole,
+    EvidenceState, EvidenceStateKind, Finding, LeadContext, NormalizedFact, ParserProvenance,
+    RuleMetadata, ScanConfiguration, ScanError, SourceLocation, SourceSpan, SuppressionDiagnostic,
 };
 
-pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v1";
+pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v2";
 const MAX_RECORD_NAME_BYTES: usize = 512;
 const MAX_FIXED_POINT_PASSES: usize = 12;
 const MAX_LOCAL_VALUE_DEPTH: usize = 16;
@@ -28,6 +29,11 @@ const SHELL_PROGRAM_VALUE_MARKER: &str = "@identity:shell-program-value:";
 const SHELL_INTERPRETER_MARKER: &str = "@identity:shell-interpreter:";
 const SHELL_COMMAND_OPTION_MARKER: &str = "@identity:shell-command-option:";
 const OBJECT_PROPERTY_RECORD_NAME: &str = "object-property-identity";
+const NETWORK_RECEIVER_MARKER: &str = "@receiver:";
+const NETWORK_HOST_OMITTED_MARKER: &str = "@bind:host-omitted";
+const DATA_CLASS_MARKER: &str = "@data-class:";
+const DISCLOSURE_LOCALITY_MARKER: &str = "@disclosure-locality:";
+const GRAPH_FINGERPRINT_COMPATIBILITY_VERSION: &str = "secure-evidence-graph-v1";
 
 struct ShellProgramText<'tree> {
     interpreter: &'static str,
@@ -127,6 +133,7 @@ struct Trace {
     source_specificity: u8,
     local_value_depth: usize,
     interprocedural_depth: usize,
+    call_bindings: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -829,6 +836,15 @@ pub(crate) fn analyze(
         .saturating_mul(configuration.max_interprocedural_depth.saturating_add(1))
         .min(configuration.max_graph_edges);
     let mut candidate_limit_reached = false;
+    candidate_limit_reached |= add_network_listener_candidates(
+        &all_records,
+        &record_nodes,
+        &import_bindings,
+        &guards,
+        &mut builder,
+        &mut candidates,
+        candidate_budget,
+    );
     let legacy_passes = configuration.max_interprocedural_depth.saturating_add(2);
     let passes = legacy_passes.max(MAX_FIXED_POINT_PASSES);
     for pass in 0..passes {
@@ -868,6 +884,7 @@ pub(crate) fn analyze(
                                 },
                                 local_value_depth: 0,
                                 interprocedural_depth: 0,
+                                call_bindings: Vec::new(),
                             },
                         );
                     }
@@ -1117,6 +1134,7 @@ pub(crate) fn analyze(
                     let tainted_trace = trace_for_inputs(&snapshot, &function, &sink_inputs);
                     if let Some(trace) = tainted_trace.as_ref()
                         && let Some(rule_id) = rule_for_sink(record)
+                        && rule_accepts_trace_source(rule_id, trace, &builder)
                     {
                         let dominant = dominating_guard_records(record, &guards);
                         let sanitized = trace_is_sanitized_for(
@@ -1212,6 +1230,9 @@ pub(crate) fn analyze(
     }
 
     let mut graph = EvidenceGraph {
+        scope: "full".into(),
+        total_nodes: builder.nodes.len(),
+        total_edges: builder.edges.len(),
         nodes: builder.nodes.into_values().collect(),
         edges: builder.edges.into_values().collect(),
     };
@@ -1293,7 +1314,7 @@ impl RuleDefinition {
     }
 }
 
-const RULES: [RuleDefinition; 10] = [
+const RULES: [RuleDefinition; 11] = [
     RuleDefinition {
         id: "SE1001",
         title: "Untrusted input reaches command execution",
@@ -1419,17 +1440,32 @@ const RULES: [RuleDefinition; 10] = [
     },
     RuleDefinition {
         id: "SE1010",
-        title: "Sensitive configuration reaches an external disclosure sink",
+        title: "Sensitive data reaches a disclosure boundary",
         category: "sensitive-data-exposure",
-        severity: "high",
+        severity: "medium",
         confidence: "high",
-        invariant: "Secrets must not be sent to logs or model-provider payloads",
+        invariant: "Classified sensitive data must not cross an unintended disclosure boundary",
         prerequisites: &[
             "The named configuration value contains a live secret",
-            "The log or external provider receives the demonstrated value",
+            "The demonstrated receiver persists or transmits the value",
         ],
         impact: "Credentials can persist in logs, traces, model inputs, or provider retention systems",
         remediation: "Remove secrets from payloads and log only explicit redacted metadata",
+    },
+    RuleDefinition {
+        id: "SE1011",
+        title: "Potential non-loopback Node listener requires validation",
+        category: "network-exposure",
+        severity: "low",
+        confidence: "medium",
+        invariant: "Transient local service listeners should bind to an explicit loopback host unless remote access is intended",
+        prerequisites: &[
+            "The enclosing feature path creates the listener",
+            "The runtime default selects a reachable non-loopback interface",
+            "A network peer learns the ephemeral port and wins any connection race",
+        ],
+        impact: "A reachable peer could connect to a transient process-local protocol endpoint",
+        remediation: "Pass an explicit loopback host and retain protocol-level peer validation where supported",
     },
 ];
 
@@ -1454,8 +1490,19 @@ fn collect_functions(
             let server_action =
                 (global_use_server && is_exported(node)) || function_has_use_server(node, content);
             let exported = is_exported(node);
-            let handler = next_handler || server_action || route_handlers.contains(&raw_name);
             let parameters = function_parameters(path, content, node);
+            let route_module_export = file_name(path).starts_with("route.")
+                && is_exported(node)
+                && parameters.first().is_some_and(|parameter| {
+                    matches!(
+                        parameter.name.to_ascii_lowercase().as_str(),
+                        "request" | "req"
+                    )
+                });
+            let handler = next_handler
+                || route_module_export
+                || server_action
+                || route_handlers.contains(&raw_name);
             functions.push(FunctionInfo {
                 qualified_name: format!("{path}::{raw_name}"),
                 name: raw_name,
@@ -1474,6 +1521,26 @@ fn collect_functions(
         }
     }
     functions.sort_by_key(|item| item.location.span.start_byte);
+    let duplicate_names =
+        functions
+            .iter()
+            .fold(BTreeMap::<String, usize>::new(), |mut counts, function| {
+                *counts.entry(function.name.clone()).or_default() += 1;
+                counts
+            });
+    for function in &mut functions {
+        if duplicate_names
+            .get(&function.name)
+            .copied()
+            .unwrap_or_default()
+            > 1
+        {
+            function.qualified_name = format!(
+                "{path}::{}@{}",
+                function.name, function.location.span.start_byte
+            );
+        }
+    }
     functions
 }
 
@@ -1676,13 +1743,13 @@ fn extract_record_for_node(
                     provenance,
                 ));
             } else if let Some(name) = expression_name(node, content)
-                && sensitive_environment_value(&name)
+                && let Some(data_class) = sensitive_environment_data_class(&name)
             {
                 records.push(record(
                     "source",
                     Some("sensitive-configuration"),
                     function_name,
-                    Vec::new(),
+                    vec![sensitive_data_class_marker(&data_class).into()],
                     Some(&name),
                     None,
                     location_for_node(path, content, node),
@@ -1844,7 +1911,15 @@ fn extract_record_for_node(
                 || resolve_alias(&raw_callee, function, aliases),
                 str::to_owned,
             );
+            let network_server_receiver =
+                assigned_network_server_receiver(node, content, &raw_callee);
+            let network_listener_receiver =
+                omitted_host_listener_receiver(node, content, &raw_callee);
             let mut inputs = argument_values(node, content);
+            if let Some(receiver) = &network_listener_receiver {
+                inputs.push(format!("{NETWORK_RECEIVER_MARKER}{receiver}"));
+                inputs.push(NETWORK_HOST_OMITTED_MARKER.into());
+            }
             let shell_program = shell_program_text(node, content, &callee);
             if let Some(program) = &shell_program {
                 inputs.push(SHELL_PROGRAM_MARKER.into());
@@ -1868,8 +1943,12 @@ fn extract_record_for_node(
             if shared_prototype_call(node, content, &callee) {
                 sink = Some("prototype-mutation");
             }
-            if sensitive_disclosure_call(&callee) {
+            if let Some(locality) = sensitive_disclosure_locality(&callee) {
                 sink = Some("sensitive-data-disclosure");
+                inputs.push(disclosure_locality_marker(&locality).into());
+            }
+            if network_listener_receiver.is_some() {
+                sink = Some("network-listener-bind");
             }
             if sink == Some("process-execution")
                 && shell_program.is_none()
@@ -1964,8 +2043,22 @@ fn extract_record_for_node(
                 provenance,
                 dominance,
             );
-            call_record.raw_callee = (!raw_callee.is_empty()).then_some(raw_callee);
+            call_record.raw_callee = (!raw_callee.is_empty()).then_some(raw_callee.clone());
             records.push(call_record);
+            if let Some(receiver) = network_server_receiver {
+                let mut receiver_record = record(
+                    "receiver",
+                    Some("node-network-server"),
+                    function_name,
+                    Vec::new(),
+                    Some(&receiver),
+                    Some(&callee),
+                    location_for_node(path, content, node),
+                    provenance,
+                );
+                receiver_record.raw_callee = (!raw_callee.is_empty()).then_some(raw_callee);
+                records.push(receiver_record);
+            }
         }
         "new_expression" => {
             if node
@@ -2898,6 +2991,7 @@ pub(crate) fn record_with_dominance(
         hash_value(&mut hasher, &end.to_le_bytes());
     }
     let fingerprint = hasher.finalize().to_hex().to_string();
+    let semantic = record_semantic(kind, name, callee, &inputs);
     ProgramRecord {
         record_id: format!("pr_{}", &fingerprint[..24]),
         kind: kind.into(),
@@ -2912,9 +3006,34 @@ pub(crate) fn record_with_dominance(
         provenance: provenance.clone(),
         dominance_start,
         dominance_end,
-        semantic: crate::semantics::for_record(kind, name, callee),
+        semantic,
         fingerprint,
     }
+}
+
+fn record_semantic(
+    kind: &str,
+    name: Option<&str>,
+    callee: Option<&str>,
+    inputs: &[String],
+) -> Option<EvidenceSemantic> {
+    if kind == "source" && name == Some("sensitive-configuration") {
+        let data_class = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(DATA_CLASS_MARKER))
+            .and_then(sensitive_data_class_from_marker)
+            .unwrap_or(EvidenceDataClass::UnknownSensitive);
+        return Some(crate::semantics::classified_sensitive_source(data_class));
+    }
+    if kind == "sink" && name == Some("sensitive-data-disclosure") {
+        let locality = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(DISCLOSURE_LOCALITY_MARKER))
+            .and_then(disclosure_locality_from_marker)
+            .unwrap_or(DisclosureLocality::Unknown);
+        return Some(crate::semantics::classified_disclosure_sink(locality));
+    }
+    crate::semantics::for_record(kind, name, callee)
 }
 
 fn add_control_and_call_edges(
@@ -3000,6 +3119,7 @@ fn unguarded_handler_traces(
                     source_specificity: 0,
                     local_value_depth: 0,
                     interprocedural_depth: 0,
+                    call_bindings: Vec::new(),
                 },
             ))
         })
@@ -3140,6 +3260,7 @@ fn propagate_local_call(
             let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
             parameter_trace.interprocedural_depth =
                 parameter_trace.interprocedural_depth.saturating_add(1);
+            parameter_trace.call_bindings.push(record.record_id.clone());
             for guard in dominating_guard_records(record, guards) {
                 let Some(policy) = guard.name.as_deref() else {
                     continue;
@@ -3171,6 +3292,13 @@ fn propagate_local_call(
         record.output.as_ref(),
         taints.get(&(callee_function.clone(), "@return".into())),
     ) {
+        let mut return_trace = return_trace.clone();
+        if let Some(binding) = return_trace.call_bindings.last() {
+            if binding != &record.record_id {
+                return;
+            }
+            return_trace.call_bindings.pop();
+        }
         let edge = builder.edge(
             "returns",
             return_trace
@@ -3181,7 +3309,7 @@ fn propagate_local_call(
             &record.location,
             &record.provenance,
         );
-        let mut caller_trace = extend_trace(return_trace, record_node, edge);
+        let mut caller_trace = extend_trace(&return_trace, record_node, edge);
         caller_trace.values.insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
@@ -3256,6 +3384,145 @@ fn parameter_argument_traces(
             )
         })
         .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn add_network_listener_candidates(
+    records: &[&ProgramRecord],
+    record_nodes: &BTreeMap<String, String>,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    guards: &BTreeMap<String, Vec<&ProgramRecord>>,
+    builder: &mut GraphBuilder,
+    candidates: &mut BTreeMap<String, Candidate>,
+    maximum_candidates: usize,
+) -> bool {
+    let receivers = records
+        .iter()
+        .copied()
+        .filter(|record| record.kind == "receiver")
+        .filter(|record| node_network_receiver_is_proven(record, import_bindings, records))
+        .collect::<Vec<_>>();
+    let mut limit_reached = false;
+    for bind in records.iter().copied().filter(|record| {
+        record.kind == "sink" && record.name.as_deref() == Some("network-listener-bind")
+    }) {
+        let Some(receiver_name) = bind
+            .inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(NETWORK_RECEIVER_MARKER))
+        else {
+            continue;
+        };
+        let matching = receivers
+            .iter()
+            .copied()
+            .filter(|receiver| {
+                receiver.function == bind.function
+                    && receiver.location.path == bind.location.path
+                    && receiver.output.as_deref() == Some(receiver_name)
+                    && receiver.location.span.start_byte < bind.location.span.start_byte
+                    && receiver_binding_is_stable(receiver, bind, receiver_name, records)
+            })
+            .collect::<Vec<_>>();
+        let [receiver] = matching.as_slice() else {
+            continue;
+        };
+        let (Some(receiver_node), Some(bind_node)) = (
+            record_nodes.get(&receiver.record_id),
+            record_nodes.get(&bind.record_id),
+        ) else {
+            continue;
+        };
+        let trace = Trace {
+            nodes: vec![receiver_node.clone()],
+            edges: Vec::new(),
+            source_function: receiver.function.clone(),
+            source_node: receiver_node.clone(),
+            source_path: receiver.location.path.clone(),
+            source_start: receiver.location.span.start_byte,
+            source_end: receiver.location.span.end_byte,
+            value_identity: receiver_name.to_owned(),
+            field_sensitive: false,
+            sanitizers: BTreeSet::new(),
+            values: BTreeSet::from([receiver_name.to_owned()]),
+            source_specificity: 3,
+            local_value_depth: 0,
+            interprocedural_depth: 0,
+            call_bindings: Vec::new(),
+        };
+        let guard_nodes = dominating_guards(bind, guards, record_nodes);
+        limit_reached |= add_candidate(
+            "SE1011",
+            &trace,
+            CandidateTarget {
+                node: bind_node,
+                guards: guard_nodes,
+                record: bind,
+            },
+            builder,
+            candidates,
+            maximum_candidates,
+        );
+    }
+    limit_reached
+}
+
+fn node_network_receiver_is_proven(
+    receiver: &ProgramRecord,
+    import_bindings: &BTreeMap<String, Vec<ImportBinding>>,
+    records: &[&ProgramRecord],
+) -> bool {
+    let Some(raw_callee) = receiver.raw_callee.as_deref() else {
+        return false;
+    };
+    let Some(bindings) = import_bindings.get(&receiver.location.path) else {
+        return false;
+    };
+    let parts = raw_callee.split('.').collect::<Vec<_>>();
+    let matching = bindings
+        .iter()
+        .filter(|binding| matches!(binding.module.as_str(), "net" | "node:net"))
+        .filter(|binding| match parts.as_slice() {
+            [local] => binding.local == *local && binding.imported == "createServer",
+            [namespace, "createServer"] => {
+                binding.local == *namespace && matches!(binding.imported.as_str(), "*" | "default")
+            }
+            _ => false,
+        })
+        .filter(|binding| network_import_binding_is_stable(receiver, binding, records))
+        .count();
+    matching == 1
+}
+
+fn network_import_binding_is_stable(
+    receiver: &ProgramRecord,
+    binding: &ImportBinding,
+    records: &[&ProgramRecord],
+) -> bool {
+    !records.iter().any(|record| {
+        record.location.path == receiver.location.path
+            && record.location.span.start_byte < receiver.location.span.start_byte
+            && record.kind != "import-binding"
+            && (record.output.as_deref() == Some(binding.local.as_str())
+                || (matches!(record.kind.as_str(), "function" | "handler")
+                    && record.name.as_deref() == Some(binding.local.as_str())))
+    })
+}
+
+fn receiver_binding_is_stable(
+    receiver: &ProgramRecord,
+    bind: &ProgramRecord,
+    receiver_name: &str,
+    records: &[&ProgramRecord],
+) -> bool {
+    !records.iter().any(|record| {
+        record.record_id != receiver.record_id
+            && record.location.path == bind.location.path
+            && record.function == bind.function
+            && record.output.as_deref() == Some(receiver_name)
+            && record.location.span.start_byte >= receiver.location.span.end_byte
+            && record.location.span.start_byte < bind.location.span.start_byte
+    })
 }
 
 fn add_candidate(
@@ -3337,12 +3604,10 @@ fn findings_from_candidates(
         let Some(source) = steps.first().map(|step| step.location.clone()) else {
             continue;
         };
-        let Some(sink) = nodes
-            .get(&candidate.sink_node)
-            .map(|node| node.location.clone())
-        else {
+        let Some(sink_node) = nodes.get(&candidate.sink_node) else {
             continue;
         };
+        let sink = sink_node.location.clone();
         let transformations = steps
             .iter()
             .filter(|step| {
@@ -3363,12 +3628,18 @@ fn findings_from_candidates(
         let taxonomy = crate::taxonomy::coordinates(rule.id);
         let evidence_contract_v2 =
             crate::evidence_contract::finding_contract_v2(taxonomy.as_ref(), rule.id, &steps);
+        let evidence_state_kind = evidence_state_for(rule.id, !guards.is_empty());
+        let verification_state = evidence_state_label(&evidence_state_kind).to_owned();
+        let locality = sink_node
+            .semantic
+            .as_ref()
+            .and_then(|semantic| semantic.locality.clone());
         findings.push(Finding {
             rule_id: rule.id.into(),
             finding_id: format!("fd_{}", &fingerprint[..24]),
-            title: rule.title.into(),
+            title: finding_title(rule, locality.as_ref()),
             category: rule.category.into(),
-            severity: rule.severity.into(),
+            severity: finding_severity(rule, locality.as_ref()).into(),
             confidence: rule.confidence.into(),
             evidence: steps.iter().map(|step| step.location.clone()).collect(),
             source: Some(source),
@@ -3380,17 +3651,16 @@ fn findings_from_candidates(
             taxonomy,
             primary_cwe: crate::taxonomy::primary_cwe(rule.id),
             taxonomy_provenance: crate::taxonomy::provenance(rule.id),
-            prerequisites: rule
-                .prerequisites
-                .iter()
-                .map(|item| (*item).into())
-                .collect(),
-            impact: rule.impact.into(),
+            prerequisites: finding_prerequisites(rule, locality.as_ref()),
+            impact: finding_impact(rule, locality.as_ref()),
             remediation: rule.remediation.into(),
-            verification_state: "verified-deterministic-path".into(),
-            limitations: vec![
-                "Bounded static analysis does not model runtime framework middleware".into(),
-            ],
+            verification_state,
+            evidence_state: Some(EvidenceState {
+                taxonomy_version: crate::EVIDENCE_STATE_TAXONOMY_VERSION.into(),
+                state: evidence_state_kind,
+            }),
+            lead_context: lead_context_for(rule.id, locality.as_ref()),
+            limitations: finding_limitations(rule.id, locality.as_ref()),
             fingerprint,
             semantic_fingerprint: Some(semantic_fingerprint),
             evidence_contract_v2,
@@ -3416,6 +3686,143 @@ fn findings_from_candidates(
             || left.fingerprint == right.fingerprint
     });
     apply_suppressions(findings, configuration)
+}
+
+fn evidence_state_for(rule_id: &str, has_guards: bool) -> EvidenceStateKind {
+    if rule_id == "SE1011" && !has_guards {
+        EvidenceStateKind::SyntacticLead
+    } else if rule_id == "SE1007" || has_guards {
+        EvidenceStateKind::GuardAwareLead
+    } else {
+        EvidenceStateKind::SemanticPath
+    }
+}
+
+fn evidence_state_label(state: &EvidenceStateKind) -> &'static str {
+    match state {
+        EvidenceStateKind::SyntacticLead => "syntactic-lead",
+        EvidenceStateKind::SemanticPath => "semantic-path",
+        EvidenceStateKind::GuardAwareLead => "guard-aware-lead",
+        EvidenceStateKind::ManuallyValidated => "manually-validated",
+    }
+}
+
+fn finding_title(rule: &RuleDefinition, locality: Option<&DisclosureLocality>) -> String {
+    if rule.id != "SE1010" {
+        return rule.title.into();
+    }
+    match locality {
+        Some(DisclosureLocality::LocalDiagnostic) => {
+            "Sensitive data reaches local diagnostic output".into()
+        }
+        Some(DisclosureLocality::RemoteService) => {
+            "Sensitive data reaches a remote service boundary".into()
+        }
+        _ => rule.title.into(),
+    }
+}
+
+fn finding_severity<'a>(
+    rule: &'a RuleDefinition,
+    locality: Option<&DisclosureLocality>,
+) -> &'a str {
+    if rule.id == "SE1010" && locality == Some(&DisclosureLocality::RemoteService) {
+        "high"
+    } else {
+        rule.severity
+    }
+}
+
+fn finding_prerequisites(
+    rule: &RuleDefinition,
+    locality: Option<&DisclosureLocality>,
+) -> Vec<String> {
+    let values: &[&str] = match (rule.id, locality) {
+        ("SE1010", Some(DisclosureLocality::LocalDiagnostic)) => &[
+            "The classified value contains live sensitive material",
+            "The local diagnostic receiver is enabled and observable or retained",
+        ],
+        ("SE1010", Some(DisclosureLocality::RemoteService)) => &[
+            "The classified value contains live sensitive material",
+            "The remote service call is reachable with the demonstrated payload",
+        ],
+        _ => rule.prerequisites,
+    };
+    values.iter().map(|value| (*value).into()).collect()
+}
+
+fn finding_impact(rule: &RuleDefinition, locality: Option<&DisclosureLocality>) -> String {
+    match (rule.id, locality) {
+        ("SE1010", Some(DisclosureLocality::LocalDiagnostic)) => {
+            "Sensitive material could be exposed to local diagnostic viewers or retained logs"
+                .into()
+        }
+        ("SE1010", Some(DisclosureLocality::RemoteService)) => {
+            "Sensitive material could enter remote request handling, tracing, or provider retention"
+                .into()
+        }
+        _ => rule.impact.into(),
+    }
+}
+
+fn finding_limitations(rule_id: &str, locality: Option<&DisclosureLocality>) -> Vec<String> {
+    match (rule_id, locality) {
+        ("SE1010", Some(DisclosureLocality::LocalDiagnostic)) => vec![
+            "Static analysis does not prove that diagnostic output is enabled, retained, or visible to another actor".into(),
+        ],
+        ("SE1010", Some(DisclosureLocality::RemoteService)) => vec![
+            "Static analysis does not prove runtime provider configuration, transport success, or retention behavior".into(),
+        ],
+        ("SE1011", _) => vec![
+            "Host omission is proven, but the runtime-selected interfaces and address family are not".into(),
+            "Static analysis does not prove feature reachability, port discovery, connection-race success, exposure duration, firewall behavior, protocol impact, or exploitability".into(),
+            "This is a network-exposure lead for manual validation, not a vulnerability verdict".into(),
+        ],
+        _ => vec![
+            "Bounded static analysis does not model runtime framework middleware".into(),
+        ],
+    }
+}
+
+fn lead_context_for(rule_id: &str, locality: Option<&DisclosureLocality>) -> Option<LeadContext> {
+    match (rule_id, locality) {
+        ("SE1010", Some(DisclosureLocality::LocalDiagnostic)) => Some(LeadContext {
+            actor: "Local user or process able to observe diagnostic output".into(),
+            trust_boundary: "Analyzed process to local diagnostic channel".into(),
+            receiver: "Local logger, console, or diagnostic output channel".into(),
+            locality: DisclosureLocality::LocalDiagnostic,
+            activation: "The enclosing code path and diagnostic receiver must be active".into(),
+            exposure_window: "Limited to runtime emission and any local retention period; both are unresolved statically".into(),
+            environmental_constraints: vec![
+                "Local permissions, log configuration, and retention determine observability".into(),
+            ],
+        }),
+        ("SE1010", Some(DisclosureLocality::RemoteService)) => Some(LeadContext {
+            actor: "Configured remote service or provider operator".into(),
+            trust_boundary: "Analyzed process to remote service".into(),
+            receiver: "Remote model or provider request API".into(),
+            locality: DisclosureLocality::RemoteService,
+            activation: "The enclosing request path and provider call must execute".into(),
+            exposure_window: "Begins when the outbound request is constructed; delivery and retention are unresolved statically".into(),
+            environmental_constraints: vec![
+                "Provider configuration, network policy, transport success, and retention policy require validation".into(),
+            ],
+        }),
+        ("SE1011", _) => Some(LeadContext {
+            actor: "Network peer with a route to an interface selected by the Node.js runtime".into(),
+            trust_boundary: "Host network to process-local Node.js listener".into(),
+            receiver: "Node.js net.Server created from the built-in net module".into(),
+            locality: DisclosureLocality::NetworkListener,
+            activation: "A user or automation must trigger the enclosing feature path that creates the listener; static reachability is unresolved".into(),
+            exposure_window: "Begins when listen(port) succeeds and ends when the server closes; duration and connection-race outcome are unresolved".into(),
+            environmental_constraints: vec![
+                "Runtime address-family defaults may vary by Node.js version and platform".into(),
+                "Host firewall, namespace, container, VPN, and routing policy may prevent peer reachability".into(),
+                "A peer must discover the port and connect before the intended client or shutdown".into(),
+            ],
+        }),
+        _ => None,
+    }
 }
 
 fn apply_suppressions(
@@ -5921,6 +6328,28 @@ fn rule_for_sink(record: &ProgramRecord) -> Option<&'static str> {
     }
 }
 
+fn rule_accepts_trace_source(rule_id: &str, trace: &Trace, builder: &GraphBuilder) -> bool {
+    if rule_id != "SE1010" {
+        return true;
+    }
+    builder
+        .nodes
+        .get(&trace.source_node)
+        .and_then(|node| node.semantic.as_ref())
+        .is_some_and(|semantic| {
+            semantic.role == EvidenceSemanticRole::SensitiveSource
+                && matches!(
+                    semantic.data_class,
+                    Some(
+                        EvidenceDataClass::Credential
+                            | EvidenceDataClass::Token
+                            | EvidenceDataClass::PersonallyIdentifiableInformation
+                            | EvidenceDataClass::UnknownSensitive
+                    )
+                )
+        })
+}
+
 fn extended_round_candidate_allowed(
     _rule_id: &str,
     _pass: usize,
@@ -6106,6 +6535,7 @@ fn graph_kind_for_record(kind: &str, name: Option<&str>) -> &'static str {
         "guard" => "guard",
         "sanitizer" => "sanitizer",
         "sink" => "sink",
+        "receiver" => "receiver",
         "handler" => "handler",
         "function" => "function",
         "import" => "module",
@@ -6373,28 +6803,57 @@ fn prototype_expression(node: Node<'_>, content: &[u8]) -> bool {
         || text.contains("['__proto__']")
 }
 
-fn sensitive_environment_value(name: &str) -> bool {
+fn sensitive_environment_data_class(name: &str) -> Option<EvidenceDataClass> {
     let lower = name.to_ascii_lowercase();
     let environment = lower.starts_with("process.env.")
         || lower.starts_with("deno.env.")
         || lower.starts_with("bun.env.");
-    environment
-        && [
-            "token",
-            "secret",
-            "password",
-            "passwd",
-            "api_key",
-            "apikey",
-            "private_key",
-            "credential",
-            "cookie",
-        ]
+    if !environment {
+        return None;
+    }
+    if ["token", "api_key", "apikey", "cookie"]
         .iter()
         .any(|marker| lower.contains(marker))
+    {
+        return Some(EvidenceDataClass::Token);
+    }
+    if ["password", "passwd", "private_key", "credential"]
+        .iter()
+        .any(|marker| lower.contains(marker))
+    {
+        return Some(EvidenceDataClass::Credential);
+    }
+    lower
+        .contains("secret")
+        .then_some(EvidenceDataClass::UnknownSensitive)
 }
 
-fn sensitive_disclosure_call(callee: &str) -> bool {
+fn sensitive_data_class_marker(data_class: &EvidenceDataClass) -> &'static str {
+    match data_class {
+        EvidenceDataClass::Credential => "@data-class:credential",
+        EvidenceDataClass::Token => "@data-class:token",
+        EvidenceDataClass::PersonallyIdentifiableInformation => {
+            "@data-class:personally-identifiable-information"
+        }
+        EvidenceDataClass::UnknownSensitive => "@data-class:unknown-sensitive",
+        EvidenceDataClass::OrdinaryConfiguration => "@data-class:ordinary-configuration",
+    }
+}
+
+fn sensitive_data_class_from_marker(value: &str) -> Option<EvidenceDataClass> {
+    match value {
+        "credential" => Some(EvidenceDataClass::Credential),
+        "token" => Some(EvidenceDataClass::Token),
+        "personally-identifiable-information" => {
+            Some(EvidenceDataClass::PersonallyIdentifiableInformation)
+        }
+        "unknown-sensitive" => Some(EvidenceDataClass::UnknownSensitive),
+        "ordinary-configuration" => Some(EvidenceDataClass::OrdinaryConfiguration),
+        _ => None,
+    }
+}
+
+fn sensitive_disclosure_locality(callee: &str) -> Option<DisclosureLocality> {
     let lower = callee.to_ascii_lowercase();
     let leaf = terminal_identifier(&lower);
     let logging = lower.starts_with("console.")
@@ -6409,7 +6868,135 @@ fn sensitive_disclosure_call(callee: &str) -> bool {
             leaf,
             "create" | "generate" | "complete" | "completion" | "invoke" | "send"
         );
-    logging || model_provider
+    if logging {
+        Some(DisclosureLocality::LocalDiagnostic)
+    } else if model_provider {
+        Some(DisclosureLocality::RemoteService)
+    } else {
+        None
+    }
+}
+
+fn disclosure_locality_marker(locality: &DisclosureLocality) -> &'static str {
+    match locality {
+        DisclosureLocality::LocalDiagnostic => "@disclosure-locality:local-diagnostic",
+        DisclosureLocality::RemoteService => "@disclosure-locality:remote-service",
+        DisclosureLocality::NetworkListener => "@disclosure-locality:network-listener",
+        DisclosureLocality::Unknown => "@disclosure-locality:unknown",
+    }
+}
+
+fn disclosure_locality_from_marker(value: &str) -> Option<DisclosureLocality> {
+    match value {
+        "local-diagnostic" => Some(DisclosureLocality::LocalDiagnostic),
+        "remote-service" => Some(DisclosureLocality::RemoteService),
+        "network-listener" => Some(DisclosureLocality::NetworkListener),
+        "unknown" => Some(DisclosureLocality::Unknown),
+        _ => None,
+    }
+}
+
+fn assigned_network_server_receiver(
+    call: Node<'_>,
+    content: &[u8],
+    raw_callee: &str,
+) -> Option<String> {
+    if terminal_identifier(raw_callee) != "createServer" {
+        return None;
+    }
+    let mut expression = call;
+    while let Some(parent) = expression.parent() {
+        if matches!(
+            parent.kind(),
+            "await_expression"
+                | "parenthesized_expression"
+                | "as_expression"
+                | "satisfies_expression"
+                | "non_null_expression"
+        ) && parent
+            .named_child(0)
+            .is_some_and(|child| same_syntax_node(child, expression))
+        {
+            expression = parent;
+            continue;
+        }
+        if parent.kind() == "variable_declarator"
+            && parent
+                .child_by_field_name("value")
+                .is_some_and(|value| same_syntax_node(value, expression))
+        {
+            return parent
+                .child_by_field_name("name")
+                .and_then(|name| expression_name(name, content))
+                .filter(|name| simple_binding(name));
+        }
+        if parent.kind() == "assignment_expression"
+            && parent
+                .child_by_field_name("right")
+                .is_some_and(|value| same_syntax_node(value, expression))
+        {
+            return parent
+                .child_by_field_name("left")
+                .and_then(|name| expression_name(name, content))
+                .filter(|name| simple_binding(name));
+        }
+        break;
+    }
+    None
+}
+
+fn omitted_host_listener_receiver(
+    call: Node<'_>,
+    content: &[u8],
+    raw_callee: &str,
+) -> Option<String> {
+    let (receiver, operation) = raw_callee.rsplit_once('.')?;
+    if operation != "listen" || !simple_binding(receiver) {
+        return None;
+    }
+    let arguments = call.child_by_field_name("arguments")?;
+    let first = arguments.named_child(0)?;
+    let first = unwrap_expression(first);
+    if matches!(first.kind(), "string" | "template_string") {
+        return None;
+    }
+    if matches!(first.kind(), "object" | "object_expression") {
+        let mut has_port = false;
+        let mut has_host = false;
+        for index in 0..first.named_child_count() {
+            let Some(property) = first.named_child(u32::try_from(index).ok()?) else {
+                continue;
+            };
+            match static_property_key(property, content).as_deref() {
+                Some("port") => has_port = true,
+                Some("host") => has_host = true,
+                _ => {}
+            }
+        }
+        return (has_port && !has_host).then(|| receiver.to_owned());
+    }
+    let host_is_omitted = match arguments.named_child(1) {
+        None => true,
+        Some(second) => matches!(
+            unwrap_expression(second).kind(),
+            "arrow_function" | "function_expression" | "function" | "number"
+        ),
+    };
+    host_is_omitted.then(|| receiver.to_owned())
+}
+
+fn same_syntax_node(left: Node<'_>, right: Node<'_>) -> bool {
+    left.start_byte() == right.start_byte()
+        && left.end_byte() == right.end_byte()
+        && left.kind() == right.kind()
+}
+
+fn simple_binding(value: &str) -> bool {
+    !value.is_empty()
+        && !value.contains(['.', '[', ']', ':'])
+        && value
+            .chars()
+            .all(|character| character == '_' || character == '$' || character.is_alphanumeric())
 }
 
 fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -> bool {
@@ -7017,6 +7604,9 @@ fn direct_call_dominance(call: Node<'_>, function: Option<&FunctionInfo>) -> Opt
 
 fn guard_policy(condition: Node<'_>, content: &[u8], inputs: &[String]) -> Option<&'static str> {
     let lower = condition.utf8_text(content).ok()?.to_ascii_lowercase();
+    if lower.contains("vscode.workspace.istrusted") || lower.contains("workspace.istrusted") {
+        return Some(crate::semantics::POLICY_WORKSPACE_TRUST);
+    }
     if [
         "scope",
         "permission",
@@ -10307,6 +10897,7 @@ fn graph_fingerprint(
     provenance: &ParserProvenance,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
+    let extractor_identity = graph_fingerprint_extractor_identity(provenance);
     for value in [
         kind,
         name.unwrap_or(""),
@@ -10315,7 +10906,7 @@ fn graph_fingerprint(
         &location.span.end_byte.to_string(),
         &provenance.parser,
         &provenance.grammar,
-        &provenance.extractor_version,
+        extractor_identity,
     ] {
         hash_value(&mut hasher, value.as_bytes());
     }
@@ -10329,17 +10920,25 @@ fn edge_fingerprint(
     provenance: &ParserProvenance,
 ) -> String {
     let mut hasher = blake3::Hasher::new();
+    let extractor_identity = graph_fingerprint_extractor_identity(provenance);
     for value in [
         kind,
         from,
         to,
         &location.path,
         &location.span.start_byte.to_string(),
-        &provenance.extractor_version,
+        extractor_identity,
     ] {
         hash_value(&mut hasher, value.as_bytes());
     }
     hasher.finalize().to_hex().to_string()
+}
+fn graph_fingerprint_extractor_identity(provenance: &ParserProvenance) -> &str {
+    if provenance.extractor_version == GRAPH_EXTRACTOR_VERSION {
+        GRAPH_FINGERPRINT_COMPATIBILITY_VERSION
+    } else {
+        &provenance.extractor_version
+    }
 }
 fn path_step_fingerprint(node: &str, index: usize) -> String {
     let mut hasher = blake3::Hasher::new();

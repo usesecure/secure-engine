@@ -238,7 +238,7 @@ pub(crate) fn finding_contract_v2(
 fn contract_step(rule_id: &str, step: &EvidencePathStep) -> Option<EvidenceContractPathStepV2> {
     let semantic = step.semantic.as_ref()?;
     let (role, effect, summarizable) = match semantic.role {
-        EvidenceSemanticRole::UntrustedSource => (
+        EvidenceSemanticRole::UntrustedSource | EvidenceSemanticRole::SensitiveSource => (
             EvidenceContractRoleV2::Source,
             EvidenceEffectV2::PreservesInfluence,
             false,
@@ -272,6 +272,7 @@ fn contract_step(rule_id: &str, step: &EvidencePathStep) -> Option<EvidenceContr
             EvidenceEffectV2::PreservesInfluence,
             false,
         ),
+        EvidenceSemanticRole::Receiver => return None,
     };
     let source_kind =
         (role == EvidenceContractRoleV2::Source).then(|| source_kind(rule_id, &semantic.identity));

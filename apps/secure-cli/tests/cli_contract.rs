@@ -222,6 +222,7 @@ fn malformed_phase_one_controls_use_invalid_input_exit_code()
         "--max-graph-edges",
         "--max-interprocedural-depth",
         "--max-findings",
+        "--full-graph",
         "--suppress",
     ] {
         assert!(help_text.contains(flag), "missing {flag}");
@@ -235,7 +236,7 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let catalog: Vec<secure_engine::RuleMetadata> = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(catalog.len(), 10);
+    assert_eq!(catalog.len(), 11);
     assert!(catalog.iter().take(7).all(|rule| {
         rule.taxonomy.is_some() && rule.primary_cwe.is_some() && rule.taxonomy_provenance.is_some()
     }));
@@ -248,7 +249,7 @@ fn phase_three_rule_catalog_is_stable_machine_output() -> Result<(), Box<dyn std
     );
     assert_eq!(
         catalog.last().map(|rule| rule.rule_id.as_str()),
-        Some("SE1010")
+        Some("SE1011")
     );
     Ok(())
 }
@@ -266,6 +267,12 @@ fn policy_exit_and_finding_explanation_use_the_shared_report()
     assert_eq!(scan.status.code(), Some(1));
     assert!(scan.stdout.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&fs::read(&report_path)?)?;
+    assert_eq!(report["graph"]["scope"], "finding-evidence");
+    let retained_nodes = report["graph"]["nodes"].as_array().map_or(0, Vec::len);
+    assert!(
+        report["graph"]["total_nodes"].as_u64().unwrap_or_default()
+            >= u64::try_from(retained_nodes).unwrap_or(u64::MAX)
+    );
     let finding_id = report["findings"]
         .as_array()
         .and_then(|findings| {

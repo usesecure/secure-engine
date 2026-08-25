@@ -360,10 +360,35 @@
         "impact": { "type": "string", "minLength": 1 },
         "remediation": { "type": "string", "minLength": 1 },
         "verification_state": { "type": "string", "minLength": 1 },
+        "evidence_state": { "$ref": "#/$defs/evidenceState" },
+        "lead_context": { "$ref": "#/$defs/leadContext" },
         "limitations": { "type": "array", "items": { "type": "string" } },
         "fingerprint": { "$ref": "#/$defs/fingerprint" },
         "semantic_fingerprint": { "$ref": "#/$defs/fingerprint" },
         "evidence_contract_v2": { "$ref": "#/$defs/evidenceContractV2" }
+      }
+    },
+    "evidenceState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_version", "state"],
+      "properties": {
+        "taxonomy_version": { "const": "secure-evidence-state-v1" },
+        "state": { "enum": ["syntactic-lead", "semantic-path", "guard-aware-lead", "manually-validated"] }
+      }
+    },
+    "leadContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "trust_boundary", "receiver", "locality", "activation", "exposure_window", "environmental_constraints"],
+      "properties": {
+        "actor": { "type": "string", "minLength": 1 },
+        "trust_boundary": { "type": "string", "minLength": 1 },
+        "receiver": { "type": "string", "minLength": 1 },
+        "locality": { "enum": ["local-diagnostic", "remote-service", "network-listener", "unknown"] },
+        "activation": { "type": "string", "minLength": 1 },
+        "exposure_window": { "type": "string", "minLength": 1 },
+        "environmental_constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "evidenceSemantic": {
@@ -372,10 +397,12 @@
       "required": ["role", "identity", "certainty"],
       "properties": {
         "semantics_version": { "type": "string", "minLength": 1 },
-        "role": { "enum": ["untrusted-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink"] },
-        "identity": { "type": "string", "pattern": "^(untrusted|transformation|guard|sanitizer|sink)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "role": { "enum": ["untrusted-source", "sensitive-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink", "receiver"] },
+        "identity": { "type": "string", "pattern": "^(untrusted|sensitive|transformation|guard|sanitizer|sink|receiver)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
         "policy": { "type": "string", "minLength": 1 },
         "authorization": { "enum": ["authentication", "role", "ownership", "tenant", "general"] },
+        "data_class": { "enum": ["ordinary-configuration", "credential", "token", "personally-identifiable-information", "unknown-sensitive"] },
+        "locality": { "enum": ["local-diagnostic", "remote-service", "network-listener", "unknown"] },
         "certainty": { "enum": ["proven", "uncertain"] }
       }
     },
@@ -438,6 +465,9 @@
       "type": "object",
       "required": ["nodes", "edges"],
       "properties": {
+        "scope": { "enum": ["full", "finding-evidence"] },
+        "total_nodes": { "type": "integer", "minimum": 0 },
+        "total_edges": { "type": "integer", "minimum": 0 },
         "nodes": { "type": "array", "maxItems": 10000000, "items": { "$ref": "#/$defs/evidenceNode" } },
         "edges": { "type": "array", "maxItems": 20000000, "items": { "$ref": "#/$defs/evidenceEdge" } }
       }

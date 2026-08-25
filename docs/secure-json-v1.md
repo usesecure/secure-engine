@@ -100,6 +100,17 @@ receive a deterministic new evidence/report fingerprint because its evidence cha
 Phase 6.10 keeps those public versions unchanged. Authorization-wrapper candidates and summaries
 remain private analysis records and introduce no secure-json-v1 or SARIF field.
 
+## Lead-quality additive fields
+
+The lead-quality milestone keeps the `secure-json-v1` identifier and adds optional fields:
+
+- `graph.scope`, `graph.total_nodes`, and `graph.total_edges` distinguish a complete internal graph from the normal finding-evidence serialization projection;
+- `semantic.data_class` and `semantic.locality` separate sensitivity and disclosure location from source/sink roles;
+- `finding.evidence_state` carries the versioned `secure-evidence-state-v1` maturity taxonomy while legacy `verification_state` mirrors its state string;
+- `finding.lead_context` separates actor, trust boundary, receiver, activation, exposure window, and environmental constraints.
+
+Earlier reports deserialize with defaults. Normal CLI reports use `finding-evidence`; `--full-graph` preserves the complete graph. Both modes retain the same findings and full analysis counts, but their report fingerprints differ because the serialized evidence differs. Unchanged graph and finding identifiers remain in the v1 compatibility hash domain even though extraction provenance advances to `secure-evidence-graph-v2`.
+
 ## Exit codes
 
 | Code | Meaning |

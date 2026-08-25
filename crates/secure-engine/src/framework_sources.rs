@@ -83,7 +83,11 @@ pub(crate) fn classify_call(
     if terminal_segment(&lower_callee) == "json" {
         return Some(FrameworkSourceKind::HttpBodyField);
     }
-    if matches!(terminal_segment(&lower_callee), "header" | "get") {
+    if terminal_segment(&lower_callee) == "header"
+        || (terminal_segment(&lower_callee) == "get"
+            && (contains_segment(&lower_callee, "header")
+                || contains_segment(&lower_callee, "headers")))
+    {
         return Some(FrameworkSourceKind::HttpHeaderValue);
     }
     if terminal_segment(&lower_callee) == "cookie" {

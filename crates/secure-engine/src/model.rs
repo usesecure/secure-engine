@@ -367,12 +367,37 @@ pub struct Suppression {
 }
 
 /// Deterministic Secure Engine-owned evidence graph.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EvidenceGraph {
+    /// Serialization projection: `full` or `finding-evidence`.
+    #[serde(default = "default_graph_scope")]
+    pub scope: String,
+    /// Nodes in the complete internal analysis graph before projection.
+    #[serde(default)]
+    pub total_nodes: usize,
+    /// Edges in the complete internal analysis graph before projection.
+    #[serde(default)]
+    pub total_edges: usize,
     /// Stable nodes sorted by node identifier.
     pub nodes: Vec<EvidenceNode>,
     /// Stable edges sorted by edge identifier.
     pub edges: Vec<EvidenceEdge>,
+}
+
+impl Default for EvidenceGraph {
+    fn default() -> Self {
+        Self {
+            scope: default_graph_scope(),
+            total_nodes: 0,
+            total_edges: 0,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        }
+    }
+}
+
+fn default_graph_scope() -> String {
+    "full".into()
 }
 
 /// A stable graph node with precise repository-local evidence.
@@ -467,6 +492,8 @@ pub struct RuleMetadata {
 pub enum EvidenceSemanticRole {
     /// Data originating at an attacker-controlled or otherwise untrusted boundary.
     UntrustedSource,
+    /// Data classified as sensitive independently of attacker control.
+    SensitiveSource,
     /// A value-preserving or value-changing operation in a data-flow path.
     Transformation,
     /// A control-flow predicate that may constrain a later operation.
@@ -477,6 +504,38 @@ pub enum EvidenceSemanticRole {
     AuthorizationCheck,
     /// A security-sensitive operation at the end of an evidence path.
     SensitiveSink,
+    /// A concrete receiver whose behavior defines a security boundary.
+    Receiver,
+}
+
+/// Security-relevant data class, kept separate from source and sink roles.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceDataClass {
+    /// Non-sensitive application or tool configuration.
+    OrdinaryConfiguration,
+    /// Password, private key, or another authentication credential.
+    Credential,
+    /// API key, bearer token, session token, or equivalent token material.
+    Token,
+    /// Personally identifiable information with an explicit supporting contract.
+    PersonallyIdentifiableInformation,
+    /// A sensitive candidate whose narrower class is not proven statically.
+    UnknownSensitive,
+}
+
+/// Where a sink or receiver is observable relative to the analyzed process.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DisclosureLocality {
+    /// Developer- or user-visible output retained on the local machine.
+    LocalDiagnostic,
+    /// A remote service or provider outside the local process boundary.
+    RemoteService,
+    /// A network listener whose reachable interfaces require runtime validation.
+    NetworkListener,
+    /// Static evidence cannot establish locality.
+    Unknown,
 }
 
 /// Scope proven by an authentication or authorization check.
@@ -512,8 +571,58 @@ pub struct EvidenceSemantic {
     /// Authentication/authorization scope, when applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorization: Option<AuthorizationKind>,
+    /// Data classification, when this node carries or receives classified data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_class: Option<EvidenceDataClass>,
+    /// Disclosure or receiver locality, when statically distinguishable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locality: Option<DisclosureLocality>,
     /// Whether semantics are proven or conservatively unresolved.
     pub certainty: String,
+}
+
+/// Versioned evidence maturity state for a scanner lead.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvidenceStateKind {
+    /// A bounded structural pattern with unresolved semantic prerequisites.
+    SyntacticLead,
+    /// A typed, connected static path without a runtime validation claim.
+    SemanticPath,
+    /// A lead whose relevant static guards were evaluated but not treated as runtime proof.
+    GuardAwareLead,
+    /// A state reserved for an explicit external human-validation workflow.
+    ManuallyValidated,
+}
+
+/// Explicitly versioned replacement for the legacy free-form verification label.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceState {
+    /// Version of the evidence-state taxonomy.
+    pub taxonomy_version: String,
+    /// Current evidence maturity.
+    pub state: EvidenceStateKind,
+}
+
+/// Actor, boundary, receiver, and environmental context for one lead.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LeadContext {
+    /// Actor that would need to interact with the modeled boundary.
+    pub actor: String,
+    /// Boundary crossed by the modeled behavior.
+    pub trust_boundary: String,
+    /// Concrete or semantic receiver of the operation.
+    pub receiver: String,
+    /// Locality of the modeled receiver.
+    pub locality: DisclosureLocality,
+    /// Required activation or user action, including unresolved reachability.
+    pub activation: String,
+    /// Exposure or observation window and any unresolved race.
+    pub exposure_window: String,
+    /// Runtime or environmental constraints not proven by the static lead.
+    pub environmental_constraints: Vec<String>,
 }
 
 /// Canonical source kinds defined by the public tool-neutral evidence contract v2.
@@ -893,6 +1002,12 @@ pub struct Finding {
     pub remediation: String,
     /// Deterministic engine verification state.
     pub verification_state: String,
+    /// Explicitly versioned evidence maturity; additive to the legacy string field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_state: Option<EvidenceState>,
+    /// Actor, trust-boundary, receiver, and locality context when modeled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_context: Option<LeadContext>,
     /// Finding-specific limitations.
     pub limitations: Vec<String>,
     /// Stable deduplication fingerprint.

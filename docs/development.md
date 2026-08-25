@@ -33,9 +33,12 @@ secure scan fixtures/phase3-rules --cache-dir /tmp/secure-engine-phase3-cache --
 secure scan fixtures/phase3-rules --cache-dir /tmp/secure-engine-phase3-cache --output phase3-warm.json || test $? = 1
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --clear-cache --output phase5-cold.json || test $? = 1
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --output phase5-warm.json || test $? = 1
+secure scan fixtures/lead-quality-vscode-go --no-cache --output lead-quality.json || test $? = 1
 secure rules list
 secure explain fd_FINDING_ID --report phase3-cold.json
 ```
+
+CLI JSON output uses the finding-evidence graph projection by default. Add `--full-graph` for graph-development diagnostics. The report's `graph.total_nodes` and `graph.total_edges` preserve complete internal counts in either mode.
 
 The default repository-specific cache lives below `XDG_CACHE_HOME`, then `XDG_RUNTIME_DIR`, or the platform temporary directory. Reports never contain that path. Use `--no-cache` to disable reads and writes and `--clear-cache` to atomically retire the selected repository cache before scanning.
 

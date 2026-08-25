@@ -1,4 +1,10 @@
-use crate::{AuthorizationKind, EvidenceSemantic, EvidenceSemanticRole};
+use crate::{
+    AuthorizationKind, DisclosureLocality, EvidenceDataClass, EvidenceSemantic,
+    EvidenceSemanticRole,
+};
+
+/// Engine-owned graph vocabulary. Contract-v2 projections remain frozen at semantics v2.
+pub const GRAPH_EVIDENCE_SEMANTICS_VERSION: &str = "secure-evidence-semantics-v3";
 
 pub(crate) const POLICY_COMMAND: &str = "command-control-data-separation";
 pub(crate) const POLICY_SQL: &str = "sql-control-data-separation";
@@ -7,6 +13,7 @@ pub(crate) const POLICY_OUTBOUND: &str = "outbound-destination-policy";
 pub(crate) const POLICY_REDIRECT: &str = "redirect-destination-policy";
 pub(crate) const POLICY_CODE: &str = "dynamic-code-control-data-separation";
 pub(crate) const POLICY_EXACT_ALLOWLIST: &str = "exact-value-allowlist";
+pub(crate) const POLICY_WORKSPACE_TRUST: &str = "platform-workspace-trust";
 
 pub(crate) fn for_record(
     kind: &str,
@@ -15,17 +22,29 @@ pub(crate) fn for_record(
 ) -> Option<EvidenceSemantic> {
     let normalized = name.or(callee).unwrap_or_default();
     match kind {
-        "source" | "handler" => Some(semantic(
-            EvidenceSemanticRole::UntrustedSource,
-            if kind == "handler" {
-                "untrusted.handler-entry"
-            } else {
-                source_identity(normalized)
-            },
-            None,
-            None,
-            "proven",
-        )),
+        "source" | "handler" => {
+            let sensitive =
+                kind == "source" && compact(normalized).contains("sensitiveconfiguration");
+            let mut value = semantic(
+                if sensitive {
+                    EvidenceSemanticRole::SensitiveSource
+                } else {
+                    EvidenceSemanticRole::UntrustedSource
+                },
+                if kind == "handler" {
+                    "untrusted.handler-entry"
+                } else {
+                    source_identity(normalized)
+                },
+                None,
+                None,
+                "proven",
+            );
+            if sensitive {
+                value.data_class = Some(EvidenceDataClass::UnknownSensitive);
+            }
+            Some(value)
+        }
         "assignment" | "alias" | "transformation" | "argument" | "return" | "call" => {
             Some(semantic(
                 EvidenceSemanticRole::Transformation,
@@ -56,19 +75,67 @@ pub(crate) fn for_record(
             None,
             "proven",
         )),
-        "sink" => Some(semantic(
-            EvidenceSemanticRole::SensitiveSink,
-            sink_identity(normalized),
-            None,
-            None,
-            "proven",
-        )),
+        "sink" => {
+            let mut value = semantic(
+                EvidenceSemanticRole::SensitiveSink,
+                sink_identity(normalized),
+                None,
+                None,
+                "proven",
+            );
+            value.locality = sink_locality(normalized);
+            Some(value)
+        }
+        "receiver" => {
+            let mut value = semantic(
+                EvidenceSemanticRole::Receiver,
+                "receiver.node-network-server",
+                None,
+                None,
+                "proven",
+            );
+            value.locality = Some(DisclosureLocality::NetworkListener);
+            Some(value)
+        }
         _ => None,
     }
 }
 
+pub(crate) fn classified_sensitive_source(data_class: EvidenceDataClass) -> EvidenceSemantic {
+    let mut value = semantic(
+        EvidenceSemanticRole::SensitiveSource,
+        "sensitive.configuration-value",
+        None,
+        None,
+        "proven",
+    );
+    value.data_class = Some(data_class);
+    value
+}
+
+pub(crate) fn classified_disclosure_sink(locality: DisclosureLocality) -> EvidenceSemantic {
+    let identity = match locality {
+        DisclosureLocality::LocalDiagnostic => "sink.local-diagnostic-output",
+        DisclosureLocality::RemoteService => "sink.remote-service-disclosure",
+        DisclosureLocality::NetworkListener => "sink.network-listener-bind",
+        DisclosureLocality::Unknown => "sink.sensitive-data-disclosure",
+    };
+    let mut value = semantic(
+        EvidenceSemanticRole::SensitiveSink,
+        identity,
+        None,
+        None,
+        "proven",
+    );
+    value.locality = Some(locality);
+    value
+}
+
 pub(crate) fn authorization_kind(value: &str) -> Option<AuthorizationKind> {
     let lower = compact(value);
+    if lower == "platformworkspacetrust" {
+        return None;
+    }
     if lower.contains("tenant") || lower.contains("organization") || lower.contains("workspace") {
         return Some(AuthorizationKind::Tenant);
     }
@@ -136,11 +203,13 @@ fn semantic(
     certainty: &str,
 ) -> EvidenceSemantic {
     EvidenceSemantic {
-        semantics_version: Some(crate::EVIDENCE_SEMANTICS_VERSION.into()),
+        semantics_version: Some(GRAPH_EVIDENCE_SEMANTICS_VERSION.into()),
         role,
         identity: identity.into(),
         policy: policy.map(str::to_owned),
         authorization,
+        data_class: None,
+        locality: None,
         certainty: certainty.into(),
     }
 }
@@ -208,6 +277,7 @@ fn guard_identity(value: &str) -> &'static str {
         Some(POLICY_FILESYSTEM) => "guard.filesystem-confinement",
         Some(POLICY_OUTBOUND) => "guard.outbound-destination",
         Some(POLICY_REDIRECT) => "guard.redirect-destination",
+        Some(POLICY_WORKSPACE_TRUST) => "guard.platform-workspace-trust",
         _ => "guard.ambiguous",
     }
 }
@@ -221,6 +291,7 @@ fn guard_policy(value: &str) -> Option<&'static str> {
         POLICY_SQL => Some(POLICY_SQL),
         POLICY_CODE => Some(POLICY_CODE),
         POLICY_EXACT_ALLOWLIST => Some(POLICY_EXACT_ALLOWLIST),
+        POLICY_WORKSPACE_TRUST => Some(POLICY_WORKSPACE_TRUST),
         _ => None,
     }
 }
@@ -248,8 +319,20 @@ fn sink_identity(value: &str) -> &'static str {
         "sensitive-mutation" => "sink.sensitive-mutation",
         "cli-option-injection" => "sink.cli-option-parser",
         "prototype-mutation" => "sink.prototype-mutation",
+        "local-diagnostic-output" => "sink.local-diagnostic-output",
+        "remote-service-disclosure" => "sink.remote-service-disclosure",
+        "network-listener-bind" => "sink.network-listener-bind",
         "sensitive-data-disclosure" => "sink.sensitive-data-disclosure",
         _ => "sink.sensitive-operation",
+    }
+}
+
+fn sink_locality(value: &str) -> Option<DisclosureLocality> {
+    match value {
+        "local-diagnostic-output" => Some(DisclosureLocality::LocalDiagnostic),
+        "remote-service-disclosure" => Some(DisclosureLocality::RemoteService),
+        "network-listener-bind" => Some(DisclosureLocality::NetworkListener),
+        _ => None,
     }
 }
 

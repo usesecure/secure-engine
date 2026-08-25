@@ -13,7 +13,7 @@ Secure Engine follows untrusted values across files and helpers, then reports re
 
 ## What it detects
 
-Version 0.1.10 ships ten deterministic rule families:
+The current development tree defines eleven deterministic rule families:
 
 - `SE1001`: untrusted input reaching command execution;
 - `SE1002`: untrusted input reaching dynamically constructed or raw SQL;
@@ -24,7 +24,8 @@ Version 0.1.10 ships ten deterministic rule families:
 - `SE1007`: exposed handlers reaching sensitive operations without a dominating authorization guard;
 - `SE1008`: untrusted input reaching CLI option parsing without an end-of-options boundary;
 - `SE1009`: untrusted input reaching a shared prototype mutation;
-- `SE1010`: sensitive configuration reaching logging or an AI/LLM provider payload.
+- `SE1010`: classified sensitive data reaching local diagnostic output or a remote provider boundary;
+- `SE1011`: a proven Node `net.Server` receiver calling `listen(port)` without an explicit host, emitted as a qualified network-exposure lead rather than a vulnerability verdict.
 
 The analyzer supports bounded inter-file propagation, value-preserving helpers, static-property identity, shell program-text classification, exact path and URL policy projection, and principal/resource-aware authorization evidence. Ambiguous flows fail conservatively instead of inventing proof.
 
@@ -48,6 +49,7 @@ Scan a repository with the installed CLI:
 ```bash
 secure scan .
 secure scan . --format secure-json-v1 --output report.json
+secure scan . --full-graph --output report-with-global-graph.json
 secure scan . --format sarif --output report.sarif
 secure scan . --include 'src/**' --exclude 'src/generated/**' --max-files 50000
 secure rules list
@@ -68,6 +70,8 @@ cargo run -p secure-desktop -- .
 ```
 
 Additional workflows include baselines, history, suppressions, cache control, schema export, diagnostics, cancellation, and bounded scans. Run `secure --help` or `secure <command> --help` for the complete interface.
+
+Normal `secure-json-v1` CLI reports retain the graph nodes and edges referenced by findings and expose the complete analyzed graph counts separately. Use `--full-graph` only when the complete global graph is required. Both projections are deterministic and carry their graph scope in the report.
 
 ## Independent evaluation
 
