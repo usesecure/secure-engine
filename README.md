@@ -72,7 +72,7 @@ cargo run -p secure-desktop -- .
 
 Additional workflows include baselines, history, suppressions, cache control, schema export, diagnostics, cancellation, and bounded scans. Run `secure --help` or `secure <command> --help` for the complete interface.
 
-Normal `secure-json-v1` CLI reports retain the graph nodes and edges referenced by findings and expose the complete analyzed graph counts separately. Use `--full-graph` only when the complete global graph is required. Both projections are deterministic and carry their graph scope in the report.
+Normal `secure-json-v1` CLI reports retain only finding and explicit-abstention evidence neighborhoods while exposing complete analyzed graph and fact counts separately. Serialization streams to an atomic temporary file and fails closed above the default 64 MiB output budget; change the explicit budget with `--max-output-bytes`. Use `--full-graph` only when complete facts and the global graph are required. Both projections are deterministic and declare their scope and budget in the report.
 
 ## Independent evaluation
 
@@ -101,7 +101,7 @@ These limits can produce false negatives. Parser recovery and framework conventi
 
 ## Structured evidence and privacy
 
-The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v21. Older cache envelopes produce safe misses.
+The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v22. Older cache envelopes produce safe misses.
 
 AI validation never originates, deletes, or rewrites a finding. It requires project configuration, an exact redacted payload preview, and per-operation consent. Provider credentials are read only from the configured environment variable and are never serialized. See [AI validation](./docs/ai-validation.md) and [Evidence Contract v2](./docs/evidence-contract-v2.md).
 

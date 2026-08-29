@@ -6,14 +6,16 @@ use serde::{Deserialize, Serialize};
 use tree_sitter::Node;
 
 use crate::{
-    AnalysisSummary, CancellationToken, ConfigurationProvenance, DisclosureLocality,
-    EvidenceDataClass, EvidenceEdge, EvidenceGraph, EvidenceNode, EvidencePathStep,
-    EvidenceSemantic, EvidenceSemanticRole, EvidenceState, EvidenceStateKind,
-    ExecutionBoundaryKind, Finding, LeadContext, NormalizedFact, ParserProvenance, RuleMetadata,
-    ScanConfiguration, ScanError, SourceLocation, SourceSpan, SuppressionDiagnostic,
+    AnalysisAbstention, AnalysisSummary, CancellationToken, ConfigurationProvenance,
+    DisclosureLocality, EvidenceCalibration, EvidenceDataClass, EvidenceDisposition, EvidenceEdge,
+    EvidenceGraph, EvidenceNode, EvidencePathStep, EvidenceResolution, EvidenceSemantic,
+    EvidenceSemanticRole, EvidenceState, EvidenceStateKind, ExecutionBoundaryKind, Finding,
+    FilesystemIdentityState, LeadContext, NormalizedFact, ParserProvenance, RuleMetadata,
+    ScanConfiguration, ScanError, SecurityControlEvidence, SecurityControlKind, SourceLocation,
+    SourceSpan, SuppressionDiagnostic,
 };
 
-pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v2";
+pub(crate) const GRAPH_EXTRACTOR_VERSION: &str = "secure-evidence-graph-v3";
 const MAX_RECORD_NAME_BYTES: usize = 512;
 const MAX_FIXED_POINT_PASSES: usize = 12;
 const MAX_LOCAL_VALUE_DEPTH: usize = 16;
@@ -110,6 +112,7 @@ pub(crate) struct AnalysisResult {
     pub(crate) graph: EvidenceGraph,
     pub(crate) summary: AnalysisSummary,
     pub(crate) findings: Vec<Finding>,
+    pub(crate) abstentions: Vec<AnalysisAbstention>,
     pub(crate) suppression_diagnostics: Vec<SuppressionDiagnostic>,
     pub(crate) limitations: Vec<crate::Limitation>,
 }
@@ -512,25 +515,12 @@ pub(crate) fn validate_program(unit: &ProgramUnit, expected_path: &str, maximum:
         })
 }
 
-#[allow(clippy::too_many_lines)]
-pub(crate) fn analyze(
+fn append_fact_graph(
     facts: &[NormalizedFact],
-    units: &[ProgramUnit],
-    configuration: &ScanConfiguration,
+    file_nodes: &mut BTreeMap<String, (String, String)>,
+    builder: &mut GraphBuilder,
     cancellation: &CancellationToken,
-) -> Result<AnalysisResult, ScanError> {
-    let started = Instant::now();
-    let mut builder = GraphBuilder::new(configuration);
-    builder.truncated = units.iter().any(|unit| unit.truncated);
-    let mut file_nodes = BTreeMap::<String, (String, String)>::new();
-    for unit in units {
-        check_cancelled(cancellation)?;
-        let location = start_location(&unit.path);
-        let file = builder.node("file", Some(&unit.path), &location, &unit.provenance);
-        let module = builder.node("module", Some(&unit.path), &location, &unit.provenance);
-        let _edge = builder.edge("containment", &file, &module, &location, &unit.provenance);
-        file_nodes.insert(unit.path.clone(), (file, module));
-    }
+) -> Result<(), ScanError> {
     for fact in facts {
         check_cancelled(cancellation)?;
         let (_, module) = file_nodes
@@ -579,7 +569,28 @@ pub(crate) fn analyze(
             let _edge = builder.edge(edge_kind, &node, &target, &fact.location, &fact.provenance);
         }
     }
+    Ok(())
+}
 
+#[allow(clippy::too_many_lines)]
+pub(crate) fn analyze(
+    facts: &[NormalizedFact],
+    units: &[ProgramUnit],
+    configuration: &ScanConfiguration,
+    cancellation: &CancellationToken,
+) -> Result<AnalysisResult, ScanError> {
+    let started = Instant::now();
+    let mut builder = GraphBuilder::new(configuration);
+    builder.truncated = units.iter().any(|unit| unit.truncated);
+    let mut file_nodes = BTreeMap::<String, (String, String)>::new();
+    for unit in units {
+        check_cancelled(cancellation)?;
+        let location = start_location(&unit.path);
+        let file = builder.node("file", Some(&unit.path), &location, &unit.provenance);
+        let module = builder.node("module", Some(&unit.path), &location, &unit.provenance);
+        let _edge = builder.edge("containment", &file, &module, &location, &unit.provenance);
+        file_nodes.insert(unit.path.clone(), (file, module));
+    }
     let mut record_nodes = BTreeMap::<String, String>::new();
     let mut function_nodes = BTreeMap::<String, String>::new();
     let mut raw_functions = BTreeMap::<String, Vec<String>>::new();
@@ -847,6 +858,7 @@ pub(crate) fn analyze(
     }
     let mut taints = BTreeMap::<(String, String), Trace>::new();
     let mut candidates = BTreeMap::<String, Candidate>::new();
+    let mut abstention_candidates = BTreeMap::<String, Candidate>::new();
     let candidate_budget = configuration
         .max_findings
         .saturating_mul(configuration.max_interprocedural_depth.saturating_add(1))
@@ -864,7 +876,6 @@ pub(crate) fn analyze(
     let legacy_passes = configuration.max_interprocedural_depth.saturating_add(2);
     let passes = legacy_passes.max(MAX_FIXED_POINT_PASSES);
     for pass in 0..passes {
-        let before = taints.clone();
         let snapshot = taints.clone();
         for record in &all_records {
             check_cancelled(cancellation)?;
@@ -1173,12 +1184,40 @@ pub(crate) fn analyze(
                         );
                         if sanitized {
                             candidates.remove(&format!("{rule_id}:{record_node}"));
+                            if rule_id == "SE1003" {
+                                let guard_nodes = dominant
+                                    .iter()
+                                    .filter(|guard| {
+                                        guard.inputs.iter().any(|input| {
+                                            input.starts_with("@filesystem-proof:")
+                                        })
+                                    })
+                                    .filter_map(|guard| {
+                                        record_nodes.get(&guard.record_id).cloned()
+                                    })
+                                    .collect::<Vec<_>>();
+                                if !guard_nodes.is_empty() {
+                                    candidate_limit_reached |= add_candidate(
+                                        rule_id,
+                                        trace,
+                                        CandidateTarget {
+                                            node: record_node,
+                                            guards: guard_nodes,
+                                            record,
+                                        },
+                                        &mut builder,
+                                        &mut abstention_candidates,
+                                        candidate_budget,
+                                    );
+                                }
+                            }
                         } else if extended_round_candidate_allowed(
                             rule_id,
                             pass,
                             legacy_passes,
                             candidates.contains_key(&format!("{rule_id}:{record_node}")),
                         ) {
+                            abstention_candidates.remove(&format!("{rule_id}:{record_node}"));
                             let guard_nodes = dominant
                                 .iter()
                                 .filter_map(|guard| record_nodes.get(&guard.record_id).cloned())
@@ -1288,10 +1327,18 @@ pub(crate) fn analyze(
                 _ => {}
             }
         }
-        if taints == before {
+        if taints == snapshot {
             break;
         }
     }
+
+    drop(taints);
+    append_fact_graph(
+        facts,
+        &mut file_nodes,
+        &mut builder,
+        cancellation,
+    )?;
 
     let mut graph = EvidenceGraph {
         scope: "full".into(),
@@ -1306,9 +1353,22 @@ pub(crate) fn analyze(
     graph
         .edges
         .sort_by(|left, right| left.edge_id.cmp(&right.edge_id));
-    let candidate_count = candidates.len();
+    let candidate_count = candidates.len().saturating_add(abstention_candidates.len());
     let (mut findings, suppression_diagnostics, suppressed) =
         findings_from_candidates(candidates.into_values().collect(), &graph, configuration);
+    let mut abstention_configuration = configuration.clone();
+    abstention_configuration.suppressions.clear();
+    let (abstention_findings, _, _) = findings_from_candidates(
+        abstention_candidates.into_values().collect(),
+        &graph,
+        &abstention_configuration,
+    );
+    let mut abstentions = abstention_findings
+        .into_iter()
+        .filter_map(|finding| filesystem_identity_abstention(finding, &graph))
+        .collect::<Vec<_>>();
+    abstentions.sort_by(|left, right| left.abstention_id.cmp(&right.abstention_id));
+    abstentions.dedup_by(|left, right| left.fingerprint == right.fingerprint);
     let findings_were_truncated = findings.len() > configuration.max_findings;
     findings.truncate(configuration.max_findings);
     let truncated = builder.truncated || findings_were_truncated || candidate_limit_reached;
@@ -1322,13 +1382,70 @@ pub(crate) fn analyze(
             rules_evaluated: RULES.len(),
             findings: findings.len(),
             findings_suppressed: suppressed,
+            abstentions: abstentions.len(),
             duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             truncated,
         },
         graph,
         findings,
+        abstentions,
         suppression_diagnostics,
         limitations,
+    })
+}
+
+fn filesystem_identity_abstention(
+    finding: Finding,
+    graph: &EvidenceGraph,
+) -> Option<AnalysisAbstention> {
+    let source = finding.source?;
+    let sink = finding.sink?;
+    let filesystem_identity = graph
+        .nodes
+        .iter()
+        .filter(|node| finding.guards.contains(&node.location))
+        .filter_map(|node| node.semantic.as_ref())
+        .filter_map(|semantic| semantic.filesystem_identity.clone())
+        .max()
+        .unwrap_or(FilesystemIdentityState::Unresolved);
+    let control_kind = match filesystem_identity {
+        FilesystemIdentityState::LexicalPath => SecurityControlKind::LexicalContainment,
+        FilesystemIdentityState::CanonicalTarget => SecurityControlKind::CanonicalContainment,
+        FilesystemIdentityState::OpenedObject => SecurityControlKind::OpenedObjectIdentity,
+        FilesystemIdentityState::RevalidatedObject => SecurityControlKind::IdentityRevalidation,
+        _ => SecurityControlKind::Unknown,
+    };
+    let reason = "filesystem-object-identity-unresolved".to_owned();
+    Some(AnalysisAbstention {
+        abstention_id: format!("ab_{}", &finding.fingerprint[..24]),
+        rule_id: finding.rule_id,
+        reason: reason.clone(),
+        source,
+        sink,
+        guards: finding.guards,
+        evidence_path: finding.evidence_path,
+        calibration: EvidenceCalibration {
+            taxonomy_version: "secure-evidence-calibration-v1".into(),
+            disposition: EvidenceDisposition::ExplicitAbstention,
+            reachability: EvidenceResolution::Proven,
+            attacker_control: EvidenceResolution::Proven,
+            actor_identity: EvidenceResolution::Unresolved,
+            trust_boundary: EvidenceResolution::Unresolved,
+            security_control: SecurityControlEvidence {
+                kind: control_kind,
+                scope_binding: EvidenceResolution::Proven,
+                value_binding: EvidenceResolution::Proven,
+                time_binding: EvidenceResolution::Unresolved,
+            },
+            filesystem_identity,
+            observable_impact: EvidenceResolution::Unresolved,
+            reason: Some(reason),
+        },
+        limitations: vec![
+            "Lexical or canonical path confinement does not prove the identity of the opened object across symlinks, mounts, junctions, replacement races, or platform-specific reparse behavior."
+                .into(),
+        ],
+        fingerprint: finding.fingerprint,
     })
 }
 
@@ -1850,7 +1967,10 @@ fn extract_record_for_node(
                     "source",
                     Some("sensitive-configuration"),
                     function_name,
-                    vec![sensitive_data_class_marker(&data_class).into()],
+                    vec![
+                        sensitive_data_class_marker(&data_class).into(),
+                        format!("{CONFIGURATION_PROVENANCE_MARKER}environment"),
+                    ],
                     Some(&name),
                     None,
                     location_for_node(path, content, node),
@@ -3682,6 +3802,18 @@ fn record_semantic(
     callee: Option<&str>,
     inputs: &[String],
 ) -> Option<EvidenceSemantic> {
+    if kind == "guard" && name == Some(crate::semantics::POLICY_FILESYSTEM) {
+        let mut semantic = crate::semantics::for_record(kind, name, callee)?;
+        semantic.filesystem_identity = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix("@filesystem-proof:"))
+            .and_then(|proof| match proof {
+                "lexical" => Some(FilesystemIdentityState::LexicalPath),
+                "canonical" => Some(FilesystemIdentityState::CanonicalTarget),
+                _ => None,
+            });
+        return Some(semantic);
+    }
     if kind == "source" && name == Some("execution-configuration") {
         let provenance = inputs
             .iter()
@@ -3698,7 +3830,12 @@ fn record_semantic(
             .find_map(|input| input.strip_prefix(DATA_CLASS_MARKER))
             .and_then(sensitive_data_class_from_marker)
             .unwrap_or(EvidenceDataClass::UnknownSensitive);
-        return Some(crate::semantics::classified_sensitive_source(data_class));
+        let mut semantic = crate::semantics::classified_sensitive_source(data_class);
+        semantic.configuration_provenance = inputs
+            .iter()
+            .find_map(|input| input.strip_prefix(CONFIGURATION_PROVENANCE_MARKER))
+            .and_then(configuration_provenance_from_marker);
+        return Some(semantic);
     }
     if kind == "sink" && name == Some("sensitive-data-disclosure") {
         let locality = inputs
@@ -4526,13 +4663,19 @@ fn findings_from_candidates(
             .semantic
             .as_ref()
             .and_then(|semantic| semantic.locality.clone());
+        let calibration = evidence_calibration(rule.id, &steps, &guards);
+        let confidence = if calibration.disposition == EvidenceDisposition::ExplicitAbstention {
+            "low"
+        } else {
+            rule.confidence
+        };
         findings.push(Finding {
             rule_id: rule.id.into(),
             finding_id: format!("fd_{}", &fingerprint[..24]),
             title: finding_title(rule, locality.as_ref()),
             category: rule.category.into(),
             severity: finding_severity(rule, locality.as_ref()).into(),
-            confidence: rule.confidence.into(),
+            confidence: confidence.into(),
             evidence: steps.iter().map(|step| step.location.clone()).collect(),
             source: Some(source),
             transformations,
@@ -4552,6 +4695,7 @@ fn findings_from_candidates(
                 state: evidence_state_kind,
             }),
             lead_context: lead_context_for(rule.id, locality.as_ref()),
+            calibration: Some(calibration),
             limitations: finding_limitations(rule.id, locality.as_ref()),
             fingerprint,
             semantic_fingerprint: Some(semantic_fingerprint),
@@ -4578,6 +4722,111 @@ fn findings_from_candidates(
             || left.fingerprint == right.fingerprint
     });
     apply_suppressions(findings, configuration)
+}
+
+fn evidence_calibration(
+    rule_id: &str,
+    steps: &[EvidencePathStep],
+    guards: &[SourceLocation],
+) -> EvidenceCalibration {
+    let environment_source = rule_id == "SE1004" && steps.first().is_some_and(|step| {
+        step.semantic.as_ref().is_some_and(|semantic| {
+            semantic.identity == "untrusted.environment-value"
+                || semantic.configuration_provenance == Some(ConfigurationProvenance::Environment)
+        })
+    });
+    let filesystem_identity = steps
+        .iter()
+        .filter_map(|step| step.semantic.as_ref())
+        .filter_map(|semantic| semantic.filesystem_identity.clone())
+        .max()
+        .unwrap_or_else(|| {
+            if rule_id == "SE1003" {
+                FilesystemIdentityState::Unresolved
+            } else {
+                FilesystemIdentityState::NotApplicable
+            }
+        });
+    let (control_kind, binding) = match filesystem_identity {
+        FilesystemIdentityState::LexicalPath => (
+            SecurityControlKind::LexicalContainment,
+            EvidenceResolution::Proven,
+        ),
+        FilesystemIdentityState::CanonicalTarget => (
+            SecurityControlKind::CanonicalContainment,
+            EvidenceResolution::Proven,
+        ),
+        FilesystemIdentityState::OpenedObject => (
+            SecurityControlKind::OpenedObjectIdentity,
+            EvidenceResolution::Proven,
+        ),
+        FilesystemIdentityState::RevalidatedObject => (
+            SecurityControlKind::IdentityRevalidation,
+            EvidenceResolution::Proven,
+        ),
+        _ if guards.is_empty() => (SecurityControlKind::None, EvidenceResolution::NotApplicable),
+        _ => (SecurityControlKind::Unknown, EvidenceResolution::Unresolved),
+    };
+    let (disposition, actor_identity, trust_boundary, observable_impact, reason) =
+        if environment_source {
+            (
+                EvidenceDisposition::ExplicitAbstention,
+                EvidenceResolution::EquivalentCapability,
+                EvidenceResolution::Unresolved,
+                EvidenceResolution::Unresolved,
+                Some("actor-authority-equivalence".into()),
+            )
+        } else if rule_id == "SE1003" {
+            (
+                EvidenceDisposition::BoundedHardening,
+                EvidenceResolution::Unresolved,
+                EvidenceResolution::Unresolved,
+                EvidenceResolution::Unresolved,
+                Some("filesystem-impact-channel-unresolved".into()),
+            )
+        } else if rule_id == "SE1011" {
+            (
+                EvidenceDisposition::ExplicitAbstention,
+                EvidenceResolution::Unresolved,
+                EvidenceResolution::Unresolved,
+                EvidenceResolution::Unresolved,
+                Some("lifecycle-reachability-unresolved".into()),
+            )
+        } else {
+            (
+                EvidenceDisposition::SecurityPath,
+                EvidenceResolution::Proven,
+                EvidenceResolution::Proven,
+                EvidenceResolution::Proven,
+                None,
+            )
+        };
+    EvidenceCalibration {
+        taxonomy_version: "secure-evidence-calibration-v1".into(),
+        disposition,
+        reachability: EvidenceResolution::Proven,
+        attacker_control: EvidenceResolution::Proven,
+        actor_identity,
+        trust_boundary,
+        security_control: SecurityControlEvidence {
+            kind: control_kind,
+            scope_binding: binding.clone(),
+            value_binding: binding,
+            time_binding: if matches!(
+                filesystem_identity,
+                FilesystemIdentityState::RevalidatedObject
+            ) {
+                EvidenceResolution::Proven
+            } else if rule_id == "SE1003" {
+                EvidenceResolution::Unresolved
+            } else {
+                EvidenceResolution::NotApplicable
+            },
+        },
+        filesystem_identity,
+        observable_impact,
+        reason,
+    }
 }
 
 fn evidence_state_for(rule_id: &str, has_guards: bool) -> EvidenceStateKind {
@@ -7287,7 +7536,7 @@ fn rule_accepts_trace_source(rule_id: &str, trace: &Trace, builder: &GraphBuilde
         .and_then(|node| node.semantic.as_ref())
         .is_some_and(|semantic| semantic.role == EvidenceSemanticRole::ConfigurationSource)
     {
-        return rule_id == "SE1012";
+        return matches!(rule_id, "SE1004" | "SE1012");
     }
     if rule_id != "SE1010" {
         return true;

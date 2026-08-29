@@ -570,6 +570,7 @@ where
         cache_entries_ignored: cache_stats.ignored,
     };
 
+    let total_facts = parsing.facts_extracted;
     let mut report = ScanReport {
         schema_version: SCHEMA_VERSION.into(),
         engine_version: ENGINE_VERSION.into(),
@@ -601,6 +602,16 @@ where
         capabilities,
         trust_boundaries,
         findings: analysis_result.findings,
+        abstentions: analysis_result.abstentions,
+        projection: crate::ReportProjection {
+            graph_scope: "full".into(),
+            facts_scope: "full".into(),
+            total_facts,
+            retained_facts: total_facts,
+            output_budget_bytes: None,
+            output_budget_reached: false,
+            reason: None,
+        },
         limitations,
         skipped_files,
         exclusions: discovery.exclusions,
@@ -623,6 +634,7 @@ where
 /// Returns an internal error if deterministic fingerprint serialization fails.
 pub fn compact_report_graph(report: &mut ScanReport) -> Result<(), ScanError> {
     if report.graph.scope == "finding-evidence" {
+        report.projection.graph_scope = "finding-evidence".into();
         report.report_fingerprint = report_fingerprint(report)?;
         return Ok(());
     }
@@ -634,9 +646,23 @@ pub fn compact_report_graph(report: &mut ScanReport) -> Result<(), ScanError> {
         .findings
         .iter()
         .flat_map(|finding| finding.guards.iter().cloned())
+        .chain(
+            report
+                .abstentions
+                .iter()
+                .flat_map(|abstention| abstention.guards.iter().cloned()),
+        )
         .collect::<BTreeSet<_>>();
     for finding in &report.findings {
         for step in &finding.evidence_path {
+            node_ids.insert(step.node_id.clone());
+            if let Some(edge_id) = &step.edge_id_from_previous {
+                edge_ids.insert(edge_id.clone());
+            }
+        }
+    }
+    for abstention in &report.abstentions {
+        for step in &abstention.evidence_path {
             node_ids.insert(step.node_id.clone());
             if let Some(edge_id) = &step.edge_id_from_previous {
                 edge_ids.insert(edge_id.clone());
@@ -665,6 +691,77 @@ pub fn compact_report_graph(report: &mut ScanReport) -> Result<(), ScanError> {
     report.graph.scope = "finding-evidence".into();
     report.graph.total_nodes = total_nodes;
     report.graph.total_edges = total_edges;
+    report.projection.graph_scope = "finding-evidence".into();
+    report.report_fingerprint = report_fingerprint(report)?;
+    Ok(())
+}
+
+/// Projects a completed report to compact finding and abstention evidence.
+///
+/// Internal analysis always completes against the full fact set and graph. This projection retains
+/// only facts whose source spans intersect an ordered evidence path or an evaluated guard, records
+/// the original totals, and declares the interface output budget that serialization must enforce.
+///
+/// # Errors
+///
+/// Returns an internal error if deterministic fingerprint serialization fails.
+pub fn compact_report(report: &mut ScanReport, output_budget_bytes: u64) -> Result<(), ScanError> {
+    let total_facts = report.projection.total_facts.max(report.facts.len());
+    let evidence_locations = report
+        .findings
+        .iter()
+        .flat_map(|finding| {
+            finding
+                .evidence_path
+                .iter()
+                .map(|step| step.location.clone())
+                .chain(finding.guards.iter().cloned())
+        })
+        .chain(report.abstentions.iter().flat_map(|abstention| {
+            abstention
+                .evidence_path
+                .iter()
+                .map(|step| step.location.clone())
+                .chain(abstention.guards.iter().cloned())
+        }))
+        .collect::<BTreeSet<_>>();
+    report.facts.retain(|fact| {
+        evidence_locations.iter().any(|location| {
+            fact.location.path == location.path
+                && fact.location.span.start_byte < location.span.end_byte
+                && location.span.start_byte < fact.location.span.end_byte
+        })
+    });
+    compact_report_graph(report)?;
+    report.projection = crate::ReportProjection {
+        graph_scope: "finding-evidence".into(),
+        facts_scope: "evidence-neighborhood".into(),
+        total_facts,
+        retained_facts: report.facts.len(),
+        output_budget_bytes: Some(output_budget_bytes),
+        output_budget_reached: false,
+        reason: Some("non-evidence-facts-omitted".into()),
+    };
+    report.report_fingerprint = report_fingerprint(report)?;
+    Ok(())
+}
+
+/// Declares an interface output budget while retaining the full report projection.
+///
+/// # Errors
+///
+/// Returns an internal error if deterministic fingerprint serialization fails.
+pub fn set_report_output_budget(
+    report: &mut ScanReport,
+    output_budget_bytes: u64,
+) -> Result<(), ScanError> {
+    report.projection.graph_scope = report.graph.scope.clone();
+    report.projection.facts_scope = "full".into();
+    report.projection.total_facts = report.projection.total_facts.max(report.facts.len());
+    report.projection.retained_facts = report.facts.len();
+    report.projection.output_budget_bytes = Some(output_budget_bytes);
+    report.projection.output_budget_reached = false;
+    report.projection.reason = None;
     report.report_fingerprint = report_fingerprint(report)?;
     Ok(())
 }

@@ -223,10 +223,39 @@ fn malformed_phase_one_controls_use_invalid_input_exit_code()
         "--max-interprocedural-depth",
         "--max-findings",
         "--full-graph",
+        "--max-output-bytes",
         "--suppress",
     ] {
         assert!(help_text.contains(flag), "missing {flag}");
     }
+    Ok(())
+}
+
+#[test]
+fn report_output_budget_fails_closed_without_a_partial_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temporary = tempdir()?;
+    let report = temporary.path().join("too-small.json");
+    let fixture = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/integration-project"
+    );
+    let output = secure()
+        .args([
+            "scan",
+            fixture,
+            "--no-cache",
+            "--full-graph",
+            "--max-output-bytes",
+            "128",
+            "--output",
+        ])
+        .arg(&report)
+        .output()?;
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!report.exists());
+    assert!(String::from_utf8(output.stderr)?.contains("output-budget-exceeded"));
     Ok(())
 }
 

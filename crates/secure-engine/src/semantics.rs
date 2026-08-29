@@ -262,6 +262,7 @@ fn semantic(
         configuration_provenance: None,
         execution_boundary: None,
         locality: None,
+        filesystem_identity: None,
         certainty: certainty.into(),
     }
 }

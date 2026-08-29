@@ -33,7 +33,10 @@ pub use graph::rules;
 pub use history::*;
 pub use model::*;
 pub use sarif::*;
-pub use scan::{CancellationToken, ScanError, compact_report_graph, scan_repository};
+pub use scan::{
+    CancellationToken, ScanError, compact_report, compact_report_graph, scan_repository,
+    set_report_output_budget,
+};
 pub use semantics::GRAPH_EVIDENCE_SEMANTICS_VERSION;
 pub use source::*;
 pub use taxonomy::*;

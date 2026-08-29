@@ -195,7 +195,7 @@ fn cache_and_repeated_runs_preserve_order_fingerprints_and_compact_schema()
     assert_eq!(cold.parsing.cache_hits, 0);
     assert!(warm.parsing.cache_hits > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v21").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v22").is_dir());
 
     let mut compact = warm;
     let full_nodes = compact.graph.nodes.len();

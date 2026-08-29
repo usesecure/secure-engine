@@ -38,7 +38,7 @@ mutation sinks. V18 entries safely miss.
 Tranche 4 advances it to `secure-parse-cache-v20` for sensitive configuration sources and
 log/model-provider disclosure sinks. V19 entries safely miss.
 
-The trust-composition milestone advances the private envelope to `secure-parse-cache-v21` for
+The evidence-calibration milestone advances the private envelope to `secure-parse-cache-v22` for
 configuration provenance, same-scope trust state, async invalidation, and exact process-component
 records. V20 and older entries safely miss and remain untouched.
 

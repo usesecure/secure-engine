@@ -10,11 +10,11 @@ use secure_engine::{
     AiCache, AiError, AiProjectConfiguration, AiValidationDocument, Baseline, CacheControl,
     CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ExportFormat, HistoryStore,
     ProgressEvent, SCHEMA_VERSION, SECURE_AI_ASSESSMENT_V1_SCHEMA, SECURE_JSON_V1_SCHEMA,
-    ScanError, ScanReport, ScanRequest, Suppression, compact_report_graph, compare_baseline,
+    ScanError, ScanReport, ScanRequest, Suppression, compact_report, compare_baseline,
     configured_provider, create_baseline, default_ai_cache_directory, default_history_directory,
     explain_finding, preview_finding, provider_descriptors, read_ai_configuration, rules,
-    scan_repository, serialize_export, validate_baseline, validate_finding_with_ai,
-    validation_document, write_export, write_json_artifact,
+    scan_repository, serialize_export_bounded, set_report_output_budget, validate_baseline,
+    validate_finding_with_ai, validation_document, write_export_bounded, write_json_artifact,
 };
 
 const EXIT_POLICY_FINDINGS: u8 = 1;
@@ -22,6 +22,7 @@ const EXIT_INVALID_INPUT: u8 = 2;
 const EXIT_UNSUPPORTED_SCHEMA: u8 = 3;
 const EXIT_CANCELLED: u8 = 4;
 const EXIT_INTERNAL_FAILURE: u8 = 5;
+const DEFAULT_REPORT_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -231,9 +232,12 @@ struct ScanArgs {
     /// Maximum findings retained after deduplication.
     #[arg(long, default_value_t = 10_000)]
     max_findings: usize,
-    /// Retain the complete global evidence graph instead of the finding-evidence projection.
+    /// Retain the complete facts and global evidence graph instead of the compact projection.
     #[arg(long)]
     full_graph: bool,
+    /// Maximum serialized report bytes; exceeding it fails closed without partial output.
+    #[arg(long, default_value_t = DEFAULT_REPORT_OUTPUT_BYTES)]
+    max_output_bytes: u64,
     /// Exact suppression: `RULE_ID:RELATIVE_PATH:START_BYTE:REASON`. Repeatable.
     #[arg(long = "suppress", value_name = "RULE:PATH:BYTE:REASON")]
     suppressions: Vec<String>,
@@ -435,23 +439,30 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     if cancellation.is_cancelled() {
         return Err((EXIT_CANCELLED, "scan cancelled".into()));
     }
-    if !arguments.full_graph {
-        compact_report_graph(&mut report).map_err(scan_error)?;
+    if arguments.max_output_bytes == 0 {
+        return Err((EXIT_INVALID_INPUT, "max_output_bytes must be greater than zero".into()));
+    }
+    if arguments.full_graph {
+        set_report_output_budget(&mut report, arguments.max_output_bytes).map_err(scan_error)?;
+    } else {
+        compact_report(&mut report, arguments.max_output_bytes).map_err(scan_error)?;
     }
 
     if let Some(output) = arguments.output {
-        write_export(&report, export_format, &output, &cancellation)
+        write_export_bounded(
+            &report,
+            export_format,
+            &output,
+            &cancellation,
+            arguments.max_output_bytes,
+        )
             .map_err(|error| export_error(&error, "report"))?;
         if !quiet {
             eprintln!("secure: wrote complete report to {}", output.display());
         }
     } else {
-        let bytes = serialize_export(&report, export_format).map_err(|_| {
-            (
-                EXIT_INTERNAL_FAILURE,
-                "complete report could not be serialized".into(),
-            )
-        })?;
+        let bytes = serialize_export_bounded(&report, export_format, arguments.max_output_bytes)
+            .map_err(|error| export_error(&error, "report"))?;
         write_stdout(&bytes).map_err(|message| (EXIT_INTERNAL_FAILURE, message))?;
     }
     if arguments.save_history {
@@ -1022,6 +1033,10 @@ fn export_error(error: &secure_engine::ExportError, artifact: &str) -> (u8, Stri
         secure_engine::ExportError::Write => (
             EXIT_INVALID_INPUT,
             format!("{artifact} could not be written atomically"),
+        ),
+        secure_engine::ExportError::OutputBudgetExceeded { .. } => (
+            EXIT_INVALID_INPUT,
+            format!("{}: {error}", error.code()),
         ),
     }
 }

@@ -39,7 +39,7 @@ secure rules list
 secure explain fd_FINDING_ID --report phase3-cold.json
 ```
 
-CLI JSON output uses the finding-evidence graph projection by default. Add `--full-graph` for graph-development diagnostics. The report's `graph.total_nodes` and `graph.total_edges` preserve complete internal counts in either mode.
+CLI JSON output uses compact finding and abstention evidence neighborhoods by default. Add `--full-graph` for graph-development diagnostics; this also retains the complete normalized fact set. The report's `graph.total_nodes`, `graph.total_edges`, and `projection.total_facts` preserve complete internal counts in either mode. `--max-output-bytes` is an explicit fail-closed serialization budget and defaults to 64 MiB.
 
 The default repository-specific cache lives below `XDG_CACHE_HOME`, then `XDG_RUNTIME_DIR`, or the platform temporary directory. Reports never contain that path. Use `--no-cache` to disable reads and writes and `--clear-cache` to atomically retire the selected repository cache before scanning.
 
