@@ -9,7 +9,7 @@ sudo dnf install rustfmt clippy libX11-devel libxkbcommon-devel mesa-libGL-devel
 Run all gates:
 
 ```bash
-export PATH=/home/danielcastrillon/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH
+export PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH"
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
@@ -45,6 +45,11 @@ secure explain fd_FINDING_ID --report phase3-cold.json
 ```
 
 CLI JSON output uses compact finding and abstention evidence neighborhoods by default. Add `--full-graph` for graph-development diagnostics; this also retains the complete normalized fact set. The report's `graph.total_nodes`, `graph.total_edges`, and `projection.total_facts` preserve complete internal counts in either mode. `--max-output-bytes` is an explicit fail-closed serialization budget and defaults to 64 MiB.
+
+The default CLI path uses `scan_repository_compact` to count fact-only global graph evidence without
+materializing data that the final projection omits. Full-graph callers use `scan_repository`
+unchanged. See [the compact scan memory milestone](compact-scan-memory-milestone.md) for the
+equivalence contract, repeatable measurement command, and residual limits.
 
 The default repository-specific cache lives below `XDG_CACHE_HOME`, then `XDG_RUNTIME_DIR`, or the platform temporary directory. Reports never contain that path. Use `--no-cache` to disable reads and writes and `--clear-cache` to atomically retire the selected repository cache before scanning.
 
