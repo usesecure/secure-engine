@@ -38,7 +38,7 @@ Measurement environment:
 
 - Linux `7.1.8-200.fc44.x86_64` on `x86_64`;
 - `rustc 1.92.0 (ded5c06cf 2025-12-08)` and `cargo 1.92.0`;
-- baseline source commit `c5c67cd`;
+- baseline source commit `c5c67cd84a1d39c20f545bc05c9da9e01246e04e`;
 - optimized release-binary SHA-256
   `c4b2dbe6c06d7b020c483bbb38b3a26959155cc118e81e2e8c777b7e83d77d4a`;
 - optimized source commit `4eee7eeaf34856416f8acc5719d296efbeffd251`.
@@ -81,6 +81,6 @@ and stable report fingerprint.
   bounded fixed-point analysis remain the largest retained stages and need separate profiling.
 - The optimization does not reduce `--full-graph` memory because that mode explicitly requests all
   graph evidence.
-- These measurements describe one checkout and workstation; they are reproducible evidence, not a
-  universal resource guarantee.
+- These measurements describe one checkout and workstation. They are traceable local evidence,
+  not independently reproduced evidence or a universal resource guarantee.
 - A zero-finding result is not a security verdict. The three abstentions still require human review.
