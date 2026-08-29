@@ -10,10 +10,10 @@ use secure_engine::{
     AiCache, AiError, AiProjectConfiguration, AiValidationDocument, Baseline, CacheControl,
     CancellationToken, DoctorCheck, DoctorReport, ENGINE_VERSION, ExportFormat, HistoryStore,
     ProgressEvent, SCHEMA_VERSION, SECURE_AI_ASSESSMENT_V1_SCHEMA, SECURE_JSON_V1_SCHEMA,
-    ScanError, ScanReport, ScanRequest, Suppression, compact_report, compare_baseline,
-    configured_provider, create_baseline, default_ai_cache_directory, default_history_directory,
-    explain_finding, preview_finding, provider_descriptors, read_ai_configuration, rules,
-    scan_repository, serialize_export_bounded, set_report_output_budget, validate_baseline,
+    ScanError, ScanReport, ScanRequest, Suppression, compare_baseline, configured_provider,
+    create_baseline, default_ai_cache_directory, default_history_directory, explain_finding,
+    preview_finding, provider_descriptors, read_ai_configuration, rules, scan_repository,
+    scan_repository_compact, serialize_export_bounded, set_report_output_budget, validate_baseline,
     validate_finding_with_ai, validation_document, write_export_bounded, write_json_artifact,
 };
 
@@ -394,6 +394,12 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
             "resource limits must be greater than zero".into(),
         ));
     }
+    if arguments.max_output_bytes == 0 {
+        return Err((
+            EXIT_INVALID_INPUT,
+            "max_output_bytes must be greater than zero".into(),
+        ));
+    }
 
     let cancellation = CancellationToken::new();
     install_cancellation(&cancellation)?;
@@ -432,23 +438,24 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
     let quiet = arguments.quiet;
     let verbose = arguments.verbose;
     let repository_path = request.repository.clone();
-    let mut report = scan_repository(&request, &cancellation, |event| {
-        print_progress(&event, quiet, verbose);
-    })
+    let mut report = if arguments.full_graph {
+        scan_repository(&request, &cancellation, |event| {
+            print_progress(&event, quiet, verbose);
+        })
+    } else {
+        scan_repository_compact(
+            &request,
+            &cancellation,
+            |event| print_progress(&event, quiet, verbose),
+            arguments.max_output_bytes,
+        )
+    }
     .map_err(scan_error)?;
     if cancellation.is_cancelled() {
         return Err((EXIT_CANCELLED, "scan cancelled".into()));
     }
-    if arguments.max_output_bytes == 0 {
-        return Err((
-            EXIT_INVALID_INPUT,
-            "max_output_bytes must be greater than zero".into(),
-        ));
-    }
     if arguments.full_graph {
         set_report_output_budget(&mut report, arguments.max_output_bytes).map_err(scan_error)?;
-    } else {
-        compact_report(&mut report, arguments.max_output_bytes).map_err(scan_error)?;
     }
 
     if let Some(output) = arguments.output {

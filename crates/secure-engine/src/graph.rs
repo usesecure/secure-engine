@@ -274,9 +274,12 @@ type AliasMap = BTreeMap<(String, String), BTreeSet<String>>;
 struct GraphBuilder {
     nodes: BTreeMap<String, EvidenceNode>,
     edges: BTreeMap<String, EvidenceEdge>,
+    counted_nodes: BTreeSet<String>,
+    counted_edges: BTreeSet<String>,
     evaluation_order: BTreeMap<String, u64>,
     max_nodes: usize,
     max_edges: usize,
+    count_only: bool,
     truncated: bool,
 }
 
@@ -285,11 +288,30 @@ impl GraphBuilder {
         Self {
             nodes: BTreeMap::new(),
             edges: BTreeMap::new(),
+            counted_nodes: BTreeSet::new(),
+            counted_edges: BTreeSet::new(),
             evaluation_order: BTreeMap::new(),
             max_nodes: configuration.max_graph_nodes,
             max_edges: configuration.max_graph_edges,
+            count_only: false,
             truncated: false,
         }
+    }
+
+    fn retain_counts_only(&mut self) {
+        self.count_only = true;
+    }
+
+    fn total_nodes(&self) -> usize {
+        self.nodes.len().saturating_add(self.counted_nodes.len())
+    }
+
+    fn total_edges(&self) -> usize {
+        self.edges.len().saturating_add(self.counted_edges.len())
+    }
+
+    fn contains_node(&self, node_id: &str) -> bool {
+        self.nodes.contains_key(node_id) || self.counted_nodes.contains(node_id)
     }
 
     fn node(
@@ -312,23 +334,27 @@ impl GraphBuilder {
     ) -> String {
         let fingerprint = graph_fingerprint(kind, name, location, provenance);
         let node_id = format!("gn_{}", &fingerprint[..24]);
-        if !self.nodes.contains_key(&node_id) {
-            if self.nodes.len() >= self.max_nodes {
+        if !self.contains_node(&node_id) {
+            if self.total_nodes() >= self.max_nodes {
                 self.truncated = true;
                 return node_id;
             }
-            self.nodes.insert(
-                node_id.clone(),
-                EvidenceNode {
-                    node_id: node_id.clone(),
-                    kind: kind.into(),
-                    name: name.map(str::to_owned),
-                    semantic,
-                    location: location.clone(),
-                    provenance: provenance.clone(),
-                    fingerprint,
-                },
-            );
+            if self.count_only {
+                self.counted_nodes.insert(node_id.clone());
+            } else {
+                self.nodes.insert(
+                    node_id.clone(),
+                    EvidenceNode {
+                        node_id: node_id.clone(),
+                        kind: kind.into(),
+                        name: name.map(str::to_owned),
+                        semantic,
+                        location: location.clone(),
+                        provenance: provenance.clone(),
+                        fingerprint,
+                    },
+                );
+            }
         }
         node_id
     }
@@ -341,29 +367,33 @@ impl GraphBuilder {
         location: &SourceLocation,
         provenance: &ParserProvenance,
     ) -> Option<String> {
-        if !self.nodes.contains_key(from_node) || !self.nodes.contains_key(to_node) {
+        if !self.contains_node(from_node) || !self.contains_node(to_node) {
             self.truncated = true;
             return None;
         }
         let fingerprint = edge_fingerprint(kind, from_node, to_node, location, provenance);
         let edge_id = format!("ge_{}", &fingerprint[..24]);
-        if !self.edges.contains_key(&edge_id) {
-            if self.edges.len() >= self.max_edges {
+        if !self.edges.contains_key(&edge_id) && !self.counted_edges.contains(&edge_id) {
+            if self.total_edges() >= self.max_edges {
                 self.truncated = true;
                 return None;
             }
-            self.edges.insert(
-                edge_id.clone(),
-                EvidenceEdge {
-                    edge_id: edge_id.clone(),
-                    kind: kind.into(),
-                    from_node: from_node.into(),
-                    to_node: to_node.into(),
-                    location: location.clone(),
-                    provenance: provenance.clone(),
-                    fingerprint,
-                },
-            );
+            if self.count_only {
+                self.counted_edges.insert(edge_id.clone());
+            } else {
+                self.edges.insert(
+                    edge_id.clone(),
+                    EvidenceEdge {
+                        edge_id: edge_id.clone(),
+                        kind: kind.into(),
+                        from_node: from_node.into(),
+                        to_node: to_node.into(),
+                        location: location.clone(),
+                        provenance: provenance.clone(),
+                        fingerprint,
+                    },
+                );
+            }
         }
         Some(edge_id)
     }
@@ -580,6 +610,7 @@ pub(crate) fn analyze(
     units: &[ProgramUnit],
     configuration: &ScanConfiguration,
     cancellation: &CancellationToken,
+    compact_projection: bool,
 ) -> Result<AnalysisResult, ScanError> {
     let started = Instant::now();
     let mut builder = GraphBuilder::new(configuration);
@@ -1335,12 +1366,18 @@ pub(crate) fn analyze(
     }
 
     drop(taints);
+    if compact_projection {
+        builder.retain_counts_only();
+    }
     append_fact_graph(facts, &mut file_nodes, &mut builder, cancellation)?;
 
+    let total_nodes = builder.total_nodes();
+    let total_edges = builder.total_edges();
+    let graph_was_truncated = builder.truncated;
     let mut graph = EvidenceGraph {
         scope: "full".into(),
-        total_nodes: builder.nodes.len(),
-        total_edges: builder.edges.len(),
+        total_nodes,
+        total_edges,
         nodes: builder.nodes.into_values().collect(),
         edges: builder.edges.into_values().collect(),
     };
@@ -1382,13 +1419,13 @@ pub(crate) fn analyze(
     abstentions.dedup_by(|left, right| left.fingerprint == right.fingerprint);
     let findings_were_truncated = findings.len() > configuration.max_findings;
     findings.truncate(configuration.max_findings);
-    let truncated = builder.truncated || findings_were_truncated || candidate_limit_reached;
+    let truncated = graph_was_truncated || findings_were_truncated || candidate_limit_reached;
     let limitations =
         analysis_limitations(configuration, truncated, candidate_limit_reached, units);
     Ok(AnalysisResult {
         summary: AnalysisSummary {
-            nodes: graph.nodes.len(),
-            edges: graph.edges.len(),
+            nodes: total_nodes,
+            edges: total_edges,
             candidate_paths: candidate_count,
             rules_evaluated: RULES.len(),
             findings: findings.len(),

@@ -110,7 +110,50 @@ impl std::error::Error for ScanError {}
 pub fn scan_repository<F>(
     request: &ScanRequest,
     cancellation: &CancellationToken,
+    progress: F,
+) -> Result<ScanReport, ScanError>
+where
+    F: FnMut(ProgressEvent),
+{
+    scan_repository_with_projection(request, cancellation, progress, false)
+}
+
+/// Inventories a repository and returns the deterministic compact evidence projection directly.
+///
+/// Rule evaluation still uses every retained program record and normalized fact. Global fact-only
+/// graph nodes and edges are counted under the configured bounds, but are not materialized when
+/// they cannot appear in finding or abstention evidence. This keeps the conceptual graph totals,
+/// findings, abstentions, and report fingerprint equivalent to compacting a full scan afterward.
+///
+/// # Errors
+///
+/// Returns the same scan errors as [`scan_repository`], plus an internal error if deterministic
+/// compact projection or fingerprint construction fails.
+pub fn scan_repository_compact<F>(
+    request: &ScanRequest,
+    cancellation: &CancellationToken,
+    progress: F,
+    output_budget_bytes: u64,
+) -> Result<ScanReport, ScanError>
+where
+    F: FnMut(ProgressEvent),
+{
+    if output_budget_bytes == 0 {
+        return Err(ScanError::InvalidConfiguration(
+            "output budget must be greater than zero".into(),
+        ));
+    }
+    let mut report = scan_repository_with_projection(request, cancellation, progress, true)?;
+    compact_report(&mut report, output_budget_bytes)?;
+    Ok(report)
+}
+
+#[allow(clippy::too_many_lines)]
+fn scan_repository_with_projection<F>(
+    request: &ScanRequest,
+    cancellation: &CancellationToken,
     mut progress: F,
+    compact_projection: bool,
 ) -> Result<ScanReport, ScanError>
 where
     F: FnMut(ProgressEvent),
@@ -494,7 +537,13 @@ where
     }
 
     progress(ProgressEvent::Analyzing { facts: facts.len() });
-    let mut analysis_result = analyze(&facts, &programs, &request.configuration, cancellation)?;
+    let mut analysis_result = analyze(
+        &facts,
+        &programs,
+        &request.configuration,
+        cancellation,
+        compact_projection,
+    )?;
     vscode_workspace_trust_contexts.sort();
     vscode_workspace_trust_contexts.dedup();
     for finding in analysis_result
