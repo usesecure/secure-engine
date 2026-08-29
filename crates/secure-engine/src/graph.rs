@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path};
+use std::sync::Arc;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -9,8 +10,8 @@ use crate::{
     AnalysisAbstention, AnalysisSummary, CancellationToken, ConfigurationProvenance,
     DisclosureLocality, EvidenceCalibration, EvidenceDataClass, EvidenceDisposition, EvidenceEdge,
     EvidenceGraph, EvidenceNode, EvidencePathStep, EvidenceResolution, EvidenceSemantic,
-    EvidenceSemanticRole, EvidenceState, EvidenceStateKind, ExecutionBoundaryKind, Finding,
-    FilesystemIdentityState, LeadContext, NormalizedFact, ParserProvenance, RuleMetadata,
+    EvidenceSemanticRole, EvidenceState, EvidenceStateKind, ExecutionBoundaryKind,
+    FilesystemIdentityState, Finding, LeadContext, NormalizedFact, ParserProvenance, RuleMetadata,
     ScanConfiguration, ScanError, SecurityControlEvidence, SecurityControlKind, SourceLocation,
     SourceSpan, SuppressionDiagnostic,
 };
@@ -138,8 +139,8 @@ struct ParameterInfo {
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 struct Trace {
-    nodes: Vec<String>,
-    edges: Vec<String>,
+    nodes: Arc<Vec<String>>,
+    edges: Arc<Vec<String>>,
     source_function: Option<String>,
     source_node: String,
     source_path: String,
@@ -147,12 +148,12 @@ struct Trace {
     source_end: u64,
     value_identity: String,
     field_sensitive: bool,
-    sanitizers: BTreeSet<String>,
-    values: BTreeSet<String>,
+    sanitizers: Arc<BTreeSet<String>>,
+    values: Arc<BTreeSet<String>>,
     source_specificity: u8,
     local_value_depth: usize,
     interprocedural_depth: usize,
-    call_bindings: Vec<String>,
+    call_bindings: Arc<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -475,6 +476,7 @@ pub(crate) fn extract_program(
         &mut records,
         maximum_records,
     );
+    append_policy_composition_records(&mut records, maximum_records);
     records.sort();
     records.dedup_by(|left, right| left.record_id == right.record_id);
     Ok(ProgramUnit {
@@ -900,8 +902,8 @@ pub(crate) fn analyze(
                             &mut taints,
                             (function.clone(), output.clone()),
                             Trace {
-                                nodes: vec![record_node.clone()],
-                                edges: Vec::new(),
+                                nodes: Arc::new(vec![record_node.clone()]),
+                                edges: Arc::new(Vec::new()),
                                 source_function: record.function.clone(),
                                 source_node: record_node.clone(),
                                 source_path: record.location.path.clone(),
@@ -909,8 +911,8 @@ pub(crate) fn analyze(
                                 source_end: record.location.span.end_byte,
                                 value_identity: String::new(),
                                 field_sensitive: source_is_field_container(record),
-                                sanitizers: BTreeSet::new(),
-                                values: source_values,
+                                sanitizers: Arc::new(BTreeSet::new()),
+                                values: Arc::new(source_values),
                                 source_specificity: if matches!(
                                     record.name.as_deref(),
                                     Some("request-parameter" | "server-action-parameter")
@@ -921,7 +923,7 @@ pub(crate) fn analyze(
                                 },
                                 local_value_depth: 0,
                                 interprocedural_depth: 0,
-                                call_bindings: Vec::new(),
+                                call_bindings: Arc::new(Vec::new()),
                             },
                         );
                     }
@@ -985,7 +987,8 @@ pub(crate) fn analyze(
                                         .is_some()
                                 })
                             {
-                                trace.sanitizers.remove("filesystem-path-confinement");
+                                Arc::make_mut(&mut trace.sanitizers)
+                                    .remove("filesystem-path-confinement");
                             }
                             if record.kind == "transformation"
                                 && record
@@ -993,12 +996,12 @@ pub(crate) fn analyze(
                                     .as_deref()
                                     .is_some_and(identity_changing_transformation)
                             {
-                                trace.sanitizers.retain(|policy| {
+                                Arc::make_mut(&mut trace.sanitizers).retain(|policy| {
                                     !crate::semantics::is_operation_authorization(policy)
                                 });
                             }
                             trace.local_value_depth = trace.local_value_depth.saturating_add(1);
-                            trace.values.insert(output.clone());
+                            Arc::make_mut(&mut trace.values).insert(output.clone());
                             insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                         } else if record.kind == "assignment"
                             && record.dominance_start.is_some()
@@ -1027,9 +1030,9 @@ pub(crate) fn analyze(
                         {
                             let mut sanitized = extend_trace(&trace, record_node, edge);
                             sanitized.field_sensitive = false;
-                            sanitized.values.insert(output.clone());
+                            Arc::make_mut(&mut sanitized.values).insert(output.clone());
                             for policy in policies {
-                                sanitized.sanitizers.insert(policy.into());
+                                Arc::make_mut(&mut sanitized.sanitizers).insert(policy.into());
                             }
                             insert_trace(
                                 &mut taints,
@@ -1072,7 +1075,7 @@ pub(crate) fn analyze(
                             &record.provenance,
                         );
                         let mut trace = extend_trace(&trace, record_node, edge);
-                        trace.values.insert(output.clone());
+                        Arc::make_mut(&mut trace.values).insert(output.clone());
                         insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                     }
                     if path_composer_call_is_trusted(record, &import_bindings, &all_records)
@@ -1089,8 +1092,8 @@ pub(crate) fn analyze(
                             &record.provenance,
                         );
                         let mut trace = extend_trace(&trace, record_node, edge);
-                        trace.sanitizers.remove("filesystem-path-confinement");
-                        trace.values.insert(output.clone());
+                        Arc::make_mut(&mut trace.sanitizers).remove("filesystem-path-confinement");
+                        Arc::make_mut(&mut trace.values).insert(output.clone());
                         insert_trace(&mut taints, (function.clone(), output.clone()), trace);
                     }
                 }
@@ -1107,7 +1110,7 @@ pub(crate) fn analyze(
                                 &record.provenance,
                             ),
                         );
-                        trace.values.insert("@return".into());
+                        Arc::make_mut(&mut trace.values).insert("@return".into());
                         let dominant = dominating_guard_records(record, &guards);
                         for guard in dominant {
                             let Some(policy) = guard.name.as_deref() else {
@@ -1160,7 +1163,7 @@ pub(crate) fn analyze(
                                             &snapshot,
                                         )))
                             {
-                                trace.sanitizers.insert(policy.into());
+                                Arc::make_mut(&mut trace.sanitizers).insert(policy.into());
                             }
                         }
                         insert_trace(&mut taints, (function.clone(), "@return".into()), trace);
@@ -1188,13 +1191,12 @@ pub(crate) fn analyze(
                                 let guard_nodes = dominant
                                     .iter()
                                     .filter(|guard| {
-                                        guard.inputs.iter().any(|input| {
-                                            input.starts_with("@filesystem-proof:")
-                                        })
+                                        guard
+                                            .inputs
+                                            .iter()
+                                            .any(|input| input.starts_with("@filesystem-proof:"))
                                     })
-                                    .filter_map(|guard| {
-                                        record_nodes.get(&guard.record_id).cloned()
-                                    })
+                                    .filter_map(|guard| record_nodes.get(&guard.record_id).cloned())
                                     .collect::<Vec<_>>();
                                 if !guard_nodes.is_empty() {
                                     candidate_limit_reached |= add_candidate(
@@ -1333,12 +1335,7 @@ pub(crate) fn analyze(
     }
 
     drop(taints);
-    append_fact_graph(
-        facts,
-        &mut file_nodes,
-        &mut builder,
-        cancellation,
-    )?;
+    append_fact_graph(facts, &mut file_nodes, &mut builder, cancellation)?;
 
     let mut graph = EvidenceGraph {
         scope: "full".into(),
@@ -1353,9 +1350,17 @@ pub(crate) fn analyze(
     graph
         .edges
         .sort_by(|left, right| left.edge_id.cmp(&right.edge_id));
-    let candidate_count = candidates.len().saturating_add(abstention_candidates.len());
+    let policy_gap_count = all_records
+        .iter()
+        .filter(|record| record.kind == "policy-gap")
+        .count();
+    let candidate_count = candidates
+        .len()
+        .saturating_add(abstention_candidates.len())
+        .saturating_add(policy_gap_count);
     let (mut findings, suppression_diagnostics, suppressed) =
         findings_from_candidates(candidates.into_values().collect(), &graph, configuration);
+    let mut abstentions = drain_explicit_abstentions(&mut findings);
     let mut abstention_configuration = configuration.clone();
     abstention_configuration.suppressions.clear();
     let (abstention_findings, _, _) = findings_from_candidates(
@@ -1363,10 +1368,16 @@ pub(crate) fn analyze(
         &graph,
         &abstention_configuration,
     );
-    let mut abstentions = abstention_findings
-        .into_iter()
-        .filter_map(|finding| filesystem_identity_abstention(finding, &graph))
-        .collect::<Vec<_>>();
+    abstentions.extend(
+        abstention_findings
+            .into_iter()
+            .filter_map(|finding| filesystem_identity_abstention(finding, &graph)),
+    );
+    abstentions.extend(policy_composition_abstentions(
+        &all_records,
+        &record_nodes,
+        &graph,
+    ));
     abstentions.sort_by(|left, right| left.abstention_id.cmp(&right.abstention_id));
     abstentions.dedup_by(|left, right| left.fingerprint == right.fingerprint);
     let findings_were_truncated = findings.len() > configuration.max_findings;
@@ -1392,6 +1403,112 @@ pub(crate) fn analyze(
         suppression_diagnostics,
         limitations,
     })
+}
+
+fn drain_explicit_abstentions(findings: &mut Vec<Finding>) -> Vec<AnalysisAbstention> {
+    let mut retained = Vec::with_capacity(findings.len());
+    let mut abstentions = Vec::new();
+    for finding in findings.drain(..) {
+        let explicit = finding.calibration.as_ref().is_some_and(|calibration| {
+            calibration.disposition == EvidenceDisposition::ExplicitAbstention
+        });
+        if explicit {
+            if let Some(abstention) = calibrated_finding_abstention(finding) {
+                abstentions.push(abstention);
+            }
+        } else {
+            retained.push(finding);
+        }
+    }
+    *findings = retained;
+    abstentions
+}
+
+fn calibrated_finding_abstention(finding: Finding) -> Option<AnalysisAbstention> {
+    let calibration = finding.calibration?;
+    if calibration.disposition != EvidenceDisposition::ExplicitAbstention {
+        return None;
+    }
+    let source = finding.source?;
+    let sink = finding.sink?;
+    let reason = calibration
+        .reason
+        .clone()
+        .unwrap_or_else(|| "semantic-prerequisite-unresolved".into());
+    Some(AnalysisAbstention {
+        abstention_id: format!("ab_{}", &finding.fingerprint[..24]),
+        rule_id: finding.rule_id,
+        reason,
+        source,
+        sink,
+        guards: finding.guards,
+        evidence_path: finding.evidence_path,
+        calibration,
+        limitations: finding.limitations,
+        fingerprint: finding.fingerprint,
+    })
+}
+
+fn policy_composition_abstentions(
+    records: &[&ProgramRecord],
+    record_nodes: &BTreeMap<String, String>,
+    graph: &EvidenceGraph,
+) -> Vec<AnalysisAbstention> {
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| (node.node_id.as_str(), node))
+        .collect::<BTreeMap<_, _>>();
+    records
+        .iter()
+        .filter(|record| record.kind == "policy-gap")
+        .filter_map(|record| {
+            let node_id = record_nodes.get(&record.record_id)?;
+            let node = nodes.get(node_id.as_str())?;
+            let reason = record.name.clone()?;
+            let fingerprint = record.fingerprint.clone();
+            let location = record.location.clone();
+            Some(AnalysisAbstention {
+                abstention_id: format!("ab_{}", &fingerprint[..24]),
+                rule_id: "SE1013".into(),
+                reason: reason.clone(),
+                source: location.clone(),
+                sink: location,
+                guards: Vec::new(),
+                evidence_path: vec![EvidencePathStep {
+                    node_id: node.node_id.clone(),
+                    edge_id_from_previous: None,
+                    kind: node.kind.clone(),
+                    semantic: node.semantic.clone(),
+                    location: node.location.clone(),
+                    provenance: node.provenance.clone(),
+                    fingerprint: path_step_fingerprint(&node.node_id, 0),
+                }],
+                calibration: EvidenceCalibration {
+                    taxonomy_version: "secure-evidence-calibration-v1".into(),
+                    disposition: EvidenceDisposition::ExplicitAbstention,
+                    reachability: EvidenceResolution::Unresolved,
+                    attacker_control: EvidenceResolution::Unresolved,
+                    actor_identity: EvidenceResolution::Unresolved,
+                    trust_boundary: EvidenceResolution::Unresolved,
+                    security_control: SecurityControlEvidence {
+                        kind: SecurityControlKind::Unknown,
+                        scope_binding: EvidenceResolution::Unresolved,
+                        value_binding: EvidenceResolution::Unresolved,
+                        time_binding: EvidenceResolution::Unresolved,
+                    },
+                    filesystem_identity: FilesystemIdentityState::NotApplicable,
+                    observable_impact: EvidenceResolution::Unresolved,
+                    reason: Some(reason),
+                },
+                limitations: vec![
+                    "Static composition evidence does not prove supported lifecycle reachability, dependency origin, actor control, privilege gain, or runtime impact."
+                        .into(),
+                ],
+                fingerprint,
+            })
+        })
+        .collect()
 }
 
 fn filesystem_identity_abstention(
@@ -1495,7 +1612,7 @@ impl RuleDefinition {
     }
 }
 
-const RULES: [RuleDefinition; 12] = [
+const RULES: [RuleDefinition; 13] = [
     RuleDefinition {
         id: "SE1001",
         title: "Untrusted input reaches command execution",
@@ -1662,6 +1779,20 @@ const RULES: [RuleDefinition; 12] = [
         ],
         impact: "A less-trusted configuration authority could influence which process runs or how it executes",
         remediation: "Use fixed process components or require a fresh same-scope trust decision before launch",
+    },
+    RuleDefinition {
+        id: "SE1013",
+        title: "Authority policy composition requires validation",
+        category: "supply-chain-policy-composition",
+        severity: "medium",
+        confidence: "low",
+        invariant: "Dependency and lifecycle operations must remain bound to the complete manifest authority policy across scopes and transitions",
+        prerequisites: &[
+            "A lower-trust dependency, artifact, or lifecycle source reaches the demonstrated operation",
+            "The incomplete or bypassed policy is active in a supported workflow",
+        ],
+        impact: "A dependency or lifecycle operation could execute outside the intended manifest authority",
+        remediation: "Bind the complete authority policy before every operation and validate the same dependency identity and URL scope",
     },
 ];
 
@@ -2050,6 +2181,18 @@ fn extract_record_for_node(
                 return;
             }
             if let (Some(output), Some(value)) = (output, value) {
+                if policy_bypass_expression(value, content) {
+                    records.push(record(
+                        "policy-gap",
+                        Some("independent-policy-bypass"),
+                        function_name,
+                        value_names(value, content),
+                        None,
+                        None,
+                        location_for_node(path, content, node),
+                        provenance,
+                    ));
+                }
                 let callee = call_callee(value, content)
                     .map(|callee| resolve_alias(&callee, function, aliases));
                 let mut inputs = value_names(value, content);
@@ -2063,7 +2206,10 @@ fn extract_record_for_node(
                     callee.as_deref(),
                     content,
                 ));
-                let constant_destination = safe_constant_mapping_fallback(node, value, content);
+                let constant_destination = safe_constant_mapping_selection(node, value, content);
+                if constant_destination {
+                    inputs.clear();
+                }
                 let kind =
                     if constant_destination || callee.as_deref().is_some_and(is_sanitizer_name) {
                         "sanitizer"
@@ -2350,6 +2496,18 @@ fn extract_record_for_node(
         }
         "return_statement" => {
             if let Some(value) = node.named_child(0) {
+                if incomplete_url_authority_scope(value, content) {
+                    records.push(record(
+                        "policy-gap",
+                        Some("url-authority-scope-incomplete"),
+                        function_name,
+                        value_names(value, content),
+                        None,
+                        None,
+                        location_for_node(path, content, value),
+                        provenance,
+                    ));
+                }
                 if let Some(projection) = configuration_projection(value, content) {
                     records.push(record(
                         "source",
@@ -3802,6 +3960,9 @@ fn record_semantic(
     callee: Option<&str>,
     inputs: &[String],
 ) -> Option<EvidenceSemantic> {
+    if kind == "sink" && name == Some("filesystem-operation") {
+        return Some(crate::semantics::classified_filesystem_sink(callee));
+    }
     if kind == "guard" && name == Some(crate::semantics::POLICY_FILESYSTEM) {
         let mut semantic = crate::semantics::for_record(kind, name, callee)?;
         semantic.filesystem_identity = inputs
@@ -3950,8 +4111,8 @@ fn unguarded_handler_traces(
             Some((
                 handler.clone(),
                 Trace {
-                    nodes: vec![node.clone()],
-                    edges: Vec::new(),
+                    nodes: Arc::new(vec![node.clone()]),
+                    edges: Arc::new(Vec::new()),
                     source_function: Some(handler.clone()),
                     source_node: node.clone(),
                     source_path: String::new(),
@@ -3959,12 +4120,12 @@ fn unguarded_handler_traces(
                     source_end: 0,
                     value_identity: String::new(),
                     field_sensitive: false,
-                    sanitizers: BTreeSet::new(),
-                    values: BTreeSet::new(),
+                    sanitizers: Arc::new(BTreeSet::new()),
+                    values: Arc::new(BTreeSet::new()),
                     source_specificity: 0,
                     local_value_depth: 0,
                     interprocedural_depth: 0,
-                    call_bindings: Vec::new(),
+                    call_bindings: Arc::new(Vec::new()),
                 },
             ))
         })
@@ -4105,7 +4266,7 @@ fn propagate_local_call(
             let mut parameter_trace = extend_trace(&via_call, parameter_node, parameter_edge);
             parameter_trace.interprocedural_depth =
                 parameter_trace.interprocedural_depth.saturating_add(1);
-            parameter_trace.call_bindings.push(record.record_id.clone());
+            Arc::make_mut(&mut parameter_trace.call_bindings).push(record.record_id.clone());
             for guard in dominating_guard_records(record, guards) {
                 let Some(policy) = guard.name.as_deref() else {
                     continue;
@@ -4117,14 +4278,14 @@ fn propagate_local_call(
                     guard_applies_to_trace(guard, &trace, taints)
                 };
                 if applies {
-                    parameter_trace.sanitizers.insert(policy.to_owned());
+                    Arc::make_mut(&mut parameter_trace.sanitizers).insert(policy.to_owned());
                 }
             }
             if let Some(output) = &parameter.output {
                 let selected_output = property_suffix
                     .as_deref()
                     .map_or_else(|| output.clone(), |suffix| format!("{output}.{suffix}"));
-                parameter_trace.values.insert(selected_output.clone());
+                Arc::make_mut(&mut parameter_trace.values).insert(selected_output.clone());
                 insert_trace(
                     updates,
                     (callee_function.clone(), selected_output),
@@ -4142,7 +4303,7 @@ fn propagate_local_call(
             if binding != &record.record_id {
                 return;
             }
-            return_trace.call_bindings.pop();
+            Arc::make_mut(&mut return_trace.call_bindings).pop();
         }
         let edge = builder.edge(
             "returns",
@@ -4155,7 +4316,7 @@ fn propagate_local_call(
             &record.provenance,
         );
         let mut caller_trace = extend_trace(&return_trace, record_node, edge);
-        caller_trace.values.insert(output.clone());
+        Arc::make_mut(&mut caller_trace.values).insert(output.clone());
         insert_trace(updates, (origin_context, output.clone()), caller_trace);
     }
 }
@@ -4279,8 +4440,8 @@ fn add_network_listener_candidates(
             continue;
         };
         let trace = Trace {
-            nodes: vec![receiver_node.clone()],
-            edges: Vec::new(),
+            nodes: Arc::new(vec![receiver_node.clone()]),
+            edges: Arc::new(Vec::new()),
             source_function: receiver.function.clone(),
             source_node: receiver_node.clone(),
             source_path: receiver.location.path.clone(),
@@ -4288,12 +4449,12 @@ fn add_network_listener_candidates(
             source_end: receiver.location.span.end_byte,
             value_identity: receiver_name.to_owned(),
             field_sensitive: false,
-            sanitizers: BTreeSet::new(),
-            values: BTreeSet::from([receiver_name.to_owned()]),
+            sanitizers: Arc::new(BTreeSet::new()),
+            values: Arc::new(BTreeSet::from([receiver_name.to_owned()])),
             source_specificity: 3,
             local_value_depth: 0,
             interprocedural_depth: 0,
-            call_bindings: Vec::new(),
+            call_bindings: Arc::new(Vec::new()),
         };
         let guard_nodes = dominating_guards(bind, guards, record_nodes);
         limit_reached |= add_candidate(
@@ -4652,6 +4813,11 @@ fn findings_from_candidates(
             .iter()
             .filter_map(|id| nodes.get(id).map(|node| node.location.clone()))
             .collect::<Vec<_>>();
+        let guard_semantics = candidate
+            .guards
+            .iter()
+            .filter_map(|id| nodes.get(id).and_then(|node| node.semantic.clone()))
+            .collect::<Vec<_>>();
         let fingerprint = finding_fingerprint(rule.id, &source, &sink, &steps);
         let semantic_fingerprint = semantic_fingerprint(rule.id, &steps);
         let taxonomy = crate::taxonomy::coordinates(rule.id);
@@ -4663,7 +4829,7 @@ fn findings_from_candidates(
             .semantic
             .as_ref()
             .and_then(|semantic| semantic.locality.clone());
-        let calibration = evidence_calibration(rule.id, &steps, &guards);
+        let calibration = evidence_calibration(&steps, &guard_semantics);
         let confidence = if calibration.disposition == EvidenceDisposition::ExplicitAbstention {
             "low"
         } else {
@@ -4725,28 +4891,27 @@ fn findings_from_candidates(
 }
 
 fn evidence_calibration(
-    rule_id: &str,
     steps: &[EvidencePathStep],
-    guards: &[SourceLocation],
+    guards: &[EvidenceSemantic],
 ) -> EvidenceCalibration {
-    let environment_source = rule_id == "SE1004" && steps.first().is_some_and(|step| {
-        step.semantic.as_ref().is_some_and(|semantic| {
-            semantic.identity == "untrusted.environment-value"
-                || semantic.configuration_provenance == Some(ConfigurationProvenance::Environment)
-        })
+    let source = steps.first().and_then(|step| step.semantic.as_ref());
+    let sink = steps.last().and_then(|step| step.semantic.as_ref());
+    let filesystem_operation = sink.is_some_and(|semantic| {
+        semantic.identity.starts_with("sink.filesystem-")
+            || semantic.identity == "sink.filesystem-operation"
     });
     let filesystem_identity = steps
         .iter()
         .filter_map(|step| step.semantic.as_ref())
+        .chain(guards.iter())
         .filter_map(|semantic| semantic.filesystem_identity.clone())
         .max()
-        .unwrap_or_else(|| {
-            if rule_id == "SE1003" {
-                FilesystemIdentityState::Unresolved
-            } else {
-                FilesystemIdentityState::NotApplicable
-            }
+        .unwrap_or(if filesystem_operation {
+            FilesystemIdentityState::Unresolved
+        } else {
+            FilesystemIdentityState::NotApplicable
         });
+    let semantic_control = guards.iter().find_map(security_control_kind);
     let (control_kind, binding) = match filesystem_identity {
         FilesystemIdentityState::LexicalPath => (
             SecurityControlKind::LexicalContainment,
@@ -4764,48 +4929,42 @@ fn evidence_calibration(
             SecurityControlKind::IdentityRevalidation,
             EvidenceResolution::Proven,
         ),
-        _ if guards.is_empty() => (SecurityControlKind::None, EvidenceResolution::NotApplicable),
-        _ => (SecurityControlKind::Unknown, EvidenceResolution::Unresolved),
+        _ => semantic_control.map_or_else(
+            || {
+                if guards.is_empty() {
+                    (SecurityControlKind::None, EvidenceResolution::NotApplicable)
+                } else {
+                    (SecurityControlKind::Unknown, EvidenceResolution::Unresolved)
+                }
+            },
+            |control| (control, EvidenceResolution::Proven),
+        ),
     };
-    let (disposition, actor_identity, trust_boundary, observable_impact, reason) =
-        if environment_source {
-            (
-                EvidenceDisposition::ExplicitAbstention,
-                EvidenceResolution::EquivalentCapability,
-                EvidenceResolution::Unresolved,
-                EvidenceResolution::Unresolved,
-                Some("actor-authority-equivalence".into()),
-            )
-        } else if rule_id == "SE1003" {
-            (
-                EvidenceDisposition::BoundedHardening,
-                EvidenceResolution::Unresolved,
-                EvidenceResolution::Unresolved,
-                EvidenceResolution::Unresolved,
-                Some("filesystem-impact-channel-unresolved".into()),
-            )
-        } else if rule_id == "SE1011" {
-            (
-                EvidenceDisposition::ExplicitAbstention,
-                EvidenceResolution::Unresolved,
-                EvidenceResolution::Unresolved,
-                EvidenceResolution::Unresolved,
-                Some("lifecycle-reachability-unresolved".into()),
-            )
-        } else {
-            (
-                EvidenceDisposition::SecurityPath,
-                EvidenceResolution::Proven,
-                EvidenceResolution::Proven,
-                EvidenceResolution::Proven,
-                None,
-            )
-        };
+    let (attacker_control, actor_identity, trust_boundary) = source.map_or(
+        (
+            EvidenceResolution::Unresolved,
+            EvidenceResolution::Unresolved,
+            EvidenceResolution::Unresolved,
+        ),
+        |source| source_evidence_resolutions(source, sink),
+    );
+    let observable_impact = sink.map_or(EvidenceResolution::Unresolved, sink_impact_resolution);
+    let (disposition, reason) = calibrated_disposition(
+        &attacker_control,
+        &actor_identity,
+        &trust_boundary,
+        &observable_impact,
+        filesystem_operation,
+    );
     EvidenceCalibration {
         taxonomy_version: "secure-evidence-calibration-v1".into(),
         disposition,
-        reachability: EvidenceResolution::Proven,
-        attacker_control: EvidenceResolution::Proven,
+        reachability: if steps.len() >= 2 {
+            EvidenceResolution::Proven
+        } else {
+            EvidenceResolution::Unresolved
+        },
+        attacker_control,
         actor_identity,
         trust_boundary,
         security_control: SecurityControlEvidence {
@@ -4817,7 +4976,7 @@ fn evidence_calibration(
                 FilesystemIdentityState::RevalidatedObject
             ) {
                 EvidenceResolution::Proven
-            } else if rule_id == "SE1003" {
+            } else if filesystem_operation {
                 EvidenceResolution::Unresolved
             } else {
                 EvidenceResolution::NotApplicable
@@ -4827,6 +4986,183 @@ fn evidence_calibration(
         observable_impact,
         reason,
     }
+}
+
+fn source_evidence_resolutions(
+    semantic: &EvidenceSemantic,
+    sink: Option<&EvidenceSemantic>,
+) -> (EvidenceResolution, EvidenceResolution, EvidenceResolution) {
+    if semantic.role == EvidenceSemanticRole::SensitiveSource
+        && semantic
+            .data_class
+            .as_ref()
+            .is_some_and(|class| class != &EvidenceDataClass::OrdinaryConfiguration)
+        && sink.is_some_and(|sink| {
+            matches!(
+                sink.locality,
+                Some(DisclosureLocality::LocalDiagnostic | DisclosureLocality::RemoteService)
+            )
+        })
+    {
+        return (
+            EvidenceResolution::NotApplicable,
+            EvidenceResolution::NotApplicable,
+            EvidenceResolution::Proven,
+        );
+    }
+    if semantic.role == EvidenceSemanticRole::Receiver {
+        return (
+            EvidenceResolution::NotApplicable,
+            EvidenceResolution::NotApplicable,
+            EvidenceResolution::Unresolved,
+        );
+    }
+    if semantic.configuration_provenance == Some(ConfigurationProvenance::Environment)
+        || matches!(
+            semantic.configuration_provenance,
+            Some(
+                ConfigurationProvenance::Global
+                    | ConfigurationProvenance::User
+                    | ConfigurationProvenance::RuntimeMutation
+            )
+        )
+    {
+        return (
+            if semantic.role == EvidenceSemanticRole::ConfigurationSource {
+                EvidenceResolution::Proven
+            } else {
+                EvidenceResolution::Unresolved
+            },
+            EvidenceResolution::EquivalentCapability,
+            EvidenceResolution::Unresolved,
+        );
+    }
+    if semantic.role == EvidenceSemanticRole::ConfigurationSource
+        && matches!(
+            semantic.configuration_provenance,
+            Some(ConfigurationProvenance::Workspace | ConfigurationProvenance::WorkspaceFolder)
+        )
+    {
+        return (
+            EvidenceResolution::Proven,
+            EvidenceResolution::Proven,
+            EvidenceResolution::Proven,
+        );
+    }
+    if semantic.role == EvidenceSemanticRole::UntrustedSource && semantic.certainty == "proven" {
+        return (
+            EvidenceResolution::Proven,
+            EvidenceResolution::Proven,
+            EvidenceResolution::Proven,
+        );
+    }
+    (
+        EvidenceResolution::Unresolved,
+        EvidenceResolution::Unresolved,
+        EvidenceResolution::Unresolved,
+    )
+}
+
+fn sink_impact_resolution(semantic: &EvidenceSemantic) -> EvidenceResolution {
+    if matches!(
+        semantic.identity.as_str(),
+        "sink.filesystem-write"
+            | "sink.filesystem-remove"
+            | "sink.filesystem-rename"
+            | "sink.filesystem-metadata-change"
+            | "sink.process-execution"
+            | "sink.process-binary-selection"
+            | "sink.process-shell-program"
+            | "sink.dynamic-code-execution"
+            | "sink.database-query"
+            | "sink.sensitive-mutation"
+            | "sink.prototype-mutation"
+            | "sink.local-diagnostic-output"
+            | "sink.remote-service-disclosure"
+            | "sink.redirect"
+    ) {
+        EvidenceResolution::Proven
+    } else {
+        EvidenceResolution::Unresolved
+    }
+}
+
+fn security_control_kind(semantic: &EvidenceSemantic) -> Option<SecurityControlKind> {
+    if semantic.authorization.is_some() {
+        return Some(SecurityControlKind::Authorization);
+    }
+    match semantic.policy.as_deref() {
+        Some(crate::semantics::POLICY_FILESYSTEM) => {
+            Some(SecurityControlKind::CanonicalContainment)
+        }
+        Some(crate::semantics::POLICY_OUTBOUND | crate::semantics::POLICY_REDIRECT) => {
+            Some(SecurityControlKind::DestinationPolicy)
+        }
+        Some(crate::semantics::POLICY_WORKSPACE_TRUST) => Some(SecurityControlKind::WorkspaceTrust),
+        Some(_) => Some(SecurityControlKind::Unknown),
+        None => None,
+    }
+}
+
+fn calibrated_disposition(
+    attacker_control: &EvidenceResolution,
+    actor_identity: &EvidenceResolution,
+    trust_boundary: &EvidenceResolution,
+    observable_impact: &EvidenceResolution,
+    filesystem_operation: bool,
+) -> (EvidenceDisposition, Option<String>) {
+    if actor_identity == &EvidenceResolution::EquivalentCapability {
+        return (
+            EvidenceDisposition::ExplicitAbstention,
+            Some("actor-authority-equivalence".into()),
+        );
+    }
+    let actor_prerequisites_resolved =
+        [attacker_control, actor_identity].iter().all(|resolution| {
+            matches!(
+                resolution,
+                EvidenceResolution::Proven | EvidenceResolution::NotApplicable
+            )
+        });
+    if actor_prerequisites_resolved
+        && trust_boundary == &EvidenceResolution::Proven
+        && observable_impact == &EvidenceResolution::Proven
+    {
+        return (EvidenceDisposition::SecurityPath, None);
+    }
+    if attacker_control == &EvidenceResolution::Proven
+        && actor_identity == &EvidenceResolution::Proven
+        && trust_boundary == &EvidenceResolution::Proven
+    {
+        return (
+            EvidenceDisposition::BoundedHardening,
+            Some(if filesystem_operation {
+                "filesystem-impact-channel-unresolved".into()
+            } else {
+                "observable-impact-unresolved".into()
+            }),
+        );
+    }
+    if attacker_control == &EvidenceResolution::NotApplicable
+        && actor_identity == &EvidenceResolution::NotApplicable
+        && trust_boundary == &EvidenceResolution::Unresolved
+        && observable_impact == &EvidenceResolution::Unresolved
+    {
+        return (
+            EvidenceDisposition::BoundedHardening,
+            Some("boundary-and-impact-unresolved".into()),
+        );
+    }
+    let reason = if attacker_control != &EvidenceResolution::Proven {
+        "attacker-control-unresolved"
+    } else if actor_identity != &EvidenceResolution::Proven {
+        "actor-identity-unresolved"
+    } else if trust_boundary != &EvidenceResolution::Proven {
+        "trust-boundary-unresolved"
+    } else {
+        "observable-impact-unresolved"
+    };
+    (EvidenceDisposition::ExplicitAbstention, Some(reason.into()))
 }
 
 fn evidence_state_for(rule_id: &str, has_guards: bool) -> EvidenceStateKind {
@@ -5409,9 +5745,9 @@ fn extend_trace(trace: &Trace, node: &str, edge: Option<String>) -> Trace {
     let mut extended = trace.clone();
     if extended.nodes.last().is_none_or(|last| last != node) {
         if let Some(edge) = edge {
-            extended.edges.push(edge);
+            Arc::make_mut(&mut extended.edges).push(edge);
         }
-        extended.nodes.push(node.into());
+        Arc::make_mut(&mut extended.nodes).push(node.into());
     }
     extended
 }
@@ -7536,7 +7872,18 @@ fn rule_accepts_trace_source(rule_id: &str, trace: &Trace, builder: &GraphBuilde
         .and_then(|node| node.semantic.as_ref())
         .is_some_and(|semantic| semantic.role == EvidenceSemanticRole::ConfigurationSource)
     {
-        return matches!(rule_id, "SE1004" | "SE1012");
+        return matches!(
+            rule_id,
+            "SE1001"
+                | "SE1002"
+                | "SE1003"
+                | "SE1004"
+                | "SE1005"
+                | "SE1006"
+                | "SE1008"
+                | "SE1009"
+                | "SE1012"
+        );
     }
     if rule_id != "SE1010" {
         return true;
@@ -8020,6 +8367,13 @@ fn sensitive_environment_data_class(name: &str) -> Option<EvidenceDataClass> {
     if !environment {
         return None;
     }
+    let key = lower.rsplit('.').next().unwrap_or(lower.as_str());
+    if ["url", "uri", "endpoint", "host", "hostname"]
+        .iter()
+        .any(|suffix| key == *suffix || key.ends_with(&format!("_{suffix}")))
+    {
+        return None;
+    }
     if ["token", "api_key", "apikey", "cookie"]
         .iter()
         .any(|marker| lower.contains(marker))
@@ -8218,20 +8572,25 @@ fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -
     let mut ancestor = node.parent();
     while let Some(candidate) = ancestor {
         if candidate.kind() == "for_in_statement" || candidate.kind() == "for_of_statement" {
-            let loop_text = candidate
-                .utf8_text(content)
+            let header_end = candidate
+                .child_by_field_name("body")
+                .map_or(candidate.end_byte(), |body| body.start_byte());
+            let header = content
+                .get(candidate.start_byte()..header_end)
+                .and_then(|bytes| std::str::from_utf8(bytes).ok())
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let binding = binding.to_ascii_lowercase();
-            let binding_shape = ["const", "let", "var"].iter().any(|keyword| {
-                loop_text.contains(&format!("{keyword} {binding} of"))
-                    || loop_text.contains(&format!("{keyword} {binding} in"))
-            });
-            return binding_shape
-                && ["archive", "tar", "zip"].iter().any(|item| {
-                    loop_text.contains(item)
-                        && (loop_text.contains("entr") || loop_text.contains("member"))
-                });
+            let binding_shape = ["const", "let", "var"]
+                .iter()
+                .any(|keyword| header.contains(&format!("{keyword} {binding}")));
+            let iterable_is_archive = ["archive", "tar", "zip"]
+                .iter()
+                .any(|marker| header.contains(marker))
+                && ["entries", "entry", "members", "member"]
+                    .iter()
+                    .any(|marker| header.contains(marker));
+            return binding_shape && iterable_is_archive;
         }
         if is_function(candidate) {
             break;
@@ -8239,6 +8598,151 @@ fn archive_entry_path_is_untrusted(node: Node<'_>, content: &[u8], name: &str) -
         ancestor = candidate.parent();
     }
     false
+}
+
+fn policy_bypass_expression(value: Node<'_>, content: &[u8]) -> bool {
+    let compact = value
+        .utf8_text(content)
+        .unwrap_or_default()
+        .replace(char::is_whitespace, "")
+        .to_ascii_lowercase();
+    if value.kind() != "binary_expression" || !compact.contains("||") {
+        return false;
+    }
+    let mut stack = vec![value];
+    let mut policy_call = false;
+    let mut independent_member = false;
+    while let Some(node) = stack.pop() {
+        if node.kind() == "call_expression"
+            && (compact.contains("===true")
+                || node
+                    .child_by_field_name("function")
+                    .and_then(|function| expression_name(function, content))
+                    .is_some_and(|callee| is_guard_name(&callee)))
+        {
+            policy_call = true;
+            continue;
+        }
+        if matches!(node.kind(), "member_expression" | "subscript_expression") {
+            independent_member = true;
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    policy_call && independent_member
+}
+
+fn incomplete_url_authority_scope(value: Node<'_>, content: &[u8]) -> bool {
+    if value.kind() != "binary_expression" {
+        return false;
+    }
+    let compact = value
+        .utf8_text(content)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .replace(char::is_whitespace, "");
+    let direct_authority_comparison =
+        compact.matches(".hostname").count() >= 2 || compact.matches(".origin").count() >= 2;
+    let names = value_names(value, content);
+    let derived_authority_comparison = names.len() == 2
+        && names.iter().all(|name| {
+            stable_bound_value(value, name, value.start_byte(), content).is_some_and(|origin| {
+                let text = origin
+                    .utf8_text(content)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                text.contains(".hostname") || text.contains(".origin")
+            })
+        });
+    let enclosing_authority_comparison = names.len() == 2
+        && value
+            .parent()
+            .and_then(|mut ancestor| {
+                while !is_function(ancestor) {
+                    ancestor = ancestor.parent()?;
+                }
+                ancestor.utf8_text(content).ok()
+            })
+            .is_some_and(|function| {
+                let function = function.to_ascii_lowercase();
+                (function.matches(".hostname").count() >= 2
+                    || function.matches(".origin").count() >= 2)
+                    && !function.contains(".pathname")
+            });
+    (direct_authority_comparison || derived_authority_comparison || enclosing_authority_comparison)
+        && !compact.contains(".pathname")
+        && !compact.contains(".protocol")
+        && !compact.contains(".port")
+}
+
+fn append_policy_composition_records(records: &mut Vec<ProgramRecord>, maximum: usize) {
+    if records.len() >= maximum {
+        return;
+    }
+    let mut calls = BTreeMap::<(String, String), Vec<ProgramRecord>>::new();
+    for call in records.iter().filter(|record| record.kind == "call") {
+        let Some(function) = call.function.as_ref() else {
+            continue;
+        };
+        let Some(callee) = call.callee.as_deref() else {
+            continue;
+        };
+        calls
+            .entry((
+                function.clone(),
+                terminal_identifier(callee).to_ascii_lowercase(),
+            ))
+            .or_default()
+            .push(call.clone());
+    }
+    let mut gaps = Vec::new();
+    for ((function, _), mut operations) in calls {
+        operations.sort_by_key(|record| record.location.span.start_byte);
+        for pair in operations.windows(2) {
+            let [earlier, later] = pair else {
+                continue;
+            };
+            if record_has_authority_policy(earlier)
+                || !record_has_authority_policy(later)
+                || !records.iter().any(|record| {
+                    record.function.as_ref() == Some(&function)
+                        && record.location.span.start_byte > earlier.location.span.end_byte
+                        && record.location.span.end_byte < later.location.span.start_byte
+                        && record.output.as_deref().is_some_and(authority_policy_value)
+                })
+            {
+                continue;
+            }
+            gaps.push(record(
+                "policy-gap",
+                Some("policy-binding-after-higher-authority-operation"),
+                Some(&function),
+                earlier.inputs.clone(),
+                None,
+                earlier.callee.as_deref(),
+                earlier.location.clone(),
+                &earlier.provenance,
+            ));
+        }
+    }
+    let remaining = maximum.saturating_sub(records.len());
+    records.extend(gaps.into_iter().take(remaining));
+}
+
+fn record_has_authority_policy(record: &ProgramRecord) -> bool {
+    record
+        .inputs
+        .iter()
+        .filter(|input| !input.starts_with("@argument:"))
+        .any(|input| authority_policy_value(input))
+}
+
+fn authority_policy_value(value: &str) -> bool {
+    let compact = value.to_ascii_lowercase().replace(['_', '-', '.'], "");
+    compact.contains("policy")
 }
 
 fn shell_program_text<'tree>(
@@ -8541,21 +9045,23 @@ fn destination_has_safe_fallback(call: Node<'_>, content: &[u8]) -> bool {
     }
 }
 
-fn safe_constant_mapping_fallback(declaration: Node<'_>, value: Node<'_>, content: &[u8]) -> bool {
-    if value.kind() != "binary_expression"
-        || !value
+fn safe_constant_mapping_selection(declaration: Node<'_>, value: Node<'_>, content: &[u8]) -> bool {
+    let (selection, fallback_is_fixed) = if value.kind() == "binary_expression"
+        && value
             .utf8_text(content)
             .is_ok_and(|text| text.contains("??"))
     {
-        return false;
-    }
-    let Some(selection) = value.child_by_field_name("left") else {
-        return false;
+        let Some(selection) = value.child_by_field_name("left") else {
+            return false;
+        };
+        let Some(fallback) = value.child_by_field_name("right") else {
+            return false;
+        };
+        (selection, fixed_string(fallback, content))
+    } else {
+        (value, true)
     };
-    let Some(fallback) = value.child_by_field_name("right") else {
-        return false;
-    };
-    if selection.kind() != "subscript_expression" || !fixed_string(fallback, content) {
+    if selection.kind() != "subscript_expression" || !fallback_is_fixed {
         return false;
     }
     let Some(map_name) = selection
@@ -8581,7 +9087,7 @@ fn safe_constant_mapping_fallback(declaration: Node<'_>, value: Node<'_>, conten
                 == Some(map_name.as_str())
             && node
                 .child_by_field_name("value")
-                .is_some_and(|object| object_has_only_fixed_values(object, content))
+                .is_some_and(|object| fixed_mapping_object(object, content))
         {
             return true;
         }
@@ -8592,6 +9098,21 @@ fn safe_constant_mapping_fallback(declaration: Node<'_>, value: Node<'_>, conten
         }
     }
     false
+}
+
+fn fixed_mapping_object(value: Node<'_>, content: &[u8]) -> bool {
+    if object_has_only_fixed_values(value, content) {
+        return true;
+    }
+    if value.kind() != "call_expression"
+        || call_callee(value, content).as_deref() != Some("Object.freeze")
+    {
+        return false;
+    }
+    value
+        .child_by_field_name("arguments")
+        .and_then(|arguments| arguments.named_child(0))
+        .is_some_and(|object| object_has_only_fixed_values(object, content))
 }
 
 fn object_has_only_fixed_values(object: Node<'_>, content: &[u8]) -> bool {

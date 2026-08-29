@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use secure_engine::{
-    CacheControl, CancellationToken, EvidenceSemanticRole, SECURE_JSON_V1_SCHEMA, ScanReport,
-    ScanRequest, compact_report_graph, rules, scan_repository,
+    CacheControl, CancellationToken, EvidenceDisposition, EvidenceResolution, EvidenceSemanticRole,
+    SECURE_JSON_V1_SCHEMA, ScanReport, ScanRequest, compact_report_graph, rules, scan_repository,
 };
 
 fn workspace_path(path: &str) -> PathBuf {
@@ -39,6 +39,14 @@ fn se1012(report: &ScanReport) -> Vec<&secure_engine::Finding> {
         .collect()
 }
 
+fn se1012_abstentions(report: &ScanReport) -> Vec<&secure_engine::AnalysisAbstention> {
+    report
+        .abstentions
+        .iter()
+        .filter(|abstention| abstention.rule_id == "SE1012")
+        .collect()
+}
+
 #[test]
 fn neutral_matrix_flips_only_on_provenance_scope_state_or_boundary()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -57,7 +65,6 @@ fn neutral_matrix_flips_only_on_provenance_scope_state_or_boundary()
         "workspace-positive.ts",
         "folder-positive.ts",
         "stale-transition.ts",
-        "environment-positive.ts",
         "helper-calls.ts",
         "multi-root.ts",
     ] {
@@ -66,6 +73,17 @@ fn neutral_matrix_flips_only_on_provenance_scope_state_or_boundary()
             "missing positive {positive}: {by_path:?}"
         );
     }
+    let environment = se1012_abstentions(&report);
+    assert_eq!(environment.len(), 1);
+    assert_eq!(environment[0].source.path, "environment-positive.ts");
+    assert_eq!(
+        environment[0].calibration.actor_identity,
+        EvidenceResolution::EquivalentCapability
+    );
+    assert_eq!(
+        environment[0].calibration.disposition,
+        EvidenceDisposition::ExplicitAbstention
+    );
     assert_eq!(by_path.get("process-components.ts"), Some(&5));
     for control in [
         "workspace-control.ts",
@@ -96,7 +114,13 @@ fn evidence_names_exact_provenance_and_process_component() -> Result<(), Box<dyn
         .collect::<BTreeSet<_>>();
     assert!(source_identities.contains("configuration.workspace-value"));
     assert!(source_identities.contains("configuration.workspace-folder-value"));
-    assert!(source_identities.contains("configuration.environment-value"));
+    assert!(se1012_abstentions(&report).iter().any(|abstention| {
+        abstention
+            .evidence_path
+            .first()
+            .and_then(|step| step.semantic.as_ref())
+            .is_some_and(|semantic| semantic.identity == "configuration.environment-value")
+    }));
     assert!(findings.iter().all(|finding| {
         finding
             .evidence_path
@@ -190,12 +214,13 @@ fn cache_and_repeated_runs_preserve_order_fingerprints_and_compact_schema()
     let cold = scan_fixture(Some(cache.path()))?;
     let warm = scan_fixture(Some(cache.path()))?;
     assert_eq!(cold.findings, warm.findings);
+    assert_eq!(cold.abstentions, warm.abstentions);
     assert_eq!(cold.graph, warm.graph);
     assert_eq!(cold.report_fingerprint, warm.report_fingerprint);
     assert_eq!(cold.parsing.cache_hits, 0);
     assert!(warm.parsing.cache_hits > 0);
     assert!(stale.is_file());
-    assert!(cache.path().join("secure-parse-cache-v22").is_dir());
+    assert!(cache.path().join("secure-parse-cache-v23").is_dir());
 
     let mut compact = warm;
     let full_nodes = compact.graph.nodes.len();
@@ -215,4 +240,5 @@ fn rule_catalog_is_additive_and_existing_ids_remain() {
     for number in 1001..=1012 {
         assert!(ids.contains(&format!("SE{number}")));
     }
+    assert!(ids.contains("SE1013"));
 }

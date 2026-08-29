@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted for the parser, filesystem-identity, trust-boundary, and reporting milestone.
+Accepted for the parser, filesystem-identity, trust-boundary, and reporting milestone. The
+evidence-default, disposition, abstention-routing, causal-identity, and fingerprint-memory decisions
+are corrected by ADR 0027.
 
 ## Context
 

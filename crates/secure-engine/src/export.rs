@@ -39,7 +39,10 @@ impl fmt::Display for ExportError {
             Self::Serialization => formatter.write_str("export serialization failed"),
             Self::Write => formatter.write_str("export could not be written atomically"),
             Self::OutputBudgetExceeded { maximum_bytes } => {
-                write!(formatter, "export exceeded the {maximum_bytes}-byte output budget")
+                write!(
+                    formatter,
+                    "export exceeded the {maximum_bytes}-byte output budget"
+                )
             }
         }
     }
@@ -171,9 +174,7 @@ fn serialize_to_writer<W: Write>(
     };
     result.map_err(|error| match error.io_error_kind() {
         Some(io::ErrorKind::Interrupted) => ExportError::Cancelled,
-        Some(io::ErrorKind::FileTooLarge) => {
-            ExportError::OutputBudgetExceeded { maximum_bytes }
-        }
+        Some(io::ErrorKind::FileTooLarge) => ExportError::OutputBudgetExceeded { maximum_bytes },
         _ => ExportError::Serialization,
     })
 }

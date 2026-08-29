@@ -306,7 +306,12 @@ fn sink_kind(identity: &str) -> EvidenceSinkKindV2 {
     match identity {
         "sink.process-execution" => EvidenceSinkKindV2::OsCommandExecution,
         "sink.database-query" => EvidenceSinkKindV2::SqlQueryExecution,
-        "sink.filesystem-operation" => EvidenceSinkKindV2::FilesystemRead,
+        "sink.filesystem-operation"
+        | "sink.filesystem-read"
+        | "sink.filesystem-write"
+        | "sink.filesystem-remove"
+        | "sink.filesystem-rename"
+        | "sink.filesystem-metadata-change" => EvidenceSinkKindV2::FilesystemRead,
         "sink.outbound-request" => EvidenceSinkKindV2::OutboundRequest,
         "sink.redirect" => EvidenceSinkKindV2::RedirectResponse,
         "sink.dynamic-code-execution" => EvidenceSinkKindV2::DynamicCodeEvaluation,

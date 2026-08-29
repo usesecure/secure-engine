@@ -21,5 +21,18 @@ The matrix covers:
   remains unresolved;
 - wrappers, aliases, callbacks, metamorphic names, safe/unsafe flips, and explicit abstentions.
 
+The correction tranche was frozen before re-observing any holdout. `causal-identity.js` separates
+selection control from direct value control, preserves a tainted returned-object field separately
+from its predicate, and includes duplicate nested helper names plus a source textually after the
+nested definition. `calibration-prerequisites.js` preregisters externally controlled integrity and
+availability paths as security paths, an arbitrary read without a disclosure channel as bounded
+hardening, an environment-owned write as equivalent-capability abstention, and a constant control
+as clean. `manifest-authority-lifecycle-policy.js` preregisters three generic policy gaps: an
+independent lifecycle-policy bypass, an origin comparison that omits configured path scope, and a
+higher-authority install performed before the manifest authority policy is loaded. Their paired
+controls bind the selected dependency object, complete URL scope, and load/preflight the policy
+before the sensitive operation. Unsupported dispatch or lifecycle reachability must remain an
+explicit abstention rather than a vulnerability claim.
+
 No fixture result is a vulnerability verdict. Runtime filesystem and actor-impact claims require
 independent human validation.

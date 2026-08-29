@@ -43,6 +43,14 @@ server-selected identity on opposite sides of an exact equality check. These pri
 change the public graph vocabulary or extractor identity; cache v8 prevents reuse of older program
 units.
 
+Evidence calibration defaults actor control, actor identity, trust-boundary crossing, and observable
+impact to unresolved and promotes each only from typed semantic evidence. Configuration provenance
+is evaluated consistently across applicable filesystem, process, network, and other sinks. Typed
+sensitive data has no attacker-control or actor-identity prerequisite when a diagnostic or remote
+disclosure channel is independently proven. Fixed-map selection is control dependence rather than
+direct value taint; archive-member identity must be present in the loop binding rather than unrelated
+nested text. Explicit abstentions are structurally routed outside `findings`.
+
 Phase 6.11 tranche 2 resolves a sequence-expression callee only when its final value is the
 unshadowed built-in evaluator or a bounded unique local alias to it. Filesystem composition retains
 the selected value through supported local helpers and imports, while a confinement guard applies
@@ -68,7 +76,7 @@ public graph identity remains unchanged and cache v14 isolates these private rec
 
 ## Findings and suppressions
 
-Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. `SE1010` additionally requires a typed sensitive source and distinguishes local diagnostic from remote-service locality. `SE1011` requires a stable receiver created by the built-in Node `net` module and a same-scope omitted-host `listen` call. `SE1012` requires proven configuration provenance, stable VS Code and child-process import ownership, an exact process component, and the absence of a fresh dominating trust proof for the same scope. An async state boundary invalidates an earlier trust proof. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, versioned evidence state, lead context, limitations, and a deduplication fingerprint.
+Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. `SE1010` additionally requires a typed sensitive source and distinguishes local diagnostic from remote-service locality. `SE1011` requires a stable receiver created by the built-in Node `net` module and a same-scope omitted-host `listen` call. `SE1012` requires proven configuration provenance, stable editor-platform and child-process import ownership, an exact process component, and the absence of a fresh dominating trust proof for the same scope. An async state boundary invalidates an earlier trust proof. `SE1013` records only a top-level abstention for a structurally incomplete authority-policy composition; it is never a finding. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, versioned evidence state, lead context, limitations, and a deduplication fingerprint.
 
 Use `secure rules list` for the catalog and `secure explain <finding-id> --report <report.json>` for one complete path. Exact suppressions use `--suppress RULE_ID:RELATIVE_PATH:START_BYTE:REASON`; every entry produces an auditable diagnostic.
 

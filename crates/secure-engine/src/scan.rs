@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1414,9 +1415,23 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         exclusions: &report.exclusions,
         errors: &report.errors,
     };
-    let bytes = serde_json::to_vec(&stable)
+    let mut hasher = blake3::Hasher::new();
+    serde_json::to_writer(HashWriter(&mut hasher), &stable)
         .map_err(|_| ScanError::Internal("report fingerprint serialization failed".into()))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+struct HashWriter<'a>(&'a mut blake3::Hasher);
+
+impl Write for HashWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.0.update(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn sort_and_deduplicate<T: Ord>(items: &mut Vec<T>) {

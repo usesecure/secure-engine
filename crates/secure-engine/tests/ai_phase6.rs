@@ -270,12 +270,7 @@ fn duplicate_assessments_are_refused_and_sarif_extension_is_explicit() {
     let enriched = sarif_with_ai_assessments(&report, &document)
         .unwrap_or_else(|error| panic!("sarif: {error}"));
     assert_ne!(deterministic, enriched);
-    assert!(
-        deterministic
-            .to_string()
-            .find("secureAiAssessment")
-            .is_none()
-    );
+    assert!(!deterministic.to_string().contains("secureAiAssessment"));
     assert!(enriched.to_string().contains("secureAiAssessment"));
 }
 

@@ -42,6 +42,12 @@ The evidence-calibration milestone advances the private envelope to `secure-pars
 configuration provenance, same-scope trust state, async invalidation, and exact process-component
 records. V20 and older entries safely miss and remain untouched.
 
+The correction milestone advances the private envelope to `secure-parse-cache-v23` for causal
+selector/value identity, bounded authority-policy composition records, and precise filesystem sink
+effects. V22 and older entries safely miss. The JavaScript adapter reparses only the narrowly
+diagnosed nested-spread statement-boundary ambiguity with a source-length-preserving separator;
+valid semantic spans remain aligned and malformed controls remain diagnosed.
+
 - Rust extraction does not expand procedural macros, generated code, trait-object dispatch, or runtime framework layers. Axum/Actix route registration, request extractors, local guards, SQLx/raw query shapes, `Command`, filesystem, Reqwest, redirect, and deserialization calls are recognized conservatively.
 - Python extraction does not execute decorators or resolve monkey patching, metaclasses, dynamic attributes, or runtime imports. FastAPI/Flask/Django routes, request objects and dependencies/decorators, subprocess and dynamic-code calls, raw SQL, filesystem, Requests/HTTPX, redirects, templates, and pickle shapes are recognized conservatively.
 - Go extraction does not resolve ambiguous interfaces, callbacks, reflection, or generated code. `net/http`, Gin, Chi, and Echo routes, request/context values, local middleware/guards, `os/exec`, `database/sql`, filesystem, HTTP clients, redirects, templates, and deserialization calls are recognized conservatively.

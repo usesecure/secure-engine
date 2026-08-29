@@ -9,6 +9,7 @@ sudo dnf install rustfmt clippy libX11-devel libxkbcommon-devel mesa-libGL-devel
 Run all gates:
 
 ```bash
+export PATH=/home/danielcastrillon/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
@@ -17,6 +18,10 @@ cargo deny check
 packaging/fedora/build-rpm.sh
 packaging/fedora/verify-rpm.sh
 ```
+
+The verified correction milestone used that explicit Rust 1.92 toolchain, which includes
+`cargo-fmt`, `rustfmt`, `cargo-clippy`, and `clippy-driver`. Do not infer tool availability from the
+host's default `PATH`.
 
 `cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The deterministic scanner works offline after Cargo has fetched dependencies. Tests, CI, packaging, and automatic verification use only mock or recorded AI responses and never contact an AI provider. A live adapter is reachable only through an explicit enabled project configuration, exact preview consent, and an `secure ai validate` operation.
 

@@ -181,6 +181,36 @@ pub(crate) fn classified_execution_boundary(kind: ExecutionBoundaryKind) -> Evid
     value
 }
 
+pub(crate) fn classified_filesystem_sink(callee: Option<&str>) -> EvidenceSemantic {
+    let operation = callee
+        .map(|value| {
+            value
+                .rsplit(['.', ':'])
+                .find(|part| !part.is_empty())
+                .unwrap_or(value)
+        })
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let identity = match operation.as_str() {
+        "read" | "readfile" | "readfilesync" | "createreadstream" | "open" => {
+            "sink.filesystem-read"
+        }
+        "rm" | "rmdir" | "unlink" | "remove" => "sink.filesystem-remove",
+        "rename" | "move" => "sink.filesystem-rename",
+        "chmod" | "chown" => "sink.filesystem-metadata-change",
+        "write" | "writefile" | "writefilesync" | "appendfile" | "truncate"
+        | "createwritestream" => "sink.filesystem-write",
+        _ => "sink.filesystem-operation",
+    };
+    semantic(
+        EvidenceSemanticRole::SensitiveSink,
+        identity,
+        None,
+        None,
+        "proven",
+    )
+}
+
 pub(crate) fn authorization_kind(value: &str) -> Option<AuthorizationKind> {
     let lower = compact(value);
     if lower == "platformworkspacetrust" {

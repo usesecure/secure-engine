@@ -440,7 +440,10 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
         return Err((EXIT_CANCELLED, "scan cancelled".into()));
     }
     if arguments.max_output_bytes == 0 {
-        return Err((EXIT_INVALID_INPUT, "max_output_bytes must be greater than zero".into()));
+        return Err((
+            EXIT_INVALID_INPUT,
+            "max_output_bytes must be greater than zero".into(),
+        ));
     }
     if arguments.full_graph {
         set_report_output_budget(&mut report, arguments.max_output_bytes).map_err(scan_error)?;
@@ -456,7 +459,7 @@ fn run_scan(arguments: ScanArgs) -> Result<u8, (u8, String)> {
             &cancellation,
             arguments.max_output_bytes,
         )
-            .map_err(|error| export_error(&error, "report"))?;
+        .map_err(|error| export_error(&error, "report"))?;
         if !quiet {
             eprintln!("secure: wrote complete report to {}", output.display());
         }
@@ -1034,10 +1037,9 @@ fn export_error(error: &secure_engine::ExportError, artifact: &str) -> (u8, Stri
             EXIT_INVALID_INPUT,
             format!("{artifact} could not be written atomically"),
         ),
-        secure_engine::ExportError::OutputBudgetExceeded { .. } => (
-            EXIT_INVALID_INPUT,
-            format!("{}: {error}", error.code()),
-        ),
+        secure_engine::ExportError::OutputBudgetExceeded { .. } => {
+            (EXIT_INVALID_INPUT, format!("{}: {error}", error.code()))
+        }
     }
 }
 

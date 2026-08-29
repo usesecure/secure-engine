@@ -190,9 +190,8 @@ pub(crate) fn parse_source(
         && only_nested_spread_boundary_errors(tree.root_node(), content)
         && let Some(repaired) = repair_nested_spread_statement_boundary(content)
     {
-        let mut repaired_reader = |offset: usize, _position| {
-            repaired.get(offset..).unwrap_or_default()
-        };
+        let mut repaired_reader =
+            |offset: usize, _position| repaired.get(offset..).unwrap_or_default();
         let mut repaired_cancellation = |_state: &tree_sitter::ParseState| {
             if cancellation.is_cancelled() {
                 ControlFlow::Break(())
@@ -200,13 +199,10 @@ pub(crate) fn parse_source(
                 ControlFlow::Continue(())
             }
         };
-        let repaired_options =
-            ParseOptions::new().progress_callback(&mut repaired_cancellation);
-        if let Some(repaired_tree) = parser.parse_with_options(
-            &mut repaired_reader,
-            None,
-            Some(repaired_options),
-        ) && !repaired_tree.root_node().has_error()
+        let repaired_options = ParseOptions::new().progress_callback(&mut repaired_cancellation);
+        if let Some(repaired_tree) =
+            parser.parse_with_options(&mut repaired_reader, None, Some(repaired_options))
+            && !repaired_tree.root_node().has_error()
         {
             tree = repaired_tree;
         }
@@ -384,7 +380,11 @@ fn only_nested_spread_boundary_errors(root: tree_sitter::Node<'_>, content: &[u8
 fn repair_nested_spread_statement_boundary(content: &[u8]) -> Option<Vec<u8>> {
     let mut repaired = content.to_vec();
     let mut changed = false;
-    for (newline, byte) in content.iter().enumerate().take(content.len().saturating_sub(1)) {
+    for (newline, byte) in content
+        .iter()
+        .enumerate()
+        .take(content.len().saturating_sub(1))
+    {
         if *byte != b'\n' {
             continue;
         }

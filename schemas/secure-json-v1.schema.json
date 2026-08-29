@@ -452,7 +452,7 @@
         "source": { "$ref": "#/$defs/location" },
         "sink": { "$ref": "#/$defs/location" },
         "guards": { "type": "array", "items": { "$ref": "#/$defs/location" } },
-        "evidence_path": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/evidencePathStep" } },
+        "evidence_path": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidencePathStep" } },
         "calibration": { "$ref": "#/$defs/evidenceCalibration" },
         "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
         "fingerprint": { "$ref": "#/$defs/fingerprint" }

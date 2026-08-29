@@ -136,6 +136,14 @@ The filesystem-identity and scalable-reporting milestone remains additive to `se
 
 Earlier reports deserialize with empty abstentions and a default full projection. Finding fingerprints and Evidence Contract v2 remain unchanged. Engine-produced reports use private parse cache v22 because cached graph semantics now include filesystem identity. Normal CLI output is projected after full internal analysis; `--full-graph` retains full facts and graph but remains subject to the explicit fail-closed output budget.
 
+The evidence-calibration correction adds `SE1013` metadata and permits a one-step evidence path only
+for a top-level abstention that records one structural policy-composition site. `findings` and
+`abstentions` are disjoint authority lanes: a finding must never carry an `explicit-abstention`
+disposition, and every top-level abstention must carry it. Consumers must not count abstentions as
+findings or vulnerability verdicts. The private cache advances to v23 for corrected causal identity
+and policy records. Canonical report fingerprint bytes are streamed into the hasher; this is
+byte-equivalent to the former in-memory serialization and does not create a new fingerprint domain.
+
 ## Exit codes
 
 | Code | Meaning |
