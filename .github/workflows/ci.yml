@@ -10,31 +10,40 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
-          components: rustfmt, clippy
+          persist-credentials: false
+      - name: Install Rust 1.92.0
+        run: rustup toolchain install 1.92.0 --profile minimal --component rustfmt --component clippy
       - name: Native desktop build dependencies
         run: sudo apt-get update && sudo apt-get install -y libx11-dev libxkbcommon-dev libgl1-mesa-dev
       - name: Formatting
-        run: cargo fmt --all -- --check
+        run: cargo +1.92.0 fmt --all -- --check
       - name: Strict Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo +1.92.0 clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Tests
         env:
           SECURE_AI_LIVE_CALLS: "disabled"
-        run: cargo test --workspace --all-features
+        run: cargo +1.92.0 test --locked --workspace --all-features
 
   dependencies:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install dependency checks
-        run: cargo install cargo-audit cargo-deny --locked
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.92.0
+        run: rustup toolchain install 1.92.0 --profile minimal
+      - name: Install cargo-audit 0.22.2
+        run: cargo +1.92.0 install cargo-audit --version 0.22.2 --locked
+      - name: Install cargo-deny 0.20.2
+        run: cargo +1.92.0 install cargo-deny --version 0.20.2 --locked
       - name: Vulnerability audit
-        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
+        # Narrow build-time exceptions are justified in ADR 0001 and deny.toml.
+        run: cargo +1.92.0 audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
       - name: License, source, and ban policy
-        run: cargo deny check
+        run: cargo +1.92.0 deny check

@@ -121,4 +121,6 @@ The components remain independently useful and communicate through versioned con
 
 Architecture and release history are documented in [PLAN.md](./PLAN.md), the [ADR index](./docs/adr/), and the versioned Phase 6.11–6.13 documents under [`docs/`](./docs/). Fedora packaging and reproducible-build operations are documented in [docs/fedora-packaging.md](./docs/fedora-packaging.md).
 
+Files under `fixtures/` are inert scanner inputs and must not be installed or executed. Their dependency declarations and alert-handling boundary are documented in [the scan-fixture dependency policy](./docs/fixture-dependency-policy.md).
+
 Licensed under the MIT License. Contributions use the Developer Certificate of Origin; see [CONTRIBUTING.md](./CONTRIBUTING.md). Report vulnerabilities privately through [SECURITY.md](./SECURITY.md).

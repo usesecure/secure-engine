@@ -1415,7 +1415,11 @@ pub(crate) fn analyze(
         &record_nodes,
         &graph,
     ));
-    abstentions.sort_by(|left, right| left.abstention_id.cmp(&right.abstention_id));
+    abstentions.sort_by(|left, right| {
+        abstention_context_rank(left)
+            .cmp(&abstention_context_rank(right))
+            .then_with(|| left.abstention_id.cmp(&right.abstention_id))
+    });
     abstentions.dedup_by(|left, right| left.fingerprint == right.fingerprint);
     let findings_were_truncated = findings.len() > configuration.max_findings;
     findings.truncate(configuration.max_findings);
@@ -1440,6 +1444,15 @@ pub(crate) fn analyze(
         suppression_diagnostics,
         limitations,
     })
+}
+
+fn abstention_context_rank(abstention: &AnalysisAbstention) -> u8 {
+    test_context_rank_for_paths(
+        abstention
+            .evidence_path
+            .iter()
+            .map(|step| step.location.path.as_str()),
+    )
 }
 
 fn drain_explicit_abstentions(findings: &mut Vec<Finding>) -> Vec<AnalysisAbstention> {
@@ -4866,12 +4879,19 @@ fn findings_from_candidates(
             .semantic
             .as_ref()
             .and_then(|semantic| semantic.locality.clone());
-        let calibration = evidence_calibration(&steps, &guard_semantics);
+        let test_only_path = evidence_path_is_test_only(&steps);
+        let calibration = evidence_calibration(&steps, &guard_semantics, test_only_path);
         let confidence = if calibration.disposition == EvidenceDisposition::ExplicitAbstention {
             "low"
         } else {
             rule.confidence
         };
+        let limitations = finding_limitations(
+            rule.id,
+            locality.as_ref(),
+            test_only_path,
+            &calibration.disposition,
+        );
         findings.push(Finding {
             rule_id: rule.id.into(),
             finding_id: format!("fd_{}", &fingerprint[..24]),
@@ -4899,7 +4919,7 @@ fn findings_from_candidates(
             }),
             lead_context: lead_context_for(rule.id, locality.as_ref()),
             calibration: Some(calibration),
-            limitations: finding_limitations(rule.id, locality.as_ref()),
+            limitations,
             fingerprint,
             semantic_fingerprint: Some(semantic_fingerprint),
             evidence_contract_v2,
@@ -4930,6 +4950,7 @@ fn findings_from_candidates(
 fn evidence_calibration(
     steps: &[EvidencePathStep],
     guards: &[EvidenceSemantic],
+    test_only_path: bool,
 ) -> EvidenceCalibration {
     let source = steps.first().and_then(|step| step.semantic.as_ref());
     let sink = steps.last().and_then(|step| step.semantic.as_ref());
@@ -4986,13 +5007,16 @@ fn evidence_calibration(
         |source| source_evidence_resolutions(source, sink),
     );
     let observable_impact = sink.map_or(EvidenceResolution::Unresolved, sink_impact_resolution);
-    let (disposition, reason) = calibrated_disposition(
+    let (disposition, mut reason) = calibrated_disposition(
         &attacker_control,
         &actor_identity,
         &trust_boundary,
         &observable_impact,
         filesystem_operation,
     );
+    if disposition == EvidenceDisposition::ExplicitAbstention && test_only_path {
+        reason = Some("test-context-reachability-unresolved".into());
+    }
     EvidenceCalibration {
         taxonomy_version: "secure-evidence-calibration-v1".into(),
         disposition,
@@ -5023,6 +5047,21 @@ fn evidence_calibration(
         observable_impact,
         reason,
     }
+}
+
+fn evidence_path_is_test_only(steps: &[EvidencePathStep]) -> bool {
+    test_context_rank_for_paths(steps.iter().map(|step| step.location.path.as_str())) == 1
+}
+
+fn test_context_rank_for_paths<'a>(paths: impl Iterator<Item = &'a str>) -> u8 {
+    let mut present = false;
+    for path in paths {
+        present = true;
+        if !crate::classify::is_test_path(path) {
+            return 0;
+        }
+    }
+    u8::from(present)
 }
 
 fn source_evidence_resolutions(
@@ -5279,8 +5318,13 @@ fn finding_impact(rule: &RuleDefinition, locality: Option<&DisclosureLocality>) 
     }
 }
 
-fn finding_limitations(rule_id: &str, locality: Option<&DisclosureLocality>) -> Vec<String> {
-    match (rule_id, locality) {
+fn finding_limitations(
+    rule_id: &str,
+    locality: Option<&DisclosureLocality>,
+    test_only_path: bool,
+    disposition: &EvidenceDisposition,
+) -> Vec<String> {
+    let mut limitations = match (rule_id, locality) {
         ("SE1010", Some(DisclosureLocality::LocalDiagnostic)) => vec![
             "Static analysis does not prove that diagnostic output is enabled, retained, or visible to another actor".into(),
         ],
@@ -5297,10 +5341,23 @@ fn finding_limitations(rule_id: &str, locality: Option<&DisclosureLocality>) -> 
             "Executable-specific argv, environment, cwd, shell, and inherited-state semantics require human validation".into(),
             "This is a trust-composition lead for manual validation, not a vulnerability verdict".into(),
         ],
+        ("SE1001", _) if disposition == &EvidenceDisposition::ExplicitAbstention => vec![
+            "Static analysis does not prove process-launch reachability, executable resolution, shell behavior, or the authority of the effective runtime input".into(),
+        ],
+        ("SE1004", _) if disposition == &EvidenceDisposition::ExplicitAbstention => vec![
+            "Static analysis does not prove the effective outbound destination, network delivery, credential disclosure, or a distinct lower-privilege destination authority".into(),
+        ],
         _ => vec![
             "Bounded static analysis does not model runtime framework middleware".into(),
         ],
+    };
+    if test_only_path {
+        limitations.push(
+            "All retained source-to-sink evidence is confined to recognized test-source paths; production or CI reachability and attacker influence require validation. Test paths remain analyzed because CI execution can cross a security boundary."
+                .into(),
+        );
     }
+    limitations
 }
 
 fn lead_context_for(rule_id: &str, locality: Option<&DisclosureLocality>) -> Option<LeadContext> {
@@ -13136,5 +13193,22 @@ mod performance_tests {
         assert!(guards[0].dominance_start.is_some());
         assert!(guards[0].dominance_end.is_some());
         Ok(())
+    }
+
+    #[test]
+    fn mixed_evidence_path_does_not_rank_as_test_only() {
+        assert_eq!(
+            test_context_rank_for_paths(
+                ["tests/entry.js", "src/carry.js", "tests/entry.js"].into_iter()
+            ),
+            0
+        );
+        assert_eq!(
+            test_context_rank_for_paths(
+                ["tests/entry.js", "tests/helpers.js", "tests/entry.js"].into_iter()
+            ),
+            1
+        );
+        assert_eq!(test_context_rank_for_paths(std::iter::empty()), 0);
     }
 }
