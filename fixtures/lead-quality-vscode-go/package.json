@@ -1,0 +1,13 @@
+{
+  "name": "secure-engine-vscode-go-lead-quality-fixture",
+  "private": true,
+  "version": "1.0.0",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  }
+}

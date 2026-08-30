@@ -13,6 +13,23 @@ pub(crate) fn write_atomic(
     bytes: &[u8],
     cancellation: &CancellationToken,
 ) -> io::Result<()> {
+    write_atomic_with(target, cancellation, |file| {
+        for chunk in bytes.chunks(64 * 1024) {
+            check_cancelled(cancellation)?;
+            file.write_all(chunk)?;
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn write_atomic_with<F>(
+    target: &Path,
+    cancellation: &CancellationToken,
+    write_value: F,
+) -> io::Result<()>
+where
+    F: FnOnce(&mut fs::File) -> io::Result<()>,
+{
     check_cancelled(cancellation)?;
     let parent = target
         .parent()
@@ -35,10 +52,7 @@ pub(crate) fn write_atomic(
             options.mode(0o600);
         }
         let mut file = options.open(&temporary)?;
-        for chunk in bytes.chunks(64 * 1024) {
-            check_cancelled(cancellation)?;
-            file.write_all(chunk)?;
-        }
+        write_value(&mut file)?;
         check_cancelled(cancellation)?;
         file.write_all(b"\n")?;
         file.sync_all()?;

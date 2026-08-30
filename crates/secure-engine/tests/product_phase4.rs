@@ -127,9 +127,7 @@ fn exports_are_deterministic_atomic_and_cancel_safe() -> Result<(), Box<dyn std:
     );
     assert!(!cancelled_output.exists());
     assert!(fs::read_dir(directory.path())?.all(|entry| {
-        entry
-            .ok()
-            .is_some_and(|entry| !entry.file_name().to_string_lossy().contains("secure-tmp"))
+        entry.is_ok_and(|entry| !entry.file_name().to_string_lossy().contains("secure-tmp"))
     }));
     Ok(())
 }

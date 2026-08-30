@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,7 +110,50 @@ impl std::error::Error for ScanError {}
 pub fn scan_repository<F>(
     request: &ScanRequest,
     cancellation: &CancellationToken,
+    progress: F,
+) -> Result<ScanReport, ScanError>
+where
+    F: FnMut(ProgressEvent),
+{
+    scan_repository_with_projection(request, cancellation, progress, false)
+}
+
+/// Inventories a repository and returns the deterministic compact evidence projection directly.
+///
+/// Rule evaluation still uses every retained program record and normalized fact. Global fact-only
+/// graph nodes and edges are counted under the configured bounds, but are not materialized when
+/// they cannot appear in finding or abstention evidence. This keeps the conceptual graph totals,
+/// findings, abstentions, and report fingerprint equivalent to compacting a full scan afterward.
+///
+/// # Errors
+///
+/// Returns the same scan errors as [`scan_repository`], plus an internal error if deterministic
+/// compact projection or fingerprint construction fails.
+pub fn scan_repository_compact<F>(
+    request: &ScanRequest,
+    cancellation: &CancellationToken,
+    progress: F,
+    output_budget_bytes: u64,
+) -> Result<ScanReport, ScanError>
+where
+    F: FnMut(ProgressEvent),
+{
+    if output_budget_bytes == 0 {
+        return Err(ScanError::InvalidConfiguration(
+            "output budget must be greater than zero".into(),
+        ));
+    }
+    let mut report = scan_repository_with_projection(request, cancellation, progress, true)?;
+    compact_report(&mut report, output_budget_bytes)?;
+    Ok(report)
+}
+
+#[allow(clippy::too_many_lines)]
+fn scan_repository_with_projection<F>(
+    request: &ScanRequest,
+    cancellation: &CancellationToken,
     mut progress: F,
+    compact_projection: bool,
 ) -> Result<ScanReport, ScanError>
 where
     F: FnMut(ProgressEvent),
@@ -149,6 +193,7 @@ where
     let mut entry_points = Vec::new();
     let mut capabilities = Vec::new();
     let mut trust_boundaries = Vec::new();
+    let mut vscode_workspace_trust_contexts = Vec::<String>::new();
     let mut language_totals: BTreeMap<String, (usize, u64)> = BTreeMap::new();
     let mut repository_hasher = blake3::Hasher::new();
     let mut bytes_scanned = 0_u64;
@@ -385,6 +430,31 @@ where
                 &mut frameworks,
                 &mut trust_boundaries,
             );
+            if let Some((declaration, location)) =
+                detect_vscode_workspace_trust(&discovered.relative, &content)
+            {
+                capabilities.push(CapabilityEvidence {
+                    capability: declaration.capability().into(),
+                    reason: declaration.description().into(),
+                    fingerprint: evidence_fingerprint(
+                        "capability-vscode-workspace-trust",
+                        declaration.capability(),
+                        &location,
+                    ),
+                    evidence: location.clone(),
+                });
+                trust_boundaries.push(TrustBoundaryEvidence {
+                    kind: "vscode-workspace-trust".into(),
+                    description: declaration.description().into(),
+                    fingerprint: evidence_fingerprint(
+                        "boundary-vscode-workspace-trust",
+                        declaration.capability(),
+                        &location,
+                    ),
+                    evidence: location,
+                });
+                vscode_workspace_trust_contexts.push(declaration.lead_context().into());
+            }
         }
 
         if !binary && let Some(entry_kind) = entry_point_kind(&discovered.relative) {
@@ -467,7 +537,26 @@ where
     }
 
     progress(ProgressEvent::Analyzing { facts: facts.len() });
-    let analysis_result = analyze(&facts, &programs, &request.configuration, cancellation)?;
+    let mut analysis_result = analyze(
+        &facts,
+        &programs,
+        &request.configuration,
+        cancellation,
+        compact_projection,
+    )?;
+    vscode_workspace_trust_contexts.sort();
+    vscode_workspace_trust_contexts.dedup();
+    for finding in analysis_result
+        .findings
+        .iter_mut()
+        .filter(|finding| finding.rule_id == "SE1011")
+    {
+        if let Some(context) = &mut finding.lead_context {
+            context
+                .environmental_constraints
+                .extend(vscode_workspace_trust_contexts.iter().cloned());
+        }
+    }
     limitations.extend(analysis_result.limitations);
 
     let languages = language_totals
@@ -531,6 +620,7 @@ where
         cache_entries_ignored: cache_stats.ignored,
     };
 
+    let total_facts = parsing.facts_extracted;
     let mut report = ScanReport {
         schema_version: SCHEMA_VERSION.into(),
         engine_version: ENGINE_VERSION.into(),
@@ -562,6 +652,16 @@ where
         capabilities,
         trust_boundaries,
         findings: analysis_result.findings,
+        abstentions: analysis_result.abstentions,
+        projection: crate::ReportProjection {
+            graph_scope: "full".into(),
+            facts_scope: "full".into(),
+            total_facts,
+            retained_facts: total_facts,
+            output_budget_bytes: None,
+            output_budget_reached: false,
+            reason: None,
+        },
         limitations,
         skipped_files,
         exclusions: discovery.exclusions,
@@ -571,6 +671,149 @@ where
     report.report_fingerprint = report_fingerprint(&report)?;
     progress(ProgressEvent::Complete { files_scanned });
     Ok(report)
+}
+
+/// Projects a completed report to finding-relevant graph evidence and refreshes its fingerprint.
+///
+/// The analysis summary and graph totals continue to describe the complete internal graph. Every
+/// node and edge referenced by a finding path is retained, along with exact guard nodes and graph
+/// edges between retained evidence nodes.
+///
+/// # Errors
+///
+/// Returns an internal error if deterministic fingerprint serialization fails.
+pub fn compact_report_graph(report: &mut ScanReport) -> Result<(), ScanError> {
+    if report.graph.scope == "finding-evidence" {
+        report.projection.graph_scope = "finding-evidence".into();
+        report.report_fingerprint = report_fingerprint(report)?;
+        return Ok(());
+    }
+    let total_nodes = report.graph.total_nodes.max(report.graph.nodes.len());
+    let total_edges = report.graph.total_edges.max(report.graph.edges.len());
+    let mut node_ids = BTreeSet::<String>::new();
+    let mut edge_ids = BTreeSet::<String>::new();
+    let guard_locations = report
+        .findings
+        .iter()
+        .flat_map(|finding| finding.guards.iter().cloned())
+        .chain(
+            report
+                .abstentions
+                .iter()
+                .flat_map(|abstention| abstention.guards.iter().cloned()),
+        )
+        .collect::<BTreeSet<_>>();
+    for finding in &report.findings {
+        for step in &finding.evidence_path {
+            node_ids.insert(step.node_id.clone());
+            if let Some(edge_id) = &step.edge_id_from_previous {
+                edge_ids.insert(edge_id.clone());
+            }
+        }
+    }
+    for abstention in &report.abstentions {
+        for step in &abstention.evidence_path {
+            node_ids.insert(step.node_id.clone());
+            if let Some(edge_id) = &step.edge_id_from_previous {
+                edge_ids.insert(edge_id.clone());
+            }
+        }
+    }
+    for node in &report.graph.nodes {
+        if node.kind == "guard" && guard_locations.contains(&node.location) {
+            node_ids.insert(node.node_id.clone());
+        }
+    }
+    for edge in &report.graph.edges {
+        if edge_ids.contains(&edge.edge_id) {
+            node_ids.insert(edge.from_node.clone());
+            node_ids.insert(edge.to_node.clone());
+        }
+    }
+    report.graph.edges.retain(|edge| {
+        edge_ids.contains(&edge.edge_id)
+            || (node_ids.contains(&edge.from_node) && node_ids.contains(&edge.to_node))
+    });
+    report
+        .graph
+        .nodes
+        .retain(|node| node_ids.contains(&node.node_id));
+    report.graph.scope = "finding-evidence".into();
+    report.graph.total_nodes = total_nodes;
+    report.graph.total_edges = total_edges;
+    report.projection.graph_scope = "finding-evidence".into();
+    report.report_fingerprint = report_fingerprint(report)?;
+    Ok(())
+}
+
+/// Projects a completed report to compact finding and abstention evidence.
+///
+/// Internal analysis always completes against the full fact set and graph. This projection retains
+/// only facts whose source spans intersect an ordered evidence path or an evaluated guard, records
+/// the original totals, and declares the interface output budget that serialization must enforce.
+///
+/// # Errors
+///
+/// Returns an internal error if deterministic fingerprint serialization fails.
+pub fn compact_report(report: &mut ScanReport, output_budget_bytes: u64) -> Result<(), ScanError> {
+    let total_facts = report.projection.total_facts.max(report.facts.len());
+    let evidence_locations = report
+        .findings
+        .iter()
+        .flat_map(|finding| {
+            finding
+                .evidence_path
+                .iter()
+                .map(|step| step.location.clone())
+                .chain(finding.guards.iter().cloned())
+        })
+        .chain(report.abstentions.iter().flat_map(|abstention| {
+            abstention
+                .evidence_path
+                .iter()
+                .map(|step| step.location.clone())
+                .chain(abstention.guards.iter().cloned())
+        }))
+        .collect::<BTreeSet<_>>();
+    report.facts.retain(|fact| {
+        evidence_locations.iter().any(|location| {
+            fact.location.path == location.path
+                && fact.location.span.start_byte < location.span.end_byte
+                && location.span.start_byte < fact.location.span.end_byte
+        })
+    });
+    compact_report_graph(report)?;
+    report.projection = crate::ReportProjection {
+        graph_scope: "finding-evidence".into(),
+        facts_scope: "evidence-neighborhood".into(),
+        total_facts,
+        retained_facts: report.facts.len(),
+        output_budget_bytes: Some(output_budget_bytes),
+        output_budget_reached: false,
+        reason: Some("non-evidence-facts-omitted".into()),
+    };
+    report.report_fingerprint = report_fingerprint(report)?;
+    Ok(())
+}
+
+/// Declares an interface output budget while retaining the full report projection.
+///
+/// # Errors
+///
+/// Returns an internal error if deterministic fingerprint serialization fails.
+pub fn set_report_output_budget(
+    report: &mut ScanReport,
+    output_budget_bytes: u64,
+) -> Result<(), ScanError> {
+    report.projection.graph_scope = report.graph.scope.clone();
+    report.projection.facts_scope = "full".into();
+    report.projection.total_facts = report.projection.total_facts.max(report.facts.len());
+    report.projection.retained_facts = report.facts.len();
+    report.projection.output_budget_bytes = Some(output_budget_bytes);
+    report.projection.output_budget_reached = false;
+    report.projection.reason = None;
+    report.report_fingerprint = report_fingerprint(report)?;
+    Ok(())
 }
 
 fn validate_configuration(configuration: &ScanConfiguration) -> Result<(), ScanError> {
@@ -804,6 +1047,72 @@ fn detect_framework_evidence(
             evidence: location,
         });
     }
+}
+
+#[derive(Clone, Copy)]
+enum VscodeWorkspaceTrustDeclaration {
+    Unsupported,
+    Supported,
+    Limited,
+}
+
+impl VscodeWorkspaceTrustDeclaration {
+    const fn capability(self) -> &'static str {
+        match self {
+            Self::Unsupported => "vscode-untrusted-workspaces-unsupported",
+            Self::Supported => "vscode-untrusted-workspaces-supported",
+            Self::Limited => "vscode-untrusted-workspaces-limited",
+        }
+    }
+
+    const fn description(self) -> &'static str {
+        match self {
+            Self::Unsupported => "VS Code manifest declares untrustedWorkspaces.supported=false",
+            Self::Supported => "VS Code manifest declares untrustedWorkspaces.supported=true",
+            Self::Limited => "VS Code manifest declares limited untrusted-workspace support",
+        }
+    }
+
+    const fn lead_context(self) -> &'static str {
+        match self {
+            Self::Unsupported => {
+                "VS Code declares untrustedWorkspaces.supported=false, so Restricted Mode should prevent extension activation; runtime enforcement and alternate activation paths still require validation"
+            }
+            Self::Supported => {
+                "VS Code declares support for untrusted workspaces; any workspace-trust guard on the listener path must be validated independently"
+            }
+            Self::Limited => {
+                "VS Code declares limited untrusted-workspace support; the supported configuration and listener activation path require manual validation"
+            }
+        }
+    }
+}
+
+fn detect_vscode_workspace_trust(
+    path: &str,
+    content: &[u8],
+) -> Option<(VscodeWorkspaceTrustDeclaration, SourceLocation)> {
+    if Path::new(path).file_name().and_then(|name| name.to_str()) != Some("package.json") {
+        return None;
+    }
+    let document = serde_json::from_slice::<serde_json::Value>(content).ok()?;
+    let supported = document.pointer("/capabilities/untrustedWorkspaces/supported")?;
+    let declaration = match supported {
+        serde_json::Value::Bool(false) => VscodeWorkspaceTrustDeclaration::Unsupported,
+        serde_json::Value::Bool(true) => VscodeWorkspaceTrustDeclaration::Supported,
+        serde_json::Value::String(value) if value.eq_ignore_ascii_case("limited") => {
+            VscodeWorkspaceTrustDeclaration::Limited
+        }
+        _ => return None,
+    };
+    let marker = b"untrustedWorkspaces";
+    let offset = content
+        .windows(marker.len())
+        .position(|window| window == marker)?;
+    Some((
+        declaration,
+        location_for_bytes(path, content, offset, marker.len()),
+    ))
 }
 
 fn repository_identity(root: &Path, content_fingerprint: String) -> RepositoryIdentity {
@@ -1155,9 +1464,23 @@ fn report_fingerprint(report: &ScanReport) -> Result<String, ScanError> {
         exclusions: &report.exclusions,
         errors: &report.errors,
     };
-    let bytes = serde_json::to_vec(&stable)
+    let mut hasher = blake3::Hasher::new();
+    serde_json::to_writer(HashWriter(&mut hasher), &stable)
         .map_err(|_| ScanError::Internal("report fingerprint serialization failed".into()))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+    Ok(hasher.finalize().to_hex().to_string())
+}
+
+struct HashWriter<'a>(&'a mut blake3::Hasher);
+
+impl Write for HashWriter<'_> {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.0.update(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 fn sort_and_deduplicate<T: Ord>(items: &mut Vec<T>) {

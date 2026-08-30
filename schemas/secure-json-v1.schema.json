@@ -360,10 +360,36 @@
         "impact": { "type": "string", "minLength": 1 },
         "remediation": { "type": "string", "minLength": 1 },
         "verification_state": { "type": "string", "minLength": 1 },
+        "evidence_state": { "$ref": "#/$defs/evidenceState" },
+        "lead_context": { "$ref": "#/$defs/leadContext" },
+        "calibration": { "$ref": "#/$defs/evidenceCalibration" },
         "limitations": { "type": "array", "items": { "type": "string" } },
         "fingerprint": { "$ref": "#/$defs/fingerprint" },
         "semantic_fingerprint": { "$ref": "#/$defs/fingerprint" },
         "evidence_contract_v2": { "$ref": "#/$defs/evidenceContractV2" }
+      }
+    },
+    "evidenceState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_version", "state"],
+      "properties": {
+        "taxonomy_version": { "const": "secure-evidence-state-v1" },
+        "state": { "enum": ["syntactic-lead", "semantic-path", "guard-aware-lead", "manually-validated"] }
+      }
+    },
+    "leadContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "trust_boundary", "receiver", "locality", "activation", "exposure_window", "environmental_constraints"],
+      "properties": {
+        "actor": { "type": "string", "minLength": 1 },
+        "trust_boundary": { "type": "string", "minLength": 1 },
+        "receiver": { "type": "string", "minLength": 1 },
+        "locality": { "enum": ["local-diagnostic", "remote-service", "network-listener", "unknown"] },
+        "activation": { "type": "string", "minLength": 1 },
+        "exposure_window": { "type": "string", "minLength": 1 },
+        "environmental_constraints": { "type": "array", "items": { "type": "string", "minLength": 1 } }
       }
     },
     "evidenceSemantic": {
@@ -372,11 +398,78 @@
       "required": ["role", "identity", "certainty"],
       "properties": {
         "semantics_version": { "type": "string", "minLength": 1 },
-        "role": { "enum": ["untrusted-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink"] },
-        "identity": { "type": "string", "pattern": "^(untrusted|transformation|guard|sanitizer|sink)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
+        "role": { "enum": ["untrusted-source", "sensitive-source", "configuration-source", "transformation", "guard", "sanitizer", "authorization-check", "sensitive-sink", "receiver"] },
+        "identity": { "type": "string", "pattern": "^(untrusted|sensitive|configuration|transformation|guard|sanitizer|sink|receiver)\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$" },
         "policy": { "type": "string", "minLength": 1 },
         "authorization": { "enum": ["authentication", "role", "ownership", "tenant", "general"] },
+        "data_class": { "enum": ["ordinary-configuration", "credential", "token", "personally-identifiable-information", "unknown-sensitive"] },
+        "configuration_provenance": { "enum": ["global", "user", "workspace", "workspace-folder", "environment", "manifest-default", "runtime-mutation", "unknown"] },
+        "execution_boundary": { "enum": ["binary", "shell-program", "argv", "environment", "working-directory", "shell-mode"] },
+        "locality": { "enum": ["local-diagnostic", "remote-service", "network-listener", "unknown"] },
+        "filesystem_identity": { "enum": ["not-applicable", "lexical-path", "canonical-target", "opened-object", "revalidated-object", "unresolved"] },
         "certainty": { "enum": ["proven", "uncertain"] }
+      }
+    },
+    "securityControlEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "scope_binding", "value_binding", "time_binding"],
+      "properties": {
+        "kind": { "enum": ["none", "lexical-containment", "canonical-containment", "opened-object-identity", "identity-revalidation", "authorization", "destination-policy", "workspace-trust", "unknown"] },
+        "scope_binding": { "$ref": "#/$defs/evidenceResolution" },
+        "value_binding": { "$ref": "#/$defs/evidenceResolution" },
+        "time_binding": { "$ref": "#/$defs/evidenceResolution" }
+      }
+    },
+    "evidenceResolution": {
+      "enum": ["proven", "unresolved", "equivalent-capability", "not-applicable"]
+    },
+    "evidenceCalibration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taxonomy_version", "disposition", "reachability", "attacker_control", "actor_identity", "trust_boundary", "security_control", "filesystem_identity", "observable_impact"],
+      "properties": {
+        "taxonomy_version": { "const": "secure-evidence-calibration-v1" },
+        "disposition": { "enum": ["security-path", "bounded-hardening", "explicit-abstention"] },
+        "reachability": { "$ref": "#/$defs/evidenceResolution" },
+        "attacker_control": { "$ref": "#/$defs/evidenceResolution" },
+        "actor_identity": { "$ref": "#/$defs/evidenceResolution" },
+        "trust_boundary": { "$ref": "#/$defs/evidenceResolution" },
+        "security_control": { "$ref": "#/$defs/securityControlEvidence" },
+        "filesystem_identity": { "enum": ["not-applicable", "lexical-path", "canonical-target", "opened-object", "revalidated-object", "unresolved"] },
+        "observable_impact": { "$ref": "#/$defs/evidenceResolution" },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "analysisAbstention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["abstention_id", "rule_id", "reason", "source", "sink", "guards", "evidence_path", "calibration", "limitations", "fingerprint"],
+      "properties": {
+        "abstention_id": { "type": "string", "pattern": "^ab_[0-9a-f]{24}$" },
+        "rule_id": { "type": "string", "pattern": "^SE[0-9]{4}$" },
+        "reason": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/location" },
+        "sink": { "$ref": "#/$defs/location" },
+        "guards": { "type": "array", "items": { "$ref": "#/$defs/location" } },
+        "evidence_path": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidencePathStep" } },
+        "calibration": { "$ref": "#/$defs/evidenceCalibration" },
+        "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+        "fingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "reportProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["graph_scope", "facts_scope", "total_facts", "retained_facts", "output_budget_reached"],
+      "properties": {
+        "graph_scope": { "enum": ["full", "finding-evidence"] },
+        "facts_scope": { "enum": ["full", "evidence-neighborhood"] },
+        "total_facts": { "type": "integer", "minimum": 0 },
+        "retained_facts": { "type": "integer", "minimum": 0 },
+        "output_budget_bytes": { "type": "integer", "minimum": 1 },
+        "output_budget_reached": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1 }
       }
     },
     "evidenceContractPathStepV2": {
@@ -438,6 +531,9 @@
       "type": "object",
       "required": ["nodes", "edges"],
       "properties": {
+        "scope": { "enum": ["full", "finding-evidence"] },
+        "total_nodes": { "type": "integer", "minimum": 0 },
+        "total_edges": { "type": "integer", "minimum": 0 },
         "nodes": { "type": "array", "maxItems": 10000000, "items": { "$ref": "#/$defs/evidenceNode" } },
         "edges": { "type": "array", "maxItems": 20000000, "items": { "$ref": "#/$defs/evidenceEdge" } }
       }
@@ -465,6 +561,7 @@
         "rules_evaluated": { "type": "integer", "minimum": 0 },
         "findings": { "type": "integer", "minimum": 0 },
         "findings_suppressed": { "type": "integer", "minimum": 0 },
+        "abstentions": { "type": "integer", "minimum": 0 },
         "duration_ms": { "type": "integer", "minimum": 0 },
         "truncated": { "type": "boolean" }
       }
@@ -540,6 +637,8 @@
         "capabilities": { "type": "array", "items": { "$ref": "#/$defs/capability" } },
         "trust_boundaries": { "type": "array", "items": { "$ref": "#/$defs/trustBoundary" } },
         "findings": { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+        "abstentions": { "type": "array", "items": { "$ref": "#/$defs/analysisAbstention" } },
+        "projection": { "$ref": "#/$defs/reportProjection" },
         "limitations": { "type": "array", "items": { "$ref": "#/$defs/limitation" } },
         "skipped_files": { "type": "array", "items": { "$ref": "#/$defs/skippedFile" } },
         "exclusions": { "type": "array", "items": { "$ref": "#/$defs/exclusion" } },

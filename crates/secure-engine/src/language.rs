@@ -284,9 +284,8 @@ fn collect_functions(
 ) -> Vec<FunctionInfo> {
     let mut functions = Vec::new();
     let mut stack = vec![root];
-    let repository_middleware_guard = std::str::from_utf8(content)
-        .ok()
-        .is_some_and(has_authorization_middleware);
+    let repository_middleware_guard =
+        std::str::from_utf8(content).is_ok_and(has_authorization_middleware);
     while let Some(node) = stack.pop() {
         if functions.len() >= maximum {
             break;

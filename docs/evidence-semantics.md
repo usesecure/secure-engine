@@ -58,6 +58,10 @@ Cache v16 treats v15 and older entries as safe misses.
 
 Roles distinguish untrusted sources, transformations, guards, sanitizers, authorization checks, and sensitive sinks. Authorization scopes distinguish authentication from role, ownership, tenant, and general operation authorization. Authentication alone does not suppress `SE1007`. Sanitizers and guards apply only to their matching invariant and to a corresponding value on a realizable path.
 
+The lead-quality milestone introduces graph semantics `secure-evidence-semantics-v3` while keeping the frozen public Evidence Contract v2 projection at `secure-evidence-semantics-v2`. V3 separates sensitive sources from attacker-controlled sources, records data class independently (`ordinary-configuration`, `credential`, `token`, `personally-identifiable-information`, or `unknown-sensitive`), distinguishes local diagnostic, remote service, and network-listener locality, and represents stable receivers separately from sinks. Ordinary configuration is not promoted to a sensitive source without a supported contract. A source/sink name alone cannot satisfy `SE1010`.
+
+Findings now carry additive `evidence_state` under `secure-evidence-state-v1`: `syntactic-lead`, `semantic-path`, `guard-aware-lead`, or `manually-validated`. The scanner emits only the first three. `manually-validated` is reserved for a separate explicit human workflow. The legacy `verification_state` field remains for compatible readers and mirrors the new state name; `verified-deterministic-path` is no longer emitted because deterministic construction does not validate runtime reachability or exploitability.
+
 Each finding may carry `semantic_fingerprint`, a `secure-semantic-fingerprint-v1` digest of the rule and demonstrated source/sink semantic identities. It is stable across local renames, harmless statements, aliases, and helper extraction when the invariant is unchanged. The original finding fingerprint, ID, rule IDs, taxonomy coordinates, severity, and confidence remain unchanged. Report fingerprints intentionally change because new semantic evidence is part of the deterministic report; this is additive report content, not a legacy finding-identity change.
 
 No pre-Phase-6.6 finding fingerprint is intentionally rewritten. Newly realizable alias, destructuring, wrapper, or inter-file paths can emit new findings with new fingerprints; safe paths whose exact matching policy is now proven can disappear. Those are intentional outcome changes on independently reproduced semantics. Existing findings that remain keep their legacy location-sensitive fingerprints.
@@ -69,3 +73,12 @@ The analyzer resolves deterministic imports, destructuring and direct aliases th
 Filesystem policy requires lexical normalization plus a separator-aware root boundary. This does not prove symlink, junction, mount, race, or filesystem permission safety. Outbound and redirect policies require parsed destination components or structurally proven exact fixed membership and a safe fixed fallback. Fixed executable/argument-array invocation through supported APIs is no-shell by default unless an options object explicitly enables shell processing or the executable is itself a structurally proven supported shell with an exact `-c` program argument. In that explicit-shell case only the program argument is shell code; later elements remain positional argv. Executable-specific argument injection remains unresolved.
 
 The following remain explicitly bounded: dynamic imports, ambiguous aliases, callbacks, recursion, runtime middleware, reflection, generated code, framework-specific implicit authorization, OS/filesystem state, and analysis beyond configured graph, candidate-path, finding, and inter-procedural limits. Reports expose those uncertainties as limitations instead of inferring safety.
+
+The trust-composition milestone adds configuration-source provenance and exact process-boundary
+components without changing Evidence Contract v2. Supported VS Code `inspect` projections distinguish
+user/global, workspace, workspace-folder, and manifest-default layers; unshadowed `process.env`
+access identifies environment provenance. Workspace and workspace-folder trust proof must dominate,
+bind the same scope, and remain fresh through the sink. Binary, shell-program, argv, child
+environment, cwd, and shell-mode evidence uses the exact expression span. Dynamic effective
+configuration, callback lifecycle, cache keys without complete scope provenance, and platform
+runtime behavior abstain explicitly.

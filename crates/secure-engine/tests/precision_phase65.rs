@@ -161,7 +161,7 @@ fn frozen_taxonomy_maps_every_rule_and_finding_exactly() -> Result<(), Box<dyn s
     let mappings = taxonomy_mappings();
     assert_eq!(mappings.len(), 7);
     let rule_catalog = rules();
-    assert_eq!(rule_catalog.len(), 10);
+    assert_eq!(rule_catalog.len(), 13);
     let mappings_by_rule = mappings
         .iter()
         .map(|mapping| (mapping.rule_id.as_str(), mapping))

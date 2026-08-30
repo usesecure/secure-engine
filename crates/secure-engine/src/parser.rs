@@ -168,7 +168,7 @@ pub(crate) fn parse_source(
     };
     let options = ParseOptions::new().progress_callback(&mut cancellation_callback);
     let tree = parser.parse_with_options(&mut reader, None, Some(options));
-    let Some(tree) = tree else {
+    let Some(mut tree) = tree else {
         check_cancelled(cancellation)?;
         return Ok(ParseOutput {
             parser_mode: mode.as_str().into(),
@@ -184,6 +184,29 @@ pub(crate) fn parse_source(
             program: empty_program(path, &parser_provenance),
         });
     };
+
+    if mode.is_javascript_family()
+        && tree.root_node().has_error()
+        && only_nested_spread_boundary_errors(tree.root_node(), content)
+        && let Some(repaired) = repair_nested_spread_statement_boundary(content)
+    {
+        let mut repaired_reader =
+            |offset: usize, _position| repaired.get(offset..).unwrap_or_default();
+        let mut repaired_cancellation = |_state: &tree_sitter::ParseState| {
+            if cancellation.is_cancelled() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        };
+        let repaired_options = ParseOptions::new().progress_callback(&mut repaired_cancellation);
+        if let Some(repaired_tree) =
+            parser.parse_with_options(&mut repaired_reader, None, Some(repaired_options))
+            && !repaired_tree.root_node().has_error()
+        {
+            tree = repaired_tree;
+        }
+    }
 
     let root = tree.root_node();
     let global_use_server =
@@ -328,6 +351,62 @@ pub(crate) fn parse_source(
         diagnostics,
         program,
     })
+}
+
+fn only_nested_spread_boundary_errors(root: tree_sitter::Node<'_>, content: &[u8]) -> bool {
+    let mut stack = vec![root];
+    let mut errors = 0_usize;
+    let mut visited = 0_usize;
+    while let Some(node) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > MAX_VISITED_NODES || node.is_missing() {
+            return false;
+        }
+        if node.is_error() {
+            errors = errors.saturating_add(1);
+            if content.get(node.byte_range()) != Some(b"...".as_slice()) {
+                return false;
+            }
+        }
+        for index in (0..node.named_child_count()).rev() {
+            if let Some(child) = node.named_child(u32::try_from(index).unwrap_or(u32::MAX)) {
+                stack.push(child);
+            }
+        }
+    }
+    errors >= 2
+}
+
+fn repair_nested_spread_statement_boundary(content: &[u8]) -> Option<Vec<u8>> {
+    let mut repaired = content.to_vec();
+    let mut changed = false;
+    for (newline, byte) in content
+        .iter()
+        .enumerate()
+        .take(content.len().saturating_sub(1))
+    {
+        if *byte != b'\n' {
+            continue;
+        }
+        let mut statement = newline.saturating_add(1);
+        while content
+            .get(statement)
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        {
+            statement = statement.saturating_add(1);
+        }
+        if content.get(statement) != Some(&b'[') || statement == newline.saturating_add(1) {
+            continue;
+        }
+        let previous = content[..newline]
+            .iter()
+            .rposition(|byte| !byte.is_ascii_whitespace());
+        if previous.is_some_and(|index| content[index] == b'}') {
+            repaired[statement.saturating_sub(1)] = b';';
+            changed = true;
+        }
+    }
+    changed.then_some(repaired)
 }
 
 pub(crate) fn validate_cached_output(

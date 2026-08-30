@@ -1,12 +1,14 @@
 # Evidence graph and deterministic rules
 
-The graph is an exported, deterministic projection of repository-local syntax evidence. `nodes` represent files, modules, functions, methods, handlers, request/configuration sources, arguments, assignments, transformations, returns, guards, sanitizers, calls, and sensitive sinks. `edges` represent containment, imports, calls, argument flow, returns, assignments, control flow, guard dominance, sanitization, and source-to-sink propagation.
+The graph is a deterministic projection of repository-local syntax evidence. `nodes` represent files, modules, functions, methods, handlers, typed sources, receiver identities, arguments, assignments, transformations, returns, guards, sanitizers, calls, and sensitive sinks. `edges` represent containment, imports, calls, argument flow, returns, assignments, control flow, guard dominance, sanitization, and source-to-sink propagation.
+
+The scanner constructs a bounded full graph internally. Normal CLI JSON output serializes only finding- and abstention-relevant path, guard, and normalized-fact evidence with `graph.scope: finding-evidence` and `projection.facts_scope: evidence-neighborhood`; full internal counts remain in `graph.total_nodes`, `graph.total_edges`, and `projection.total_facts`. `secure scan --full-graph` emits the complete facts and `graph.scope: full`. Every retained path remains self-contained and all referenced graph identifiers survive the compact projection. Both modes enforce the explicit serialized-output budget.
 
 All identifiers and fingerprints are stable for the same repository content and scan configuration. Locations are exact half-open, repository-relative spans. Parser and graph-extractor provenance is attached to every node, edge, and path step. Tree-sitter and any future internal graph implementation remain private.
 
 ## Analysis boundary
 
-Propagation is intraprocedural by default and crosses only uniquely resolved local function calls, including calls between supported-language files. `max_interprocedural_depth` bounds repeated propagation; graph and finding counts have independent limits. A sanitizer applies only to its matching invariant. In TypeScript, its successful condition must structurally dominate the sink, while rejection branches must terminate or prevent the operation. Parameterized SQL call shapes do not become raw-query findings. A preceding local auth/authorization guard, recognized dependency/decorator, or locally visible framework middleware produces guard-dominance evidence. Unresolved runtime middleware, dynamic imports, ambiguous dispatch, callbacks, reflection, generated code, and unresolved calls are not inferred.
+Propagation is intraprocedural by default and crosses only uniquely resolved local function calls, including calls between supported-language files. Argument-derived return traces carry the exact call-site binding and cannot be consumed by a different clean call. `max_interprocedural_depth` bounds repeated propagation; graph and finding counts have independent limits. A sanitizer applies only to its matching invariant. In TypeScript, its successful condition must structurally dominate the sink, while rejection branches must terminate or prevent the operation. Parameterized SQL call shapes do not become raw-query findings. A preceding local auth/authorization guard, recognized dependency/decorator, or locally visible framework middleware produces guard-dominance evidence. Platform trust checks such as `vscode.workspace.isTrusted` are recorded as guards but never treated as authorization proof by name alone. Unresolved runtime middleware, dynamic imports, ambiguous dispatch, callbacks, reflection, generated code, and unresolved calls are not inferred.
 
 Phase 6.5 propagates return taint, sanitizer policy, authorization guards, and handler reachability through uniquely resolved local helpers. Filesystem confinement requires canonicalization plus approved-root containment. Outbound requests require a dominating protocol and hostname policy; redirects require an explicit destination allowlist or fixed safe fallback. A fixed executable invoked through a supported argument-vector API is not shell command injection unless options explicitly enable a shell or the executable is a structurally proven supported shell whose exact `-c` program argument constructs code. Executable-specific argument injection remains unsupported and is reported as an analysis limitation.
 
@@ -41,6 +43,14 @@ server-selected identity on opposite sides of an exact equality check. These pri
 change the public graph vocabulary or extractor identity; cache v8 prevents reuse of older program
 units.
 
+Evidence calibration defaults actor control, actor identity, trust-boundary crossing, and observable
+impact to unresolved and promotes each only from typed semantic evidence. Configuration provenance
+is evaluated consistently across applicable filesystem, process, network, and other sinks. Typed
+sensitive data has no attacker-control or actor-identity prerequisite when a diagnostic or remote
+disclosure channel is independently proven. Fixed-map selection is control dependence rather than
+direct value taint; archive-member identity must be present in the loop binding rather than unrelated
+nested text. Explicit abstentions are structurally routed outside `findings`.
+
 Phase 6.11 tranche 2 resolves a sequence-expression callee only when its final value is the
 unshadowed built-in evaluator or a bounded unique local alias to it. Filesystem composition retains
 the selected value through supported local helpers and imports, while a confinement guard applies
@@ -66,7 +76,7 @@ public graph identity remains unchanged and cache v14 isolates these private rec
 
 ## Findings and suppressions
 
-Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. The same rule identifiers and finding contract apply across JavaScript/TypeScript, Rust, Python, and Go. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, verification state, limitations, and a deduplication fingerprint.
+Rules `SE1001`–`SE1006` require an ordered untrusted source-to-sensitive sink path; a sensitive call by itself is never enough. `SE1007` requires a recognized handler, a sensitive operation, and the demonstrated absence of a known preceding guard in that handler. `SE1010` additionally requires a typed sensitive source and distinguishes local diagnostic from remote-service locality. `SE1011` requires a stable receiver created by the built-in Node `net` module and a same-scope omitted-host `listen` call. `SE1012` requires proven configuration provenance, stable editor-platform and child-process import ownership, an exact process component, and the absence of a fresh dominating trust proof for the same scope. An async state boundary invalidates an earlier trust proof. `SE1013` records only a top-level abstention for a structurally incomplete authority-policy composition; it is never a finding. Findings retain source, transformations, guards, sink, prerequisites, impact, remediation, confidence, severity, versioned evidence state, lead context, limitations, and a deduplication fingerprint.
 
 Use `secure rules list` for the catalog and `secure explain <finding-id> --report <report.json>` for one complete path. Exact suppressions use `--suppress RULE_ID:RELATIVE_PATH:START_BYTE:REASON`; every entry produces an auditable diagnostic.
 

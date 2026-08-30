@@ -9,6 +9,7 @@ sudo dnf install rustfmt clippy libX11-devel libxkbcommon-devel mesa-libGL-devel
 Run all gates:
 
 ```bash
+export PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH"
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
@@ -17,6 +18,10 @@ cargo deny check
 packaging/fedora/build-rpm.sh
 packaging/fedora/verify-rpm.sh
 ```
+
+The verified correction milestone used that explicit Rust 1.92 toolchain, which includes
+`cargo-fmt`, `rustfmt`, `cargo-clippy`, and `clippy-driver`. Do not infer tool availability from the
+host's default `PATH`.
 
 `cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The deterministic scanner works offline after Cargo has fetched dependencies. Tests, CI, packaging, and automatic verification use only mock or recorded AI responses and never contact an AI provider. A live adapter is reachable only through an explicit enabled project configuration, exact preview consent, and an `secure ai validate` operation.
 
@@ -33,9 +38,18 @@ secure scan fixtures/phase3-rules --cache-dir /tmp/secure-engine-phase3-cache --
 secure scan fixtures/phase3-rules --cache-dir /tmp/secure-engine-phase3-cache --output phase3-warm.json || test $? = 1
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --clear-cache --output phase5-cold.json || test $? = 1
 secure scan fixtures/phase5-multilang --cache-dir /tmp/secure-engine-phase5-cache --output phase5-warm.json || test $? = 1
+secure scan fixtures/lead-quality-vscode-go --no-cache --output lead-quality.json || test $? = 1
+secure scan fixtures/trust-composition-execution-boundaries --no-cache --output trust-composition.json || test $? = 1
 secure rules list
 secure explain fd_FINDING_ID --report phase3-cold.json
 ```
+
+CLI JSON output uses compact finding and abstention evidence neighborhoods by default. Add `--full-graph` for graph-development diagnostics; this also retains the complete normalized fact set. The report's `graph.total_nodes`, `graph.total_edges`, and `projection.total_facts` preserve complete internal counts in either mode. `--max-output-bytes` is an explicit fail-closed serialization budget and defaults to 64 MiB.
+
+The default CLI path uses `scan_repository_compact` to count fact-only global graph evidence without
+materializing data that the final projection omits. Full-graph callers use `scan_repository`
+unchanged. See [the compact scan memory milestone](compact-scan-memory-milestone.md) for the
+equivalence contract, repeatable measurement command, and residual limits.
 
 The default repository-specific cache lives below `XDG_CACHE_HOME`, then `XDG_RUNTIME_DIR`, or the platform temporary directory. Reports never contain that path. Use `--no-cache` to disable reads and writes and `--clear-cache` to atomically retire the selected repository cache before scanning.
 

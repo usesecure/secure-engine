@@ -4,7 +4,8 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use secure_engine::{
-    CancellationToken, SECURE_JSON_V1_SCHEMA, ScanError, ScanRequest, Suppression, scan_repository,
+    CancellationToken, SECURE_JSON_V1_SCHEMA, ScanError, ScanRequest, Suppression, compact_report,
+    scan_repository, scan_repository_compact,
 };
 
 fn fixture() -> PathBuf {
@@ -162,6 +163,33 @@ fn graph_findings_and_phase_two_fact_identifiers_are_deterministic()
             .iter()
             .any(|fact| fact.fact_id == "sf_b53e989c55945ff77f5c8acf")
     );
+    Ok(())
+}
+
+#[test]
+fn direct_compact_scan_matches_post_scan_projection() -> Result<(), Box<dyn std::error::Error>> {
+    const OUTPUT_BUDGET: u64 = 64 * 1024 * 1024;
+    for request in [uncached_request(), {
+        let mut request = uncached_request();
+        request.configuration.max_graph_nodes = 20;
+        request.configuration.max_graph_edges = 20;
+        request
+    }] {
+        let mut post_scan = scan_repository(&request, &CancellationToken::new(), |_| {})?;
+        compact_report(&mut post_scan, OUTPUT_BUDGET)?;
+        let direct =
+            scan_repository_compact(&request, &CancellationToken::new(), |_| {}, OUTPUT_BUDGET)?;
+
+        assert_eq!(direct.report_fingerprint, post_scan.report_fingerprint);
+        assert_eq!(direct.graph, post_scan.graph);
+        assert_eq!(direct.facts, post_scan.facts);
+        assert_eq!(direct.findings, post_scan.findings);
+        assert_eq!(direct.abstentions, post_scan.abstentions);
+        assert_eq!(direct.analysis.nodes, post_scan.analysis.nodes);
+        assert_eq!(direct.analysis.edges, post_scan.analysis.edges);
+        assert_eq!(direct.analysis.truncated, post_scan.analysis.truncated);
+        assert_eq!(direct.projection, post_scan.projection);
+    }
     Ok(())
 }
 

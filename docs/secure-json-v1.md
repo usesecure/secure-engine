@@ -100,6 +100,50 @@ receive a deterministic new evidence/report fingerprint because its evidence cha
 Phase 6.10 keeps those public versions unchanged. Authorization-wrapper candidates and summaries
 remain private analysis records and introduce no secure-json-v1 or SARIF field.
 
+## Lead-quality additive fields
+
+The lead-quality milestone keeps the `secure-json-v1` identifier and adds optional fields:
+
+- `graph.scope`, `graph.total_nodes`, and `graph.total_edges` distinguish a complete internal graph from the normal finding-evidence serialization projection;
+- `semantic.data_class` and `semantic.locality` separate sensitivity and disclosure location from source/sink roles;
+- `finding.evidence_state` carries the versioned `secure-evidence-state-v1` maturity taxonomy while legacy `verification_state` mirrors its state string;
+- `finding.lead_context` separates actor, trust boundary, receiver, activation, exposure window, and environmental constraints.
+
+Earlier reports deserialize with defaults. Normal CLI reports use `finding-evidence`; `--full-graph` preserves the complete graph. Both modes retain the same findings and full analysis counts, but their report fingerprints differ because the serialized evidence differs. Unchanged graph and finding identifiers remain in the v1 compatibility hash domain even though extraction provenance advances to `secure-evidence-graph-v2`.
+
+## Trust-composition additive fields
+
+The trust-composition milestone keeps `secure-json-v1` and adds two optional semantic fields:
+
+- `semantic.configuration_provenance` distinguishes global, user, workspace, workspace-folder,
+  environment, manifest-default, runtime-mutation, and unknown configuration authority;
+- `semantic.execution_boundary` distinguishes binary, shell-program, argv, child environment,
+  working-directory, and shell-mode components.
+
+It also adds the `configuration-source` semantic role and additive `SE1012` rule metadata. Earlier
+reports remain valid. `SE1012` intentionally has no Evidence Contract v2 or frozen taxonomy mapping;
+the public v2 contract remains unchanged.
+
+## Evidence calibration and bounded projections
+
+The filesystem-identity and scalable-reporting milestone remains additive to `secure-json-v1`:
+
+- `finding.calibration` separates reachability, attacker control, actor authority, trust-boundary crossing, control bindings, filesystem identity, and observable impact;
+- `abstentions` preserves compact reproducible paths when runtime object identity, platform behavior, actor authority, or impact cannot be established;
+- `analysis.abstentions` counts these records outside the finding count;
+- `evidenceSemantic.filesystem_identity` distinguishes lexical paths, canonical targets, opened objects, revalidated objects, and unresolved runtime identity;
+- `projection` declares full versus evidence-neighborhood fact/graph retention, full internal fact totals, and the explicit output budget.
+
+Earlier reports deserialize with empty abstentions and a default full projection. Finding fingerprints and Evidence Contract v2 remain unchanged. Engine-produced reports use private parse cache v22 because cached graph semantics now include filesystem identity. Normal CLI output is projected after full internal analysis; `--full-graph` retains full facts and graph but remains subject to the explicit fail-closed output budget.
+
+The evidence-calibration correction adds `SE1013` metadata and permits a one-step evidence path only
+for a top-level abstention that records one structural policy-composition site. `findings` and
+`abstentions` are disjoint authority lanes: a finding must never carry an `explicit-abstention`
+disposition, and every top-level abstention must carry it. Consumers must not count abstentions as
+findings or vulnerability verdicts. The private cache advances to v23 for corrected causal identity
+and policy records. Canonical report fingerprint bytes are streamed into the hasher; this is
+byte-equivalent to the former in-memory serialization and does not create a new fingerprint domain.
+
 ## Exit codes
 
 | Code | Meaning |

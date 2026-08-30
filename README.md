@@ -13,7 +13,7 @@ Secure Engine follows untrusted values across files and helpers, then reports re
 
 ## What it detects
 
-Version 0.1.10 ships ten deterministic rule families:
+The current development tree defines thirteen deterministic rule families:
 
 - `SE1001`: untrusted input reaching command execution;
 - `SE1002`: untrusted input reaching dynamically constructed or raw SQL;
@@ -24,7 +24,10 @@ Version 0.1.10 ships ten deterministic rule families:
 - `SE1007`: exposed handlers reaching sensitive operations without a dominating authorization guard;
 - `SE1008`: untrusted input reaching CLI option parsing without an end-of-options boundary;
 - `SE1009`: untrusted input reaching a shared prototype mutation;
-- `SE1010`: sensitive configuration reaching logging or an AI/LLM provider payload.
+- `SE1010`: classified sensitive data reaching local diagnostic output or a remote provider boundary;
+- `SE1011`: a proven Node `net.Server` receiver calling `listen(port)` without an explicit host, emitted as a qualified network-exposure lead rather than a vulnerability verdict.
+- `SE1012`: workspace, workspace-folder, or environment configuration reaching an exact process binary, shell program, argv, environment, cwd, or shell-mode boundary without a fresh same-scope trust proof.
+- `SE1013`: structurally incomplete manifest-authority or lifecycle-policy composition, emitted only as an explicit abstention pending runtime reachability, actor, boundary, and impact proof.
 
 The analyzer supports bounded inter-file propagation, value-preserving helpers, static-property identity, shell program-text classification, exact path and URL policy projection, and principal/resource-aware authorization evidence. Ambiguous flows fail conservatively instead of inventing proof.
 
@@ -48,6 +51,7 @@ Scan a repository with the installed CLI:
 ```bash
 secure scan .
 secure scan . --format secure-json-v1 --output report.json
+secure scan . --full-graph --output report-with-global-graph.json
 secure scan . --format sarif --output report.sarif
 secure scan . --include 'src/**' --exclude 'src/generated/**' --max-files 50000
 secure rules list
@@ -68,6 +72,8 @@ cargo run -p secure-desktop -- .
 ```
 
 Additional workflows include baselines, history, suppressions, cache control, schema export, diagnostics, cancellation, and bounded scans. Run `secure --help` or `secure <command> --help` for the complete interface.
+
+Normal `secure-json-v1` CLI reports retain only finding and explicit-abstention evidence neighborhoods while exposing complete analyzed graph and fact counts separately. The lanes are structurally disjoint: an explicit abstention is never serialized as a finding. Serialization streams to an atomic temporary file and fails closed above the default 64 MiB output budget; change the explicit budget with `--max-output-bytes`. Use `--full-graph` only when complete facts and the global graph are required. Both projections are deterministic and declare their scope and budget in the report.
 
 ## Independent evaluation
 
@@ -96,7 +102,7 @@ These limits can produce false negatives. Parser recovery and framework conventi
 
 ## Structured evidence and privacy
 
-The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v20. Older cache envelopes produce safe misses.
+The stable public projection includes taxonomy 1.0.0, Evidence Contract v2, `secure-json-v1`, SARIF 2.1.0, deterministic fingerprints, and private parse cache v23. Older cache envelopes produce safe misses.
 
 AI validation never originates, deletes, or rewrites a finding. It requires project configuration, an exact redacted payload preview, and per-operation consent. Provider credentials are read only from the configured environment variable and are never serialized. See [AI validation](./docs/ai-validation.md) and [Evidence Contract v2](./docs/evidence-contract-v2.md).
 
