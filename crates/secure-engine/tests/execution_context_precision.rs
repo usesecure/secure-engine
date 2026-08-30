@@ -1,27 +1,70 @@
 //! Neutral regressions for test-context calibration without test-path exclusion.
 
-use std::fs;
+use std::{fs, path::Path};
 
-use secure_engine::{CancellationToken, EvidenceDisposition, ScanRequest, scan_repository};
+use secure_engine::{
+    AnalysisAbstention, CancellationToken, EvidenceDisposition, ScanReport, ScanRequest,
+    scan_repository,
+};
+
+fn write_fixture(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("tests"))?;
+    fs::write(
+        root.join("src/carry.js"),
+        "export function carry(value) { return value; }",
+    )?;
+    fs::write(
+        root.join("src/environment.js"),
+        "export function requestStatus() { return fetch(process.env.RUNTIME_STATUS_URL); }",
+    )?;
+    fs::write(
+        root.join("tests/environment.js"),
+        "import { spawn } from 'node:child_process';\nexport function launchFixture() { return spawn(process.env.TEST_INTERPRETER, ['-c', 'printf ok']); }",
+    )?;
+    fs::write(
+        root.join("tests/untrusted.js"),
+        "import { exec } from 'node:child_process';\nexport function handle(request) { return exec(request.query.command); }",
+    )?;
+    fs::write(
+        root.join("tests/mixed.js"),
+        "import { spawn } from 'node:child_process';\nimport { carry } from '../src/carry.js';\nexport function launchMixedFixture() { return spawn(carry(process.env.MIXED_TEST_INTERPRETER), ['-c', 'printf ok']); }",
+    )?;
+    Ok(())
+}
+
+fn is_test_only(abstention: &AnalysisAbstention) -> bool {
+    !abstention.evidence_path.is_empty()
+        && abstention
+            .evidence_path
+            .iter()
+            .all(|step| step.location.path.starts_with("tests/"))
+}
+
+fn assert_context_order(report: &ScanReport) -> Result<(), Box<dyn std::error::Error>> {
+    let first_test_abstention = report
+        .abstentions
+        .iter()
+        .position(is_test_only)
+        .ok_or("test-context abstention is missing from ordered output")?;
+    assert!(
+        report.abstentions[..first_test_abstention]
+            .iter()
+            .all(|abstention| !is_test_only(abstention))
+    );
+    assert!(
+        report.abstentions[first_test_abstention..]
+            .iter()
+            .all(is_test_only)
+    );
+    Ok(())
+}
 
 #[test]
 fn test_context_refines_only_existing_abstentions_and_orders_them_last()
 -> Result<(), Box<dyn std::error::Error>> {
     let directory = tempfile::tempdir()?;
-    fs::create_dir_all(directory.path().join("src"))?;
-    fs::create_dir_all(directory.path().join("tests"))?;
-    fs::write(
-        directory.path().join("src/environment.js"),
-        "export function requestStatus() { return fetch(process.env.RUNTIME_STATUS_URL); }",
-    )?;
-    fs::write(
-        directory.path().join("tests/environment.js"),
-        "import { spawn } from 'node:child_process';\nexport function launchFixture() { return spawn(process.env.TEST_INTERPRETER, ['-c', 'printf ok']); }",
-    )?;
-    fs::write(
-        directory.path().join("tests/untrusted.js"),
-        "import { exec } from 'node:child_process';\nexport function handle(request) { return exec(request.query.command); }",
-    )?;
+    write_fixture(directory.path())?;
 
     let mut request = ScanRequest::new(directory.path());
     request.configuration.parse_cache_enabled = false;
@@ -52,16 +95,20 @@ fn test_context_refines_only_existing_abstentions_and_orders_them_last()
             && limitation.contains("Test paths remain analyzed")
     }));
 
-    let first_test_abstention = report
+    let mixed_abstention = report
         .abstentions
         .iter()
-        .position(|abstention| abstention.source.path.starts_with("tests/"))
-        .ok_or("test-context abstention is missing from ordered output")?;
+        .find(|abstention| abstention.sink.path == "tests/mixed.js")
+        .ok_or("mixed test/production abstention is missing")?;
+    assert_eq!(mixed_abstention.reason, "actor-authority-equivalence");
     assert!(
-        report.abstentions[..first_test_abstention]
+        mixed_abstention
+            .evidence_path
             .iter()
-            .all(|abstention| !abstention.source.path.starts_with("tests/"))
+            .any(|step| step.location.path == "src/carry.js")
     );
+
+    assert_context_order(&report)?;
 
     let test_security_path = report
         .findings

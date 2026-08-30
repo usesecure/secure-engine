@@ -27,7 +27,17 @@ The fixture declarations are updated to:
 
 - Next.js `15.5.21`;
 - Flask `3.1.3`;
-- Django `5.2.16`.
+- Django `5.2.17`.
+
+[PyPI](https://pypi.org/pypi/Django/5.2.17/json) identifies 5.2.17 as a non-yanked release uploaded
+on 2026-08-04. [Django's official 5.2.17 release notes](https://docs.djangoproject.com/en/5.2/releases/5.2.17/)
+state that it fixes four security issues present in 5.2.16. GitHub's global advisory API records
+those issues as [GHSA-wvqv-fj8w-qmhm](https://github.com/advisories/GHSA-wvqv-fj8w-qmhm),
+[GHSA-2f9m-qhxg-w5v5](https://github.com/advisories/GHSA-2f9m-qhxg-w5v5),
+[GHSA-q238-5cxm-5c9h](https://github.com/advisories/GHSA-q238-5cxm-5c9h), and
+[GHSA-8rmj-xgq5-w9qm](https://github.com/advisories/GHSA-8rmj-xgq5-w9qm). The repository's 63 open
+Dependabot alerts still describe the dependency graph on `main`; they do not yet attest to either
+candidate fixture update.
 
 GitHub must recompute the dependency graph after the change reaches the default branch. Local source
 changes alone do not prove that hosted alerts have closed.

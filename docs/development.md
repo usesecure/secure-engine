@@ -11,8 +11,8 @@ Run all gates:
 ```bash
 export PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH"
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace --all-features
 cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 cargo deny check
 packaging/fedora/build-rpm.sh
@@ -23,7 +23,21 @@ The verified correction milestone used that explicit Rust 1.92 toolchain, which 
 `cargo-fmt`, `rustfmt`, `cargo-clippy`, and `clippy-driver`. Do not infer tool availability from the
 host's default `PATH`.
 
-`cargo deny` is a CI dependency-policy gate; install it locally with `cargo install cargo-deny --locked` when it is not packaged. The two audit exceptions are documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The deterministic scanner works offline after Cargo has fetched dependencies. Tests, CI, packaging, and automatic verification use only mock or recorded AI responses and never contact an AI provider. A live adapter is reachable only through an explicit enabled project configuration, exact preview consent, and an `secure ai validate` operation.
+CI uses the fixed `ubuntu-24.04` runner label, checkout action commit
+`df4cb1c069e1874edd31b4311f1884172cec0e10` without persisted credentials, Rust 1.92.0,
+`cargo-audit` 0.22.2, and `cargo-deny` 0.20.2. Tool installers use exact versions and `--locked`.
+Reasonable job timeouts bound unavailable runners, registry access, and unexpectedly expensive builds.
+The native APT packages resolve from the Ubuntu 24.04 runner repositories and are not byte-pinned;
+they remain an upstream build-environment residual rather than part of the Rust dependency lock.
+
+`cargo deny` is a CI dependency-policy gate; install version 0.20.2 locally with
+`cargo install cargo-deny --version 0.20.2 --locked` when it is not packaged. Install the matching
+audit gate with `cargo install cargo-audit --version 0.22.2 --locked`. The two audit exceptions are
+documented in ADR 0001 and `deny.toml`; no other advisory is accepted. The deterministic scanner
+works offline after Cargo has fetched dependencies. Tests, CI, packaging, and automatic
+verification use only mock or recorded AI responses and never contact an AI provider. A live
+adapter is reachable only through an explicit enabled project configuration, exact preview consent,
+and an `secure ai validate` operation.
 
 Phase 6 AI boundary, redaction, schema, consent, replay, cancellation, CLI/desktop, and Phase 5 compatibility checks remain part of the workspace and Fedora gates. Phase 6.5 adds exact taxonomy/schema and precision coverage; Phase 6.6 adds explicit semantic coverage. Phase 6.7 adds the public contract vectors and independent generalization coverage. Phase 6.8 adds a separate 56-scenario matrix, structural near misses, module ownership, destructuring, positional propagation, stable-fingerprint, and cache-invalidation checks. Phase 6.9 adds retired-handoff aggregate verification plus independent cause pairs for exact source/span identity, property/position connectivity, value-associated barriers, sink-argument precision, mutation, and metamorphic behavior. Phase 6.10 adds implementation-derived authorization summaries, same-result caller barriers, compound identity proof, and adversarial fail-closed coverage. Packaging writes only below `target/phase610-rpm`; installation, upgrade, and removal are documented in `docs/fedora-packaging.md` and are not automated.
 

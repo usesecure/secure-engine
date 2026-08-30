@@ -50,6 +50,7 @@ outside the static proof and require human validation.
 ## Evaluation
 
 A neutral generated regression pairs a production environment abstention with a test-only
-environment abstention and a test-source untrusted-command security path. It requires the two
-abstentions to remain present, production evidence to sort first, the test-only reason and
-limitations to be explicit, and the proven test-source security path to remain a finding.
+environment abstention, a mixed path whose test endpoints cross a production helper, and a
+test-source untrusted-command security path. It requires non-test and mixed evidence to sort before
+test-only evidence, the test-only reason and limitations to be explicit, and the proven test-source
+security path to remain a finding.

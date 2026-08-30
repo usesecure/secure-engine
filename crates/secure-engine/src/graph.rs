@@ -1447,9 +1447,11 @@ pub(crate) fn analyze(
 }
 
 fn abstention_context_rank(abstention: &AnalysisAbstention) -> u8 {
-    u8::from(
-        crate::classify::is_test_path(&abstention.source.path)
-            && crate::classify::is_test_path(&abstention.sink.path),
+    test_context_rank_for_paths(
+        abstention
+            .evidence_path
+            .iter()
+            .map(|step| step.location.path.as_str()),
     )
 }
 
@@ -5048,10 +5050,18 @@ fn evidence_calibration(
 }
 
 fn evidence_path_is_test_only(steps: &[EvidencePathStep]) -> bool {
-    !steps.is_empty()
-        && steps
-            .iter()
-            .all(|step| crate::classify::is_test_path(&step.location.path))
+    test_context_rank_for_paths(steps.iter().map(|step| step.location.path.as_str())) == 1
+}
+
+fn test_context_rank_for_paths<'a>(paths: impl Iterator<Item = &'a str>) -> u8 {
+    let mut present = false;
+    for path in paths {
+        present = true;
+        if !crate::classify::is_test_path(path) {
+            return 0;
+        }
+    }
+    u8::from(present)
 }
 
 fn source_evidence_resolutions(
@@ -13183,5 +13193,22 @@ mod performance_tests {
         assert!(guards[0].dominance_start.is_some());
         assert!(guards[0].dominance_end.is_some());
         Ok(())
+    }
+
+    #[test]
+    fn mixed_evidence_path_does_not_rank_as_test_only() {
+        assert_eq!(
+            test_context_rank_for_paths(
+                ["tests/entry.js", "src/carry.js", "tests/entry.js"].into_iter()
+            ),
+            0
+        );
+        assert_eq!(
+            test_context_rank_for_paths(
+                ["tests/entry.js", "tests/helpers.js", "tests/entry.js"].into_iter()
+            ),
+            1
+        );
+        assert_eq!(test_context_rank_for_paths(std::iter::empty()), 0);
     }
 }
