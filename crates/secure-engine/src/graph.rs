@@ -2395,6 +2395,11 @@ fn extract_record_for_node(
             } else {
                 sink_kind(&callee)
             };
+            if sink == Some("process-execution")
+                && crate::call_target::local_regexp_exec(node, content)
+            {
+                sink = None;
+            }
             if shared_prototype_call(node, content, &callee) {
                 sink = Some("prototype-mutation");
             }

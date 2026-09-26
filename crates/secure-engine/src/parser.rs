@@ -781,6 +781,9 @@ fn extract_call_facts(
     }
 
     for kind in operation_kinds(&callee) {
+        if kind == "process-execution" && crate::call_target::local_regexp_exec(node, content) {
+            continue;
+        }
         push_fact(
             facts,
             maximum,
